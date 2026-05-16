@@ -5,6 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callDeepSeek } from './deepseek.js';
 import {
+  buildFallbackRespond,
+  buildFallbackReview,
+  buildFallbackStart,
   buildRespondMessages,
   buildReviewMessages,
   buildStartMessages,
@@ -33,7 +36,10 @@ app.post('/api/debate/start', async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body);
     const messages = buildStartMessages(payload);
-    const content = await callDeepSeek(messages, { maxTokens: 220 });
+    const content = await callWithFallback(
+      () => callDeepSeek(messages, { maxTokens: 220 }),
+      () => buildFallbackStart(payload)
+    );
 
     res.json({ content: limitLength(content, 150) });
   } catch (error) {
@@ -51,7 +57,10 @@ app.post('/api/debate/respond', async (req, res, next) => {
     }
 
     const messages = buildRespondMessages({ ...payload, answer });
-    const content = await callDeepSeek(messages, { maxTokens: 260 });
+    const content = await callWithFallback(
+      () => callDeepSeek(messages, { maxTokens: 260 }),
+      () => buildFallbackRespond(payload)
+    );
 
     res.json({ content: limitLength(content, 150) });
   } catch (error) {
@@ -68,7 +77,10 @@ app.post('/api/debate/review', async (req, res, next) => {
     }
 
     const messages = buildReviewMessages(payload);
-    const content = await callDeepSeek(messages, { maxTokens: 900, temperature: 0.5 });
+    const content = await callWithFallback(
+      () => callDeepSeek(messages, { maxTokens: 900, temperature: 0.5 }),
+      () => buildFallbackReview(payload)
+    );
 
     res.json({ content });
   } catch (error) {
@@ -95,6 +107,18 @@ app.use((error, req, res, next) => {
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
+
+async function callWithFallback(apiCall, fallback) {
+  try {
+    return await apiCall();
+  } catch (error) {
+    if (error.code === 'EMPTY_DEEPSEEK_CONTENT') {
+      return fallback();
+    }
+
+    throw error;
+  }
+}
 
 function validateSessionPayload(body) {
   const topic = normalizeText(body.topic);

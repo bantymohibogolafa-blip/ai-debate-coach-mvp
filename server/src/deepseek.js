@@ -38,10 +38,19 @@ export async function callDeepSeek(messages, options = {}) {
     throw error;
   }
 
-  const content = data?.choices?.[0]?.message?.content?.trim();
+  const choice = data?.choices?.[0];
+  const content = choice?.message?.content?.trim();
 
   if (!content) {
-    const error = new Error('DeepSeek API 未返回有效内容。');
+    console.error('DeepSeek returned empty content', {
+      model,
+      finishReason: choice?.finish_reason,
+      hasChoices: Array.isArray(data?.choices),
+      choiceCount: data?.choices?.length || 0
+    });
+
+    const error = new Error('DeepSeek API 未返回有效内容，已使用本地备用内容。');
+    error.code = 'EMPTY_DEEPSEEK_CONTENT';
     error.status = 502;
     throw error;
   }
