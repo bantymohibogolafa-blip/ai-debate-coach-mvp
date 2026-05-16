@@ -5,6 +5,7 @@ dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 
 const apiUrl = process.env.DEEPSEEK_API_URL || 'https://api.deepseek.com/chat/completions';
 const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+const thinkingType = process.env.DEEPSEEK_THINKING || 'disabled';
 
 export async function callDeepSeek(messages, options = {}) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -24,6 +25,9 @@ export async function callDeepSeek(messages, options = {}) {
     body: JSON.stringify({
       model,
       messages,
+      thinking: {
+        type: thinkingType
+      },
       temperature: options.temperature ?? 0.7,
       max_tokens: options.maxTokens ?? 500
     })
