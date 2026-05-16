@@ -5,9 +5,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callDeepSeek } from './deepseek.js';
 import {
-  buildFallbackRespond,
-  buildFallbackReview,
-  buildFallbackStart,
   buildRespondMessages,
   buildReviewMessages,
   buildStartMessages,
@@ -36,10 +33,7 @@ app.post('/api/debate/start', async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body);
     const messages = buildStartMessages(payload);
-    const content = await callWithFallback(
-      () => callDeepSeek(messages, { maxTokens: 220 }),
-      () => buildFallbackStart(payload)
-    );
+    const content = await callDeepSeek(messages, { maxTokens: 220 });
 
     res.json({ content: limitLength(content, 150) });
   } catch (error) {
@@ -57,10 +51,7 @@ app.post('/api/debate/respond', async (req, res, next) => {
     }
 
     const messages = buildRespondMessages({ ...payload, answer });
-    const content = await callWithFallback(
-      () => callDeepSeek(messages, { maxTokens: 260 }),
-      () => buildFallbackRespond(payload)
-    );
+    const content = await callDeepSeek(messages, { maxTokens: 260 });
 
     res.json({ content: limitLength(content, 150) });
   } catch (error) {
@@ -77,10 +68,7 @@ app.post('/api/debate/review', async (req, res, next) => {
     }
 
     const messages = buildReviewMessages(payload);
-    const content = await callWithFallback(
-      () => callDeepSeek(messages, { maxTokens: 900, temperature: 0.5 }),
-      () => buildFallbackReview(payload)
-    );
+    const content = await callDeepSeek(messages, { maxTokens: 900, temperature: 0.5 });
 
     res.json({ content });
   } catch (error) {
@@ -97,28 +85,15 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 app.use((error, req, res, next) => {
-  const status = error.status || 500;
   console.error(error);
-  res.status(status).json({
-    message: error.message || '服务器内部错误。'
+  res.status(getPublicStatus(error)).json({
+    message: getPublicErrorMessage(error)
   });
 });
 
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
-
-async function callWithFallback(apiCall, fallback) {
-  try {
-    return await apiCall();
-  } catch (error) {
-    if (error.code === 'EMPTY_DEEPSEEK_CONTENT') {
-      return fallback();
-    }
-
-    throw error;
-  }
-}
 
 function validateSessionPayload(body) {
   const topic = normalizeText(body.topic);
@@ -165,6 +140,34 @@ function badRequest(message) {
   const error = new Error(message);
   error.status = 400;
   return error;
+}
+
+function getPublicStatus(error) {
+  if (error.status === 400 || error.status === 429) {
+    return error.status;
+  }
+
+  return 502;
+}
+
+function getPublicErrorMessage(error) {
+  if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
+    return '请求格式有误，请刷新后重试。';
+  }
+
+  if (error.status === 400 && error.message) {
+    return error.message;
+  }
+
+  if (error.code === 'EMPTY_DEEPSEEK_CONTENT') {
+    return 'AI 暂时没有返回内容，请重试。';
+  }
+
+  if (error.status === 429) {
+    return 'AI 服务繁忙或额度不足，请稍后重试。';
+  }
+
+  return 'AI 服务暂时不可用，请稍后重试。';
 }
 
 function limitLength(text, maxLength) {

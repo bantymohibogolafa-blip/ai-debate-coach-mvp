@@ -15,7 +15,7 @@ const roundOptions = [3, 5];
 
 const initialConfig = {
   topic: '',
-  userSide: 'affirmative',
+  userSide: '',
   difficulty: 'novice',
   rounds: 3
 };
@@ -35,13 +35,37 @@ function App() {
   );
   const isFinished = isTraining && userAnswers >= config.rounds;
   const currentRound = Math.min(userAnswers + 1, config.rounds);
-  const selectedSideLabel = getOptionLabel(sides, config.userSide);
-  const opponentSideLabel = config.userSide === 'affirmative' ? '反方' : '正方';
+  const selectedSideLabel = getOptionLabel(sides, config.userSide) || '待选择';
+  const opponentSideLabel = config.userSide
+    ? config.userSide === 'affirmative'
+      ? '反方'
+      : '正方'
+    : '待定';
   const selectedDifficultyLabel = getOptionLabel(difficulties, config.difficulty);
 
-  async function startTraining() {
+  function updateConfig(nextConfig) {
+    setConfig(nextConfig);
+    if (error) setError('');
+  }
+
+  function validateTrainingConfig() {
     if (!config.topic.trim()) {
-      setError('请先输入辩题。');
+      return '请先输入辩题。';
+    }
+
+    if (!config.userSide) {
+      return '请先选择你的立场。';
+    }
+
+    return '';
+  }
+
+  async function startTraining() {
+    if (isLoading) return;
+
+    const validationError = validateTrainingConfig();
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
@@ -55,19 +79,21 @@ function App() {
         ...config,
         history: []
       });
+      const content = requireContent(data);
 
-      setHistory([{ role: 'ai', content: data.content }]);
+      setHistory([{ role: 'ai', content }]);
       setIsTraining(true);
     } catch (requestError) {
-      setError(requestError.message);
+      setError(getFriendlyError(requestError));
     } finally {
       setIsLoading(false);
     }
   }
 
   async function submitAnswer() {
-    const trimmedAnswer = answer.trim();
+    if (isLoading) return;
 
+    const trimmedAnswer = answer.trim();
     if (!trimmedAnswer) {
       setError('请先输入你的回答。');
       return;
@@ -90,16 +116,19 @@ function App() {
         history: nextHistory,
         answer: trimmedAnswer
       });
+      const content = requireContent(data);
 
-      setHistory([...nextHistory, { role: 'ai', content: data.content }]);
+      setHistory([...nextHistory, { role: 'ai', content }]);
     } catch (requestError) {
-      setError(requestError.message);
+      setError(getFriendlyError(requestError));
     } finally {
       setIsLoading(false);
     }
   }
 
   async function finishAndReview() {
+    if (isLoading) return;
+
     if (!history.length) {
       setError('暂无对话，无法复盘。');
       return;
@@ -113,17 +142,20 @@ function App() {
         ...config,
         history
       });
+      const content = requireContent(data);
 
-      setReview(data.content);
+      setReview(content);
       setIsTraining(false);
     } catch (requestError) {
-      setError(requestError.message);
+      setError(getFriendlyError(requestError));
     } finally {
       setIsLoading(false);
     }
   }
 
   function resetTraining() {
+    if (isLoading) return;
+
     setConfig(initialConfig);
     setHistory([]);
     setAnswer('');
@@ -183,7 +215,7 @@ function App() {
             <textarea
               value={config.topic}
               disabled={isTraining || isLoading}
-              onChange={(event) => setConfig({ ...config, topic: event.target.value })}
+              onChange={(event) => updateConfig({ ...config, topic: event.target.value })}
               placeholder="例如：中学生使用 AI 工具利大于弊"
               rows={4}
             />
@@ -194,7 +226,7 @@ function App() {
             options={sides}
             value={config.userSide}
             disabled={isTraining || isLoading}
-            onChange={(value) => setConfig({ ...config, userSide: value })}
+            onChange={(value) => updateConfig({ ...config, userSide: value })}
           />
 
           <OptionGroup
@@ -202,7 +234,7 @@ function App() {
             options={difficulties}
             value={config.difficulty}
             disabled={isTraining || isLoading}
-            onChange={(value) => setConfig({ ...config, difficulty: value })}
+            onChange={(value) => updateConfig({ ...config, difficulty: value })}
           />
 
           <OptionGroup
@@ -210,7 +242,7 @@ function App() {
             options={roundOptions.map((value) => ({ label: `${value}轮`, value }))}
             value={config.rounds}
             disabled={isTraining || isLoading}
-            onChange={(value) => setConfig({ ...config, rounds: value })}
+            onChange={(value) => updateConfig({ ...config, rounds: value })}
           />
 
           <div className="round-progress" aria-label="轮次进度">
@@ -275,7 +307,10 @@ function App() {
                   <textarea
                     value={answer}
                     disabled={isLoading}
-                    onChange={(event) => setAnswer(event.target.value)}
+                    onChange={(event) => {
+                      setAnswer(event.target.value);
+                      if (error) setError('');
+                    }}
                     placeholder="输入你的回答，尽量控制在30秒攻辩表达长度内。"
                     rows={4}
                   />
@@ -335,19 +370,62 @@ function getOptionLabel(options, value) {
   return options.find((option) => option.value === value)?.label || '';
 }
 
+function requireContent(data) {
+  const content = String(data?.content || '').trim();
+  if (!content) {
+    throw new Error('AI 暂时没有返回内容，请重试。');
+  }
+
+  return content;
+}
+
+function getFriendlyError(error) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return '请求失败，请稍后重试。';
+}
+
+function getServerErrorMessage(status, message) {
+  if (message === 'AI 暂时没有返回内容，请重试。') {
+    return message;
+  }
+
+  if (status === 400 && message) {
+    return message;
+  }
+
+  if (status === 429) {
+    return 'AI 服务繁忙或额度不足，请稍后重试。';
+  }
+
+  if (status >= 500) {
+    return 'AI 服务暂时不可用，请稍后重试。';
+  }
+
+  return '请求失败，请稍后重试。';
+}
+
 async function postJson(url, body) {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(body)
-  });
+  let response;
+
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+  } catch {
+    throw new Error('网络连接异常，请稍后重试。');
+  }
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.message || '请求失败，请稍后重试。');
+    throw new Error(getServerErrorMessage(response.status, data.message));
   }
 
   return data;

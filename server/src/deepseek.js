@@ -11,7 +11,8 @@ export async function callDeepSeek(messages, options = {}) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
 
   if (!apiKey) {
-    const error = new Error('Missing DEEPSEEK_API_KEY. 请在 server/.env 中填写 DeepSeek API Key。');
+    const error = new Error('DeepSeek API Key is not configured.');
+    error.code = 'MISSING_DEEPSEEK_API_KEY';
     error.status = 500;
     throw error;
   }
@@ -36,9 +37,14 @@ export async function callDeepSeek(messages, options = {}) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const message = data?.error?.message || `DeepSeek API 请求失败：${response.status}`;
-    const error = new Error(message);
-    error.status = response.status;
+    console.error('DeepSeek request failed', {
+      status: response.status,
+      message: data?.error?.message
+    });
+
+    const error = new Error('DeepSeek API request failed.');
+    error.code = 'DEEPSEEK_REQUEST_FAILED';
+    error.status = response.status === 429 ? 429 : 502;
     throw error;
   }
 
@@ -53,7 +59,7 @@ export async function callDeepSeek(messages, options = {}) {
       choiceCount: data?.choices?.length || 0
     });
 
-    const error = new Error('DeepSeek API 未返回有效内容，已使用本地备用内容。');
+    const error = new Error('DeepSeek API returned empty content.');
     error.code = 'EMPTY_DEEPSEEK_CONTENT';
     error.status = 502;
     throw error;
