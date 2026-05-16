@@ -37,7 +37,7 @@ app.post('/api/debate/start', async (req, res, next) => {
     const messages = buildStartMessages(payload);
     const content = await callDeepSeek(messages, { maxTokens: 220 });
 
-    res.json({ content: limitLength(content, 150) });
+    res.json({ content: limitLength(cleanOpeningQuestion(content), 150) });
   } catch (error) {
     next(error);
   }
@@ -182,4 +182,23 @@ function limitLength(text, maxLength) {
   const clean = normalizeText(text);
   if (clean.length <= maxLength) return clean;
   return `${clean.slice(0, maxLength - 1)}…`;
+}
+
+function cleanOpeningQuestion(text) {
+  const clean = normalizeText(text);
+  const bracketProbe = clean.match(/【追问】\s*([\s\S]+)/);
+  if (bracketProbe?.[1]) {
+    return normalizeText(bracketProbe[1]);
+  }
+
+  const colonProbe = clean.match(/追问[：:]\s*([\s\S]+)/);
+  if (colonProbe?.[1]) {
+    return normalizeText(colonProbe[1]);
+  }
+
+  return clean
+    .split('\n')
+    .filter((line) => !/漏洞判断|漏洞[：:]/.test(line))
+    .join('\n')
+    .trim();
 }

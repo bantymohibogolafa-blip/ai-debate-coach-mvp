@@ -24,6 +24,7 @@ const celebrityDebaters = {
     shortName: '黄执中式',
     displayName: '黄执中式：价值拆解与情绪洞察',
     disclaimer: '这是基于黄执中公开辩论与表达风格的风格化模拟，仅用于辩论训练，不代表黄执中本人观点或真实发言。',
+    openingInstruction: '首轮只借鉴黄执中式的价值拆解、情绪洞察和人性追问方式，提出一个有价值压迫感的问题。不要判断漏洞，因为用户尚未回答。',
     instruction: `
 你正在进行“黄执中式”风格化辩论陪练。
 你不是黄执中本人，也不能代表其真实观点。
@@ -50,6 +51,7 @@ const celebrityDebaters = {
     shortName: '胡渐彪式',
     displayName: '胡渐彪式：结构拆解与战场控制',
     disclaimer: '这是基于胡渐彪公开辩论与表达风格的风格化模拟，仅用于辩论训练，不代表胡渐彪本人观点或真实发言。',
+    openingInstruction: '首轮只借鉴胡渐彪式的结构拆解、标准意识和战场控制方式，围绕定义、标准或比较对象提出一个问题。不要判断漏洞，因为用户尚未回答。',
     instruction: `
 你正在进行“胡渐彪式”风格化辩论陪练。
 你不是胡渐彪本人，也不能代表其真实观点。
@@ -78,6 +80,7 @@ const celebrityDebaters = {
     shortName: '马薇薇式',
     displayName: '马薇薇式：强攻反击与语言压迫',
     disclaimer: '这是基于马薇薇公开辩论与表达风格的风格化模拟，仅用于辩论训练，不代表马薇薇本人观点或真实发言。',
+    openingInstruction: '首轮只借鉴马薇薇式的短句压迫和临场质询感，提出一个短、准、有压力的问题。不要判断漏洞，因为用户尚未回答。',
     instruction: `
 你正在进行“马薇薇式”风格化辩论陪练。
 你不是马薇薇本人，也不能代表其真实观点。
@@ -104,6 +107,7 @@ const celebrityDebaters = {
     shortName: '乔布斯式',
     displayName: '乔布斯式：本质判断与愿景压迫',
     disclaimer: '这是基于乔布斯公开演讲、采访和表达风格的风格化模拟，仅用于辩论训练，不代表乔布斯本人观点或真实发言。',
+    openingInstruction: '首轮只借鉴乔布斯式的极简判断、本质追问和愿景压迫，提出一个关于本质、体验或长期价值的问题。不要判断漏洞，因为用户尚未回答。',
     instruction: `
 你正在进行“乔布斯式”风格化辩论陪练。
 你不是乔布斯本人，也不能代表其真实观点。
@@ -248,7 +252,7 @@ export function getOpponentSide(userSide) {
 export function buildStartMessages({ topic, userSide, difficulty, celebrityDebater }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
-  const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
+  const modeInstruction = getOpeningModeInstruction(difficulty, celebrityDebater);
 
   return [
     {
@@ -258,8 +262,8 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
         `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
         modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。',
-        '现在生成第一轮攻辩问题。',
-        '严格要求：只能问一个问题；不要给答案；不要列多个问题；语言适合高中学生。'
+        '现在生成第一轮攻辩问题。注意：用户还没有回答，所以不得输出“漏洞判断”、不得评价用户回答、不得使用【漏洞判断】格式。',
+        '严格要求：只能问一个问题；不要给答案；不要列多个问题；语言适合高中学生；输出中只保留问题本身。'
       ].join('\n')
     },
     {
@@ -336,6 +340,20 @@ function getModeInstruction(difficulty, celebrityDebater) {
     '当前为明星辩手模式，难度固定为市赛。',
     debater.disclaimer,
     debater.instruction
+  ].join('\n');
+}
+
+function getOpeningModeInstruction(difficulty, celebrityDebater) {
+  const debater = celebrityDebaters[celebrityDebater];
+
+  if (!debater) {
+    return difficultyProfiles[difficulty]?.instruction || difficultyProfiles.novice.instruction;
+  }
+
+  return [
+    '当前为明星辩手模式，难度固定为市赛。',
+    debater.disclaimer,
+    debater.openingInstruction
   ].join('\n');
 }
 
