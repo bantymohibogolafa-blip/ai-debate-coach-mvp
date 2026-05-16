@@ -4,11 +4,13 @@ const sides = [
   { label: '正方', value: 'affirmative' },
   { label: '反方', value: 'negative' }
 ];
+
 const difficulties = [
   { label: '新手', value: 'novice' },
   { label: '校赛', value: 'campus' },
   { label: '市赛', value: 'city' }
 ];
+
 const roundOptions = [3, 5];
 
 const initialConfig = {
@@ -32,7 +34,10 @@ function App() {
     [history]
   );
   const isFinished = isTraining && userAnswers >= config.rounds;
+  const currentRound = Math.min(userAnswers + 1, config.rounds);
   const selectedSideLabel = getOptionLabel(sides, config.userSide);
+  const opponentSideLabel = config.userSide === 'affirmative' ? '反方' : '正方';
+  const selectedDifficultyLabel = getOptionLabel(difficulties, config.difficulty);
 
   async function startTraining() {
     if (!config.topic.trim()) {
@@ -129,22 +134,50 @@ function App() {
 
   return (
     <main className="app-shell">
-      <section className="intro">
-        <div>
-          <p className="eyebrow">高中辩论训练 MVP</p>
+      <section className="arena-hero">
+        <div className="hero-copy">
+          <p className="eyebrow">高中辩论训练场</p>
           <h1>AI 二辩攻辩陪练</h1>
           <p className="subtitle">
             输入辩题，选择立场与难度，让 AI 站在你的对立面进行一问一答式攻辩训练。
           </p>
         </div>
-        <div className="status-card">
-          <span>当前轮次</span>
-          <strong>{Math.min(userAnswers + 1, config.rounds)} / {config.rounds}</strong>
+
+        <div className="scoreboard" aria-label="训练状态">
+          <div>
+            <span>当前轮次</span>
+            <strong>{currentRound} / {config.rounds}</strong>
+          </div>
+          <div>
+            <span>我的立场</span>
+            <strong>{selectedSideLabel}</strong>
+          </div>
+          <div>
+            <span>难度</span>
+            <strong>{selectedDifficultyLabel}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section className="match-strip" aria-label="对阵信息">
+        <div className="side-card user-side">
+          <span>你方</span>
+          <strong>{selectedSideLabel}</strong>
+        </div>
+        <div className="versus-mark">VS</div>
+        <div className="side-card ai-side">
+          <span>AI 攻辩方</span>
+          <strong>{opponentSideLabel}</strong>
         </div>
       </section>
 
       <section className="layout">
         <aside className="panel setup-panel">
+          <div className="panel-title">
+            <p className="eyebrow">赛前设置</p>
+            <h2>训练席</h2>
+          </div>
+
           <label className="field">
             <span>辩题</span>
             <textarea
@@ -180,6 +213,16 @@ function App() {
             onChange={(value) => setConfig({ ...config, rounds: value })}
           />
 
+          <div className="round-progress" aria-label="轮次进度">
+            {Array.from({ length: config.rounds }, (_, index) => (
+              <span
+                key={index}
+                className={index < currentRound ? 'active' : ''}
+                aria-hidden="true"
+              />
+            ))}
+          </div>
+
           <div className="button-stack">
             <button className="primary-button" onClick={startTraining} disabled={isLoading || isTraining}>
               {isLoading && !isTraining ? '生成中...' : '开始训练'}
@@ -202,7 +245,9 @@ function App() {
           <div className="conversation">
             {history.length === 0 ? (
               <div className="empty-state">
-                完成左侧设置后开始训练，AI 将自动站在你的对立面提出第一轮问题。
+                <span className="empty-light" />
+                <strong>赛场待命</strong>
+                <p>完成左侧设置后开始训练，AI 将自动站在你的对立面提出第一轮问题。</p>
               </div>
             ) : (
               history.map((item, index) => (
@@ -211,6 +256,13 @@ function App() {
                   <p>{item.content}</p>
                 </article>
               ))
+            )}
+
+            {isLoading && isTraining && (
+              <div className="message ai thinking">
+                <span>AI 攻辩方</span>
+                <p>正在组织追问<span className="dot-loader" /></p>
+              </div>
             )}
           </div>
 
