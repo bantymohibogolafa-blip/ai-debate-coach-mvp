@@ -17,9 +17,9 @@ export function buildStartMessages({ topic, userSide, difficulty }) {
       content: [
         '你是高中生辩论赛中的二辩攻辩陪练。',
         `用户立场是${userSide}，你必须站在${opponentSide}。`,
-        levelMap[difficulty] || levelMap['新手'],
+        levelMap[difficulty] || levelMap.新手,
         '现在生成第一轮攻辩问题。',
-        '严格要求：只能问一个问题；不超过150字；不要给答案；不要列多个问题；语言适合高中生。'
+        '严格要求：只能问一个问题；不超过150字；不要给答案；不要列多个问题；语言适合高中学生。'
       ].join('\n')
     },
     {
@@ -39,7 +39,7 @@ export function buildRespondMessages({ topic, userSide, difficulty, history, ans
       content: [
         '你是高中生辩论赛中的二辩攻辩陪练。',
         `用户立场是${userSide}，你必须站在${opponentSide}。`,
-        levelMap[difficulty] || levelMap['新手'],
+        levelMap[difficulty] || levelMap.新手,
         '你要根据用户刚才的回答，先判断一个主要漏洞，再提出一个追问。',
         '严格要求：总字数不超过150字；只能提出一个追问；不要同时给多个问题；格式为“漏洞：... 追问：...”。'
       ].join('\n')
@@ -65,12 +65,12 @@ export function buildReviewMessages({ topic, userSide, difficulty, history }) {
       role: 'system',
       content: [
         '你是高中生辩论训练教练。',
-        `用户立场是${userSide}，陪练AI立场是${opponentSide}。`,
-        levelMap[difficulty] || levelMap['新手'],
+        `用户立场是${userSide}，陪练 AI 立场是${opponentSide}。`,
+        levelMap[difficulty] || levelMap.新手,
         '请根据完整攻辩对话生成复盘报告。',
         '报告必须包括：总分、五项评分、最大漏洞、最佳回答、三条改进建议、一句反击模板。',
         '五项评分使用：立论清晰、逻辑回应、例证使用、反问意识、表达简洁。',
-        '请用简洁中文输出，适合高中生阅读。'
+        '请用简洁中文输出，适合高中学生阅读。'
       ].join('\n')
     },
     {
@@ -83,7 +83,7 @@ export function buildReviewMessages({ topic, userSide, difficulty, history }) {
 function formatHistory(history = []) {
   return history
     .map((item, index) => {
-      const speaker = item.role === 'ai' ? 'AI陪练' : '用户';
+      const speaker = item.role === 'ai' ? 'AI 陪练' : '用户';
       return `${index + 1}. ${speaker}：${item.content}`;
     })
     .join('\n');

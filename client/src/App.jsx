@@ -126,7 +126,7 @@ function App() {
           <p className="eyebrow">高中辩论训练 MVP</p>
           <h1>AI 二辩攻辩陪练</h1>
           <p className="subtitle">
-            输入辩题，选择立场与难度，让 AI 站在对立面进行一问一答式攻辩训练。
+            输入辩题，选择立场与难度，让 AI 站在你的对立面进行一问一答式攻辩训练。
           </p>
         </div>
         <div className="status-card">
@@ -200,7 +200,7 @@ function App() {
             ) : (
               history.map((item, index) => (
                 <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
-                  <span>{item.role === 'ai' ? 'AI攻辩方' : '我的回答'}</span>
+                  <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
                   <p>{item.content}</p>
                 </article>
               ))
