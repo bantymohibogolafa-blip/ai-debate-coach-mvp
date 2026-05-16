@@ -4,7 +4,15 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callDeepSeek } from './deepseek.js';
-import { buildRespondMessages, buildReviewMessages, buildStartMessages } from './prompts.js';
+import {
+  buildRespondMessages,
+  buildReviewMessages,
+  buildStartMessages,
+  isValidDifficulty,
+  isValidSide,
+  normalizeDifficulty,
+  normalizeSide
+} from './prompts.js';
 
 dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 
@@ -90,8 +98,8 @@ app.listen(port, () => {
 
 function validateSessionPayload(body) {
   const topic = normalizeText(body.topic);
-  const userSide = normalizeText(body.userSide);
-  const difficulty = normalizeText(body.difficulty);
+  const userSide = normalizeSide(normalizeText(body.userSide));
+  const difficulty = normalizeDifficulty(normalizeText(body.difficulty));
   const rounds = Number(body.rounds);
   const history = Array.isArray(body.history) ? body.history : [];
 
@@ -99,11 +107,11 @@ function validateSessionPayload(body) {
     throw badRequest('请输入辩题。');
   }
 
-  if (!['正方', '反方'].includes(userSide)) {
+  if (!isValidSide(userSide)) {
     throw badRequest('请选择正方或反方。');
   }
 
-  if (!['新手', '校赛', '市赛'].includes(difficulty)) {
+  if (!isValidDifficulty(difficulty)) {
     throw badRequest('请选择训练难度。');
   }
 

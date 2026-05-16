@@ -1,13 +1,20 @@
 import { useMemo, useState } from 'react';
 
-const sides = ['正方', '反方'];
-const difficulties = ['新手', '校赛', '市赛'];
+const sides = [
+  { label: '正方', value: 'affirmative' },
+  { label: '反方', value: 'negative' }
+];
+const difficulties = [
+  { label: '新手', value: 'novice' },
+  { label: '校赛', value: 'campus' },
+  { label: '市赛', value: 'city' }
+];
 const roundOptions = [3, 5];
 
 const initialConfig = {
   topic: '',
-  userSide: '正方',
-  difficulty: '新手',
+  userSide: 'affirmative',
+  difficulty: 'novice',
   rounds: 3
 };
 
@@ -25,6 +32,7 @@ function App() {
     [history]
   );
   const isFinished = isTraining && userAnswers >= config.rounds;
+  const selectedSideLabel = getOptionLabel(sides, config.userSide);
 
   async function startTraining() {
     if (!config.topic.trim()) {
@@ -166,11 +174,10 @@ function App() {
 
           <OptionGroup
             label="轮数"
-            options={roundOptions}
+            options={roundOptions.map((value) => ({ label: `${value}轮`, value }))}
             value={config.rounds}
             disabled={isTraining || isLoading}
             onChange={(value) => setConfig({ ...config, rounds: value })}
-            formatter={(value) => `${value}轮`}
           />
 
           <div className="button-stack">
@@ -189,7 +196,7 @@ function App() {
               <p className="eyebrow">攻辩记录</p>
               <h2>{config.topic || '等待输入辩题'}</h2>
             </div>
-            <span className="badge">{config.userSide}训练</span>
+            <span className="badge">{selectedSideLabel}训练</span>
           </div>
 
           <div className="conversation">
@@ -251,7 +258,7 @@ function App() {
   );
 }
 
-function OptionGroup({ label, options, value, onChange, disabled, formatter = String }) {
+function OptionGroup({ label, options, value, onChange, disabled }) {
   return (
     <div className="option-group">
       <span>{label}</span>
@@ -259,17 +266,21 @@ function OptionGroup({ label, options, value, onChange, disabled, formatter = St
         {options.map((option) => (
           <button
             type="button"
-            key={option}
+            key={option.value}
             disabled={disabled}
-            className={option === value ? 'active' : ''}
-            onClick={() => onChange(option)}
+            className={option.value === value ? 'active' : ''}
+            onClick={() => onChange(option.value)}
           >
-            {formatter(option)}
+            {option.label}
           </button>
         ))}
       </div>
     </div>
   );
+}
+
+function getOptionLabel(options, value) {
+  return options.find((option) => option.value === value)?.label || '';
 }
 
 async function postJson(url, body) {
