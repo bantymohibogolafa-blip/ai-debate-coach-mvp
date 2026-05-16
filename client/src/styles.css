@@ -320,6 +320,25 @@ textarea:focus {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
+.celebrity-options .segmented {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.celebrity-options .segmented button:first-child {
+  grid-column: 1 / -1;
+}
+
+.mode-note {
+  margin: -6px 0 18px;
+  border-left: 4px solid #c8502d;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #5e6e76;
+  background: #fff3ed;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .round-progress {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -673,6 +692,14 @@ textarea:focus {
 
   .segmented {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .celebrity-options .segmented {
+    grid-template-columns: 1fr;
+  }
+
+  .celebrity-options .segmented button:first-child {
+    grid-column: auto;
   }
 
   .conversation {

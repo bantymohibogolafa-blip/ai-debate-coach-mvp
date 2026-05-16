@@ -8,8 +8,10 @@ import {
   buildRespondMessages,
   buildReviewMessages,
   buildStartMessages,
+  isValidCelebrityDebater,
   isValidDifficulty,
   isValidSide,
+  normalizeCelebrityDebater,
   normalizeDifficulty,
   normalizeSide
 } from './prompts.js';
@@ -98,7 +100,8 @@ app.listen(port, () => {
 function validateSessionPayload(body) {
   const topic = normalizeText(body.topic);
   const userSide = normalizeSide(normalizeText(body.userSide));
-  const difficulty = normalizeDifficulty(normalizeText(body.difficulty));
+  const celebrityDebater = normalizeCelebrityDebater(normalizeText(body.celebrityDebater));
+  const difficulty = celebrityDebater === 'none' ? normalizeDifficulty(normalizeText(body.difficulty)) : 'city';
   const rounds = Number(body.rounds);
   const history = Array.isArray(body.history) ? body.history : [];
 
@@ -114,6 +117,10 @@ function validateSessionPayload(body) {
     throw badRequest('请选择训练难度。');
   }
 
+  if (!isValidCelebrityDebater(celebrityDebater)) {
+    throw badRequest('请选择有效的辩手模式。');
+  }
+
   if (![3, 5].includes(rounds)) {
     throw badRequest('请选择3轮或5轮。');
   }
@@ -122,6 +129,7 @@ function validateSessionPayload(body) {
     topic,
     userSide,
     difficulty,
+    celebrityDebater,
     rounds,
     history: history
       .filter((item) => ['ai', 'user'].includes(item.role) && normalizeText(item.content))

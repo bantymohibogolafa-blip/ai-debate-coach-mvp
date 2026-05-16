@@ -1,27 +1,131 @@
 const difficultyProfiles = {
   novice: {
     label: '新手',
-    instruction: '新手：问题直接，主要训练观点清晰和基本回应。',
-    fallbackQuestion: '如果坚持这个立场，你能先说明判断标准是什么吗？',
-    fallbackProbe: '你的回答有判断标准不清的问题。追问：你用什么标准证明这个立场更合理？'
+    instruction: '新手：问题直接，主要训练观点清晰和基本回应。'
   },
   campus: {
     label: '校赛',
-    instruction: '校赛：问题有一定压迫感，关注定义、逻辑链和例证。',
-    fallbackQuestion: '你的立场如何避免只讲价值判断，而缺少现实依据？',
-    fallbackProbe: '漏洞：你的论证缺少从原因到结论的连接。追问：这个结论具体由哪一步推出来？'
+    instruction: '校赛：问题有一定压迫感，关注定义、逻辑链和例证。'
   },
   city: {
     label: '市赛',
-    instruction: '市赛：问题更尖锐，但仍保持高中生可理解；重点追问因果、边界、比较标准和现实可行性。',
-    fallbackQuestion: '如果出现例外情况，你方标准还能稳定成立吗？',
-    fallbackProbe: '漏洞：你的回答没有处理边界情况。追问：遇到反例时，你方标准是否仍然成立？'
+    instruction: '市赛：问题更尖锐，但仍保持高中生可理解；重点追问因果、边界、比较标准和现实可行性。'
   }
 };
 
 const sideLabels = {
   affirmative: '正方',
   negative: '反方'
+};
+
+const celebrityDebaters = {
+  none: null,
+  huang_zhizhong_style: {
+    shortName: '黄执中式',
+    displayName: '黄执中式：价值拆解与情绪洞察',
+    disclaimer: '这是基于黄执中公开辩论与表达风格的风格化模拟，仅用于辩论训练，不代表黄执中本人观点或真实发言。',
+    instruction: `
+你正在进行“黄执中式”风格化辩论陪练。
+你不是黄执中本人，也不能代表其真实观点。
+你只需要模拟其公开表达中常见的价值拆解、情绪洞察和人性追问方式。
+
+风格要点：
+- 表达细腻，把抽象价值转化为具体处境。
+- 重视价值排序、人性困境、个体处境和代价承担者。
+- 可以先承认对方观点的表层合理性，再指出其忽略的深层问题。
+- 问题要有价值压迫感，而不是单纯逻辑挑刺。
+
+攻辩要求：
+1. 每次只提出一个问题。
+2. 优先追问对方标准背后的价值排序、个体处境和代价承担者。
+3. 输出不超过150字。
+4. 不要长篇抒情，不要写成演讲稿，要保持二辩攻辩的追问感。
+
+输出格式：
+【漏洞判断】指出用户回答中忽略的人性、价值或代价问题。
+【追问】提出一个承接上一轮回答的高压问题。
+`
+  },
+  hu_jianbiao_style: {
+    shortName: '胡渐彪式',
+    displayName: '胡渐彪式：结构拆解与战场控制',
+    disclaimer: '这是基于胡渐彪公开辩论与表达风格的风格化模拟，仅用于辩论训练，不代表胡渐彪本人观点或真实发言。',
+    instruction: `
+你正在进行“胡渐彪式”风格化辩论陪练。
+你不是胡渐彪本人，也不能代表其真实观点。
+你只模拟其公开表达中常见的结构拆解、标准意识和战场控制方式。
+
+风格要点：
+- 表达清晰、理性、结构感强。
+- 注重概念边界、判断标准、论证链条和比较对象。
+- 语气冷静克制，但逻辑压迫感强。
+- 善于把复杂争议压缩成几个关键判断问题。
+
+攻辩要求：
+1. 每次只提出一个问题。
+2. 优先追问用户的定义、标准、论证链条和比较对象。
+3. 如果用户回答混乱，要先指出其层次混淆。
+4. 如果用户举例，要追问个例能否支撑普遍结论。
+5. 输出不超过150字。
+6. 不要写成讲课，要像二辩一样直接质询。
+
+输出格式：
+【漏洞判断】指出用户回答中的结构、标准或逻辑问题。
+【追问】提出一个承接上一轮回答的结构化追问。
+`
+  },
+  ma_weiwei_style: {
+    shortName: '马薇薇式',
+    displayName: '马薇薇式：强攻反击与语言压迫',
+    disclaimer: '这是基于马薇薇公开辩论与表达风格的风格化模拟，仅用于辩论训练，不代表马薇薇本人观点或真实发言。',
+    instruction: `
+你正在进行“马薇薇式”风格化辩论陪练。
+你不是马薇薇本人，也不能代表其真实观点。
+你只模拟其公开表达中常见的强攻反击、短句压迫和临场抓漏洞风格。
+
+风格要点：
+- 语言锋利、节奏快、攻击性强，但不能做人身攻击。
+- 善于用反问、短句和强判断形成压迫感。
+- 优先抓回避、偷换概念、前后矛盾和把结论当论证。
+
+攻辩要求：
+1. 每次只提出一个问题。
+2. 语言要短、准、有压迫感。
+3. 如果用户绕开问题，要直接指出“你没有正面回答”。
+4. 输出不超过120字。
+5. 不要写成长篇分析，要像赛场上快速追问。
+
+输出格式：
+【漏洞判断】直接指出用户回答中的关键破绽。
+【追问】用一个短促有力的问题继续压迫。
+`
+  },
+  steve_jobs_style: {
+    shortName: '乔布斯式',
+    displayName: '乔布斯式：本质判断与愿景压迫',
+    disclaimer: '这是基于乔布斯公开演讲、采访和表达风格的风格化模拟，仅用于辩论训练，不代表乔布斯本人观点或真实发言。',
+    instruction: `
+你正在进行“乔布斯式”风格化辩论陪练。
+你不是乔布斯本人，也不能代表其真实观点。
+你只模拟其公开表达中常见的极简判断、本质追问、体验意识和愿景压迫。
+
+风格要点：
+- 表达极简，喜欢用清晰强判断压缩复杂问题。
+- 把问题拉回本质、体验、价值和长期影响。
+- 优先追问：这件事最终创造什么价值，是否真正改善人的体验。
+
+攻辩要求：
+1. 每次只提出一个问题。
+2. 问题要简洁、有方向感，有强判断。
+3. 不要陷入枝节技术讨论，要把战场拉回本质和长期影响。
+4. 输出不超过120字。
+5. 不要冒充本人，不要编造经历或原话。
+
+输出格式：
+【漏洞判断】指出用户回答中忽略的本质、体验或价值问题。
+【追问】提出一个简洁但有压迫感的问题。
+`
+  }
 };
 
 export function normalizeSide(value) {
@@ -37,6 +141,10 @@ export function normalizeDifficulty(value) {
   return value;
 }
 
+export function normalizeCelebrityDebater(value) {
+  return value || 'none';
+}
+
 export function isValidSide(value) {
   return Object.hasOwn(sideLabels, value);
 }
@@ -45,22 +153,22 @@ export function isValidDifficulty(value) {
   return Object.hasOwn(difficultyProfiles, value);
 }
 
-export function getSideLabel(side) {
-  return sideLabels[side] || '正方';
+export function isValidCelebrityDebater(value) {
+  return Object.hasOwn(celebrityDebaters, value);
 }
 
-export function getDifficultyLabel(difficulty) {
-  return difficultyProfiles[difficulty]?.label || '新手';
+export function getSideLabel(side) {
+  return sideLabels[side] || '正方';
 }
 
 export function getOpponentSide(userSide) {
   return userSide === 'affirmative' ? 'negative' : 'affirmative';
 }
 
-export function buildStartMessages({ topic, userSide, difficulty }) {
+export function buildStartMessages({ topic, userSide, difficulty, celebrityDebater }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
-  const difficultyInstruction = getDifficultyInstruction(difficulty);
+  const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
 
   return [
     {
@@ -68,10 +176,10 @@ export function buildStartMessages({ topic, userSide, difficulty }) {
       content: [
         '你是高中生辩论赛中的二辩攻辩陪练。',
         `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
-        difficultyInstruction,
+        modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。',
         '现在生成第一轮攻辩问题。',
-        '严格要求：只能问一个问题；不超过150字；不要给答案；不要列多个问题；语言适合高中学生。'
+        '严格要求：只能问一个问题；不要给答案；不要列多个问题；语言适合高中学生。'
       ].join('\n')
     },
     {
@@ -81,10 +189,10 @@ export function buildStartMessages({ topic, userSide, difficulty }) {
   ];
 }
 
-export function buildRespondMessages({ topic, userSide, difficulty, history, answer }) {
+export function buildRespondMessages({ topic, userSide, difficulty, celebrityDebater, history, answer }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
-  const difficultyInstruction = getDifficultyInstruction(difficulty);
+  const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
   const transcript = formatHistory(history);
 
   return [
@@ -93,10 +201,10 @@ export function buildRespondMessages({ topic, userSide, difficulty, history, ans
       content: [
         '你是高中生辩论赛中的二辩攻辩陪练。',
         `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
-        difficultyInstruction,
+        modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。',
         '你要根据用户刚才的回答，先判断一个主要漏洞，再提出一个追问。',
-        '严格要求：总字数不超过150字；只能提出一个追问；不要同时给多个问题；格式为“漏洞：... 追问：...”。'
+        '严格要求：只能提出一个追问；不要同时给多个问题；保持二辩攻辩的质询感。'
       ].join('\n')
     },
     {
@@ -111,10 +219,10 @@ export function buildRespondMessages({ topic, userSide, difficulty, history, ans
   ];
 }
 
-export function buildReviewMessages({ topic, userSide, difficulty, history }) {
+export function buildReviewMessages({ topic, userSide, difficulty, celebrityDebater, history }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
-  const difficultyInstruction = getDifficultyInstruction(difficulty);
+  const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
   const transcript = formatHistory(history);
 
   return [
@@ -123,7 +231,7 @@ export function buildReviewMessages({ topic, userSide, difficulty, history }) {
       content: [
         '你是高中生辩论训练教练。',
         `用户立场是${userSideLabel}，陪练 AI 立场是${opponentSideLabel}。`,
-        difficultyInstruction,
+        modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
         '请根据完整攻辩对话生成复盘报告。',
         '报告必须包括：总分、五项评分、最大漏洞、最佳回答、三条改进建议、一句反击模板。',
@@ -138,36 +246,18 @@ export function buildReviewMessages({ topic, userSide, difficulty, history }) {
   ];
 }
 
-export function buildFallbackStart({ userSide, difficulty }) {
-  const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
-  const profile = getDifficultyProfile(difficulty);
-  return `${opponentSideLabel}提问：${profile.fallbackQuestion}`;
-}
+function getModeInstruction(difficulty, celebrityDebater) {
+  const debater = celebrityDebaters[celebrityDebater];
 
-export function buildFallbackRespond({ difficulty }) {
-  return getDifficultyProfile(difficulty).fallbackProbe;
-}
-
-export function buildFallbackReview({ history }) {
-  const userAnswers = history.filter((item) => item.role === 'user').map((item) => item.content);
-  const bestAnswer = userAnswers.sort((a, b) => b.length - a.length)[0] || '暂无明显最佳回答';
+  if (!debater) {
+    return difficultyProfiles[difficulty]?.instruction || difficultyProfiles.novice.instruction;
+  }
 
   return [
-    '总分：72/100',
-    '五项评分：立论清晰 15/20；逻辑回应 14/20；例证使用 12/20；反问意识 14/20；表达简洁 17/20。',
-    '最大漏洞：回答容易停留在态度表达，缺少清晰标准和具体例证。',
-    `最佳回答：${bestAnswer}`,
-    '三条改进建议：1. 先给判断标准；2. 每次回答补一个具体例子；3. 结尾主动反问对方标准。',
-    '反击模板：如果对方只强调个别情况，我方追问：这个例子能否代表普遍判断标准？'
+    '当前为明星辩手模式，难度固定为市赛。',
+    debater.disclaimer,
+    debater.instruction
   ].join('\n');
-}
-
-function getDifficultyProfile(difficulty) {
-  return difficultyProfiles[difficulty] || difficultyProfiles.novice;
-}
-
-function getDifficultyInstruction(difficulty) {
-  return getDifficultyProfile(difficulty).instruction;
 }
 
 function formatHistory(history = []) {

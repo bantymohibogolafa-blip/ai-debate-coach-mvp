@@ -11,12 +11,21 @@ const difficulties = [
   { label: '市赛', value: 'city' }
 ];
 
+const celebrityDebaters = [
+  { label: '普通 AI', value: 'none', shortName: '普通 AI' },
+  { label: '黄执中式', value: 'huang_zhizhong_style', shortName: '黄执中式' },
+  { label: '胡渐彪式', value: 'hu_jianbiao_style', shortName: '胡渐彪式' },
+  { label: '马薇薇式', value: 'ma_weiwei_style', shortName: '马薇薇式' },
+  { label: '乔布斯式', value: 'steve_jobs_style', shortName: '乔布斯式' }
+];
+
 const roundOptions = [3, 5];
 
 const initialConfig = {
   topic: '',
   userSide: '',
   difficulty: 'novice',
+  celebrityDebater: 'none',
   rounds: 3
 };
 
@@ -35,17 +44,29 @@ function App() {
   );
   const isFinished = isTraining && userAnswers >= config.rounds;
   const currentRound = Math.min(userAnswers + 1, config.rounds);
+  const isCelebrityMode = config.celebrityDebater !== 'none';
   const selectedSideLabel = getOptionLabel(sides, config.userSide) || '待选择';
   const opponentSideLabel = config.userSide
     ? config.userSide === 'affirmative'
       ? '反方'
       : '正方'
     : '待定';
-  const selectedDifficultyLabel = getOptionLabel(difficulties, config.difficulty);
+  const selectedDebater = celebrityDebaters.find((item) => item.value === config.celebrityDebater);
+  const selectedDifficultyLabel = isCelebrityMode
+    ? `市赛 · ${selectedDebater?.shortName || '明星辩手'}`
+    : getOptionLabel(difficulties, config.difficulty);
 
   function updateConfig(nextConfig) {
     setConfig(nextConfig);
     if (error) setError('');
+  }
+
+  function selectCelebrityDebater(value) {
+    updateConfig({
+      ...config,
+      celebrityDebater: value,
+      difficulty: value === 'none' ? config.difficulty : 'city'
+    });
   }
 
   function validateTrainingConfig() {
@@ -198,8 +219,8 @@ function App() {
         </div>
         <div className="versus-mark">VS</div>
         <div className="side-card ai-side">
-          <span>AI 攻辩方</span>
-          <strong>{opponentSideLabel}</strong>
+          <span>{isCelebrityMode ? '明星辩手模式' : 'AI 攻辩方'}</span>
+          <strong>{isCelebrityMode ? selectedDebater.shortName : opponentSideLabel}</strong>
         </div>
       </section>
 
@@ -230,10 +251,25 @@ function App() {
           />
 
           <OptionGroup
+            label="明星辩手模式"
+            options={celebrityDebaters}
+            value={config.celebrityDebater}
+            disabled={isTraining || isLoading}
+            onChange={selectCelebrityDebater}
+            className="celebrity-options"
+          />
+
+          {isCelebrityMode && (
+            <p className="mode-note">
+              已启用市赛难度。该模式仅做公开表达风格的训练模拟，不代表人物本人观点或真实发言。
+            </p>
+          )}
+
+          <OptionGroup
             label="难度"
             options={difficulties}
             value={config.difficulty}
-            disabled={isTraining || isLoading}
+            disabled={isTraining || isLoading || isCelebrityMode}
             onChange={(value) => updateConfig({ ...config, difficulty: value })}
           />
 
@@ -271,7 +307,9 @@ function App() {
               <p className="eyebrow">攻辩记录</p>
               <h2>{config.topic || '等待输入辩题'}</h2>
             </div>
-            <span className="badge">{selectedSideLabel}训练</span>
+            <span className="badge">
+              {isCelebrityMode ? `${selectedDebater.shortName} · 市赛` : `${selectedSideLabel}训练`}
+            </span>
           </div>
 
           <div className="conversation">
@@ -345,9 +383,9 @@ function App() {
   );
 }
 
-function OptionGroup({ label, options, value, onChange, disabled }) {
+function OptionGroup({ label, options, value, onChange, disabled, className = '' }) {
   return (
-    <div className="option-group">
+    <div className={`option-group ${className}`}>
       <span>{label}</span>
       <div className="segmented">
         {options.map((option) => (
