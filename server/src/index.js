@@ -35,9 +35,9 @@ app.post('/api/debate/start', async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body);
     const messages = buildStartMessages(payload);
-    const content = await callDeepSeek(messages, { maxTokens: 220 });
+    const content = await callDeepSeek(messages, { maxTokens: 360 });
 
-    res.json({ content: limitLength(cleanOpeningQuestion(content), 150) });
+    res.json({ content: limitLength(cleanOpeningQuestion(content), 320) });
   } catch (error) {
     next(error);
   }
@@ -53,9 +53,9 @@ app.post('/api/debate/respond', async (req, res, next) => {
     }
 
     const messages = buildRespondMessages({ ...payload, answer });
-    const content = await callDeepSeek(messages, { maxTokens: 260 });
+    const content = await callDeepSeek(messages, { maxTokens: 420 });
 
-    res.json({ content: limitLength(content, 150) });
+    res.json({ content: limitLength(content, 320) });
   } catch (error) {
     next(error);
   }
