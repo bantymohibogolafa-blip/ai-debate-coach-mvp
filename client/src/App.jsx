@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 const sides = [
   { label: '正方', value: 'affirmative' },
@@ -90,6 +90,11 @@ function App() {
   const [error, setError] = useState('');
   const [topicDirection, setTopicDirection] = useState('education');
   const [generatedTopics, setGeneratedTopics] = useState([]);
+  const [isListening, setIsListening] = useState(false);
+  const [speechError, setSpeechError] = useState('');
+  const [speechStatus, setSpeechStatus] = useState('');
+  const [isSpeechSupported, setIsSpeechSupported] = useState(true);
+  const recognitionRef = useRef(null);
 
   const userAnswers = useMemo(
     () => history.filter((item) => item.role === 'user').length,
@@ -108,6 +113,25 @@ function App() {
   const selectedDifficultyLabel = isCelebrityMode
     ? `市赛 · ${selectedDebater?.shortName || '明星辩手'}`
     : getOptionLabel(difficulties, config.difficulty);
+
+  useEffect(() => {
+    const SpeechRecognition = getSpeechRecognition();
+    setIsSpeechSupported(Boolean(SpeechRecognition));
+
+    if (!SpeechRecognition) {
+      setSpeechError('当前浏览器不支持实时语音识别，请使用文字输入，或切换到 Chrome / Edge 浏览器。');
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+        recognitionRef.current.stop();
+        recognitionRef.current = null;
+      }
+    };
+  }, []);
 
   function updateConfig(nextConfig) {
     setConfig(nextConfig);
@@ -178,7 +202,7 @@ function App() {
   }
 
   async function submitAnswer() {
-    if (isLoading) return;
+    if (isLoading || isListening) return;
 
     const trimmedAnswer = answer.trim();
     if (!trimmedAnswer) {
@@ -214,7 +238,7 @@ function App() {
   }
 
   async function finishAndReview() {
-    if (isLoading) return;
+    if (isLoading || isListening) return;
 
     if (!history.length) {
       setError('暂无对话，无法复盘。');
@@ -241,15 +265,81 @@ function App() {
   }
 
   function resetTraining() {
-    if (isLoading) return;
+    if (isLoading || isListening) return;
 
     setConfig(initialConfig);
     setHistory([]);
     setAnswer('');
     setReview('');
     setError('');
+    setSpeechError(isSpeechSupported ? '' : '当前浏览器不支持实时语音识别，请使用文字输入，或切换到 Chrome / Edge 浏览器。');
+    setSpeechStatus('');
     setIsTraining(false);
     setGeneratedTopics([]);
+  }
+
+  function startSpeechRecognition() {
+    if (isLoading || isListening) return;
+
+    const SpeechRecognition = getSpeechRecognition();
+    if (!SpeechRecognition) {
+      setIsSpeechSupported(false);
+      setSpeechStatus('');
+      setSpeechError('当前浏览器不支持实时语音识别，请使用文字输入，或切换到 Chrome / Edge 浏览器。');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'zh-CN';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      const transcript = event.results?.[0]?.[0]?.transcript?.trim();
+      if (!transcript) return;
+
+      setAnswer((currentAnswer) => {
+        const separator = currentAnswer.trim() ? '\n' : '';
+        return `${currentAnswer}${separator}${transcript}`;
+      });
+      setSpeechError('');
+      setSpeechStatus('识别完成，请检查文字后提交。');
+    };
+
+    recognition.onerror = (event) => {
+      const isPermissionError = event.error === 'not-allowed' || event.error === 'service-not-allowed';
+      setSpeechStatus('');
+      setSpeechError(isPermissionError ? '请允许浏览器使用麦克风后再试。' : '识别失败，请重试。');
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+    };
+
+    recognitionRef.current = recognition;
+    setSpeechError('');
+    setSpeechStatus('正在聆听，请开始回答。');
+    setIsListening(true);
+
+    try {
+      recognition.start();
+    } catch {
+      setIsListening(false);
+      setSpeechStatus('');
+      setSpeechError('识别失败，请重试。');
+      recognitionRef.current = null;
+    }
+  }
+
+  function stopSpeechRecognition() {
+    if (!recognitionRef.current) return;
+
+    recognitionRef.current.stop();
+    setIsListening(false);
+    setSpeechStatus('');
   }
 
   return (
@@ -452,17 +542,42 @@ function App() {
                     onChange={(event) => {
                       setAnswer(event.target.value);
                       if (error) setError('');
+                      if (speechError && isSpeechSupported) setSpeechError('');
                     }}
                     placeholder="输入你的回答，尽量控制在30秒攻辩表达长度内。"
                     rows={4}
                   />
-                  <button className="primary-button" onClick={submitAnswer} disabled={isLoading}>
+                  <div className="speech-panel">
+                    {isSpeechSupported ? (
+                      <button
+                        type="button"
+                        className={`voice-button ${isListening ? 'listening' : ''}`}
+                        onClick={isListening ? stopSpeechRecognition : startSpeechRecognition}
+                        disabled={isLoading}
+                      >
+                        {isListening ? '停止识别' : '🎙 语音输入'}
+                      </button>
+                    ) : (
+                      <button type="button" className="voice-button" disabled>
+                        🎙 语音输入
+                      </button>
+                    )}
+                    <button type="button" className="upload-soon-button" disabled>
+                      录音上传识别（开发中）
+                    </button>
+                  </div>
+                  {(speechStatus || speechError) && (
+                    <div className={speechError ? 'speech-message error' : 'speech-message'}>
+                      {speechError || speechStatus}
+                    </div>
+                  )}
+                  <button className="primary-button" onClick={submitAnswer} disabled={isLoading || isListening}>
                     {isLoading ? '分析中...' : '提交回答'}
                   </button>
                 </>
               )}
 
-              <button className="secondary-button" onClick={finishAndReview} disabled={isLoading || !history.length}>
+              <button className="secondary-button" onClick={finishAndReview} disabled={isLoading || isListening || !history.length}>
                 结束并复盘
               </button>
             </div>
@@ -514,6 +629,14 @@ function getOptionLabel(options, value) {
 
 function shuffle(items) {
   return [...items].sort(() => Math.random() - 0.5);
+}
+
+function getSpeechRecognition() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
 function requireContent(data) {
