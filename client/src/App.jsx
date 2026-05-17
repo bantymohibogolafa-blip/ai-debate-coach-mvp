@@ -88,6 +88,7 @@ function App() {
   const [isTraining, setIsTraining] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [setupStep, setSetupStep] = useState('topic');
   const [topicDirection, setTopicDirection] = useState('education');
   const [generatedTopics, setGeneratedTopics] = useState([]);
   const [isPolishing, setIsPolishing] = useState(false);
@@ -117,6 +118,7 @@ function App() {
     : getOptionLabel(difficulties, config.difficulty);
   const latestAiMessage = useMemo(() => getLatestMessage(history, 'ai'), [history]);
   const isBusy = isLoading || isPolishing;
+  const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
 
   useEffect(() => {
     const SpeechRecognition = getSpeechRecognition();
@@ -161,6 +163,18 @@ function App() {
       celebrityDebater: value,
       difficulty: value === 'none' ? config.difficulty : 'city'
     });
+  }
+
+  function goToDetailsStep() {
+    if (isTraining || isBusy) return;
+
+    if (!config.topic.trim()) {
+      setError('请先输入辩题，或从随机生成的候选辩题中选择一个。');
+      return;
+    }
+
+    setError('');
+    setSetupStep('details');
   }
 
   function validateTrainingConfig() {
@@ -283,6 +297,7 @@ function App() {
     setPolishResult(null);
     setIsTraining(false);
     setGeneratedTopics([]);
+    setSetupStep('topic');
   }
 
   function startSpeechRecognition() {
@@ -390,7 +405,7 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${hasSessionContent ? 'session-active' : ''}`}>
       <section className="arena-hero">
         <div className="hero-copy">
           <p className="eyebrow">高中辩论训练场</p>
@@ -416,132 +431,161 @@ function App() {
         </div>
       </section>
 
-      <section className="match-strip" aria-label="对阵信息">
-        <div className="side-card user-side">
-          <span>你方</span>
-          <strong>{selectedSideLabel}</strong>
-        </div>
-        <div className="versus-mark">VS</div>
-        <div className="side-card ai-side">
-          <span>{isCelebrityMode ? '明星辩手模式' : 'AI 攻辩方'}</span>
-          <strong>{isCelebrityMode ? selectedDebater.shortName : opponentSideLabel}</strong>
-        </div>
-      </section>
+      {!hasSessionContent && setupStep === 'details' && (
+        <section className="match-strip" aria-label="对阵信息">
+          <div className="side-card user-side">
+            <span>你方</span>
+            <strong>{selectedSideLabel}</strong>
+          </div>
+          <div className="versus-mark">VS</div>
+          <div className="side-card ai-side">
+            <span>{isCelebrityMode ? '明星辩手模式' : 'AI 攻辩方'}</span>
+            <strong>{isCelebrityMode ? selectedDebater.shortName : opponentSideLabel}</strong>
+          </div>
+        </section>
+      )}
 
-      <section className="layout">
+      <section className={`layout ${hasSessionContent ? 'debate-layout' : 'setup-layout'}`}>
+        {!hasSessionContent && (
         <aside className="panel setup-panel">
           <div className="panel-title">
             <p className="eyebrow">赛前设置</p>
-            <h2>训练席</h2>
+            <h2>{setupStep === 'topic' ? '选择辩题' : '选择训练方式'}</h2>
           </div>
 
-          <label className="field">
-            <span>辩题</span>
-            <textarea
-              value={config.topic}
-              disabled={isTraining || isBusy}
-              onChange={(event) => updateConfig({ ...config, topic: event.target.value })}
-              placeholder="例如：中学生使用 AI 工具利大于弊"
-              rows={4}
-            />
-          </label>
+          <div className="setup-progress" aria-label="赛前设置进度">
+            <span className={setupStep === 'topic' ? 'active' : 'done'}>1 辩题</span>
+            <span className={setupStep === 'details' ? 'active' : ''}>2 训练方式</span>
+          </div>
 
-          <div className="topic-generator">
-            <OptionGroup
-              label="随机辩题方向"
-              options={topicDirections}
-              value={topicDirection}
-              disabled={isTraining || isBusy}
-              onChange={(value) => {
-                setTopicDirection(value);
-                setGeneratedTopics([]);
-              }}
-              className="topic-direction-options"
-            />
-            <button
-              type="button"
-              className="topic-generate-button"
-              onClick={generateTopics}
-              disabled={isTraining || isBusy}
-            >
-              随机生成候选辩题
-            </button>
-            {generatedTopics.length > 0 && (
-              <div className="generated-topic-list" aria-label="候选辩题">
-                {generatedTopics.map((topic) => (
-                  <button
-                    type="button"
-                    key={topic}
-                    className={topic === config.topic ? 'selected' : ''}
-                    onClick={() => selectGeneratedTopic(topic)}
-                    disabled={isTraining || isBusy}
-                  >
-                    {topic}
-                  </button>
+          {setupStep === 'topic' ? (
+            <>
+              <label className="field">
+                <span>辩题</span>
+                <textarea
+                  value={config.topic}
+                  disabled={isBusy}
+                  onChange={(event) => updateConfig({ ...config, topic: event.target.value })}
+                  placeholder="例如：中学生使用 AI 工具利大于弊"
+                  rows={4}
+                />
+              </label>
+
+              <div className="topic-generator">
+                <OptionGroup
+                  label="随机辩题方向"
+                  options={topicDirections}
+                  value={topicDirection}
+                  disabled={isBusy}
+                  onChange={(value) => {
+                    setTopicDirection(value);
+                    setGeneratedTopics([]);
+                  }}
+                  className="topic-direction-options"
+                />
+                <button
+                  type="button"
+                  className="topic-generate-button"
+                  onClick={generateTopics}
+                  disabled={isBusy}
+                >
+                  随机生成候选辩题
+                </button>
+                {generatedTopics.length > 0 && (
+                  <div className="generated-topic-list" aria-label="候选辩题">
+                    {generatedTopics.map((topic) => (
+                      <button
+                        type="button"
+                        key={topic}
+                        className={topic === config.topic ? 'selected' : ''}
+                        onClick={() => selectGeneratedTopic(topic)}
+                        disabled={isBusy}
+                      >
+                        {topic}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button className="primary-button" onClick={goToDetailsStep} disabled={isBusy}>
+                下一步
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="selected-topic-card">
+                <span>已选辩题</span>
+                <strong>{config.topic}</strong>
+                <button type="button" onClick={() => setSetupStep('topic')} disabled={isBusy}>
+                  修改辩题
+                </button>
+              </div>
+
+              <OptionGroup
+                label="我的立场"
+                options={sides}
+                value={config.userSide}
+                disabled={isBusy}
+                onChange={(value) => updateConfig({ ...config, userSide: value })}
+              />
+
+              <OptionGroup
+                label="明星辩手模式"
+                options={celebrityDebaters}
+                value={config.celebrityDebater}
+                disabled={isBusy}
+                onChange={selectCelebrityDebater}
+                className="celebrity-options"
+              />
+
+              {isCelebrityMode && (
+                <p className="mode-note">
+                  已启用市赛难度。该模式仅做公开表达风格的训练模拟，不代表人物本人观点或真实发言。
+                </p>
+              )}
+
+              <OptionGroup
+                label="难度"
+                options={difficulties}
+                value={config.difficulty}
+                disabled={isBusy || isCelebrityMode}
+                onChange={(value) => updateConfig({ ...config, difficulty: value })}
+              />
+
+              <OptionGroup
+                label="轮数"
+                options={roundOptions.map((value) => ({ label: `${value}轮`, value }))}
+                value={config.rounds}
+                disabled={isBusy}
+                onChange={(value) => updateConfig({ ...config, rounds: value })}
+              />
+
+              <div className="round-progress" aria-label="轮次进度">
+                {Array.from({ length: config.rounds }, (_, index) => (
+                  <span
+                    key={index}
+                    className={index < currentRound ? 'active' : ''}
+                    aria-hidden="true"
+                  />
                 ))}
               </div>
-            )}
-          </div>
 
-          <OptionGroup
-            label="我的立场"
-            options={sides}
-            value={config.userSide}
-            disabled={isTraining || isBusy}
-            onChange={(value) => updateConfig({ ...config, userSide: value })}
-          />
-
-          <OptionGroup
-            label="明星辩手模式"
-            options={celebrityDebaters}
-            value={config.celebrityDebater}
-            disabled={isTraining || isBusy}
-            onChange={selectCelebrityDebater}
-            className="celebrity-options"
-          />
-
-          {isCelebrityMode && (
-            <p className="mode-note">
-              已启用市赛难度。该模式仅做公开表达风格的训练模拟，不代表人物本人观点或真实发言。
-            </p>
+              <div className="button-stack">
+                <button className="primary-button" onClick={startTraining} disabled={isBusy}>
+                  {isLoading && !isTraining ? '生成中...' : '开始训练'}
+                </button>
+                <button className="ghost-button" onClick={() => setSetupStep('topic')} disabled={isBusy}>
+                  上一步
+                </button>
+              </div>
+            </>
           )}
-
-          <OptionGroup
-            label="难度"
-            options={difficulties}
-            value={config.difficulty}
-            disabled={isTraining || isBusy || isCelebrityMode}
-            onChange={(value) => updateConfig({ ...config, difficulty: value })}
-          />
-
-          <OptionGroup
-            label="轮数"
-            options={roundOptions.map((value) => ({ label: `${value}轮`, value }))}
-            value={config.rounds}
-            disabled={isTraining || isBusy}
-            onChange={(value) => updateConfig({ ...config, rounds: value })}
-          />
-
-          <div className="round-progress" aria-label="轮次进度">
-            {Array.from({ length: config.rounds }, (_, index) => (
-              <span
-                key={index}
-                className={index < currentRound ? 'active' : ''}
-                aria-hidden="true"
-              />
-            ))}
-          </div>
-
-          <div className="button-stack">
-            <button className="primary-button" onClick={startTraining} disabled={isBusy || isTraining}>
-              {isLoading && !isTraining ? '生成中...' : '开始训练'}
-            </button>
-            <button className="ghost-button" onClick={resetTraining} disabled={isBusy}>
-              重新设置
-            </button>
-          </div>
+          {error && !hasSessionContent && <div className="error-box setup-error">{error}</div>}
         </aside>
+        )}
 
+        {hasSessionContent && (
         <section className="panel coach-panel">
           <div className="panel-header">
             <div>
@@ -551,6 +595,11 @@ function App() {
             <span className="badge">
               {isCelebrityMode ? `${selectedDebater.shortName} · 市赛` : `${selectedSideLabel}训练`}
             </span>
+            {hasSessionContent && (
+              <button className="compact-reset-button" type="button" onClick={resetTraining} disabled={isBusy || isListening}>
+                重新设置
+              </button>
+            )}
           </div>
 
           <div className="conversation">
@@ -672,6 +721,7 @@ function App() {
 
           {error && <div className="error-box">{error}</div>}
         </section>
+        )}
       </section>
 
       {review && (

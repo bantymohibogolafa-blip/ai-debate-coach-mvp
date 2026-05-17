@@ -241,6 +241,15 @@ h2 {
   animation: rise-in 560ms ease 130ms both;
 }
 
+.setup-layout {
+  grid-template-columns: minmax(0, 680px);
+  justify-content: center;
+}
+
+.debate-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .panel {
   border: 1px solid rgba(24, 36, 43, 0.11);
   border-radius: 8px;
@@ -257,6 +266,70 @@ h2 {
 
 .panel-title {
   margin-bottom: 18px;
+}
+
+.setup-progress {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.setup-progress span {
+  min-height: 38px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #687982;
+  background: #f7fafb;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.setup-progress span.active {
+  border-color: #2f7375;
+  color: #fff;
+  background: #2f7375;
+}
+
+.setup-progress span.done {
+  color: #245e62;
+  background: #e8f2f1;
+}
+
+.selected-topic-card {
+  display: grid;
+  gap: 9px;
+  border: 1px solid #d8e3e8;
+  border-left: 5px solid #c8502d;
+  border-radius: 8px;
+  margin-bottom: 18px;
+  padding: 13px 14px;
+  background: #fff9f5;
+}
+
+.selected-topic-card span {
+  color: #9c3e20;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.selected-topic-card strong {
+  color: #20313a;
+  font-size: 17px;
+  line-height: 1.45;
+}
+
+.selected-topic-card button {
+  width: fit-content;
+  min-height: 36px;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .field,
@@ -468,6 +541,17 @@ textarea:focus {
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 8px 13px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.compact-reset-button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  border-radius: 8px;
+  padding: 0 12px;
   color: #245e62;
   background: #e8f2f1;
   font-size: 13px;
@@ -856,8 +940,25 @@ textarea:focus {
     padding: 20px;
   }
 
+  .session-active .arena-hero {
+    padding: 16px;
+  }
+
+  .session-active .subtitle {
+    display: none;
+  }
+
+  .session-active h1 {
+    font-size: 30px;
+    line-height: 1.08;
+  }
+
   h1 {
     font-size: 40px;
+  }
+
+  .session-active h1 {
+    font-size: 30px;
   }
 
   h2 {
@@ -899,8 +1000,26 @@ textarea:focus {
     padding: 18px;
   }
 
+  .setup-panel {
+    min-height: calc(100vh - 240px);
+  }
+
   .panel-header {
     display: grid;
+  }
+
+  .panel-header .badge,
+  .compact-reset-button {
+    width: 100%;
+  }
+
+  .setup-progress {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .selected-topic-card button {
+    width: 100%;
+    min-height: 42px;
   }
 
   .segmented {
