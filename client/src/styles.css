@@ -328,6 +328,62 @@ textarea:focus {
   grid-column: 1 / -1;
 }
 
+.topic-generator {
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  margin: -4px 0 18px;
+  padding: 14px;
+  background: rgba(248, 251, 252, 0.86);
+}
+
+.topic-generator .option-group {
+  margin-bottom: 12px;
+}
+
+.topic-direction-options .segmented {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.topic-generate-button {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 8px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-weight: 900;
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.topic-generate-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: #dcefed;
+}
+
+.generated-topic-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.generated-topic-list button {
+  min-height: 42px;
+  border: 1px solid #c8d3da;
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: #263942;
+  background: #fff;
+  font-weight: 800;
+  text-align: left;
+  line-height: 1.35;
+}
+
+.generated-topic-list button:hover:not(:disabled),
+.generated-topic-list button.selected {
+  border-color: #c8502d;
+  background: #fff3ed;
+  color: #9c3e20;
+}
+
 .mode-note {
   margin: -6px 0 18px;
   border-left: 4px solid #c8502d;
@@ -700,6 +756,10 @@ textarea:focus {
 
   .celebrity-options .segmented button:first-child {
     grid-column: auto;
+  }
+
+  .topic-direction-options .segmented {
+    grid-template-columns: 1fr;
   }
 
   .conversation {

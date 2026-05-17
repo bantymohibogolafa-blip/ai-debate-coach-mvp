@@ -19,6 +19,57 @@ const celebrityDebaters = [
   { label: '乔布斯式', value: 'steve_jobs_style', shortName: '乔布斯式' }
 ];
 
+const topicDirections = [
+  { label: '校园教育', value: 'education' },
+  { label: '科技生活', value: 'technology' },
+  { label: '成长价值', value: 'growth' },
+  { label: '社会伦理', value: 'ethics' },
+  { label: '文化娱乐', value: 'culture' }
+];
+
+const topicPools = {
+  education: [
+    '中学生使用 AI 工具利大于弊',
+    '高中阶段应不应该取消排名公示',
+    '学校是否应该限制学生使用智能手机',
+    '中学生参加竞赛是否利大于弊',
+    '班级管理中严格纪律比自主空间更重要',
+    '高中生是否应该被允许自主选择作业量'
+  ],
+  technology: [
+    '短视频平台对中学生成长利大于弊',
+    '人工智能会让年轻人更有创造力',
+    '线上娱乐是否正在削弱青少年的现实社交能力',
+    '算法推荐让人更自由还是更不自由',
+    '电子阅读比纸质阅读更适合当代学生',
+    '科技便利是否降低了人的独立思考能力'
+  ],
+  growth: [
+    '得而复失比从未得到更遗憾',
+    '年轻人更应该追求稳定还是可能性',
+    '成长中挫折教育比鼓励教育更重要',
+    '面对失败，接受现实比坚持到底更重要',
+    '中学生应该更早接触社会竞争',
+    '被误解是成长中必须付出的代价'
+  ],
+  ethics: [
+    '善意的谎言是否应该被接受',
+    '公共利益是否应优先于个人选择',
+    '犯错后弥补比道歉更重要',
+    '规则公平比结果公平更重要',
+    '评价一个人更应该看动机还是结果',
+    '多数人的安全能否成为限制少数人自由的理由'
+  ],
+  culture: [
+    '中学生不应该玩游戏',
+    '追星对青少年成长利大于弊',
+    '网络热梗让表达更丰富还是更贫乏',
+    '流行文化比经典文化更能影响年轻人',
+    '综艺节目是否降低了大众审美',
+    '校园活动中竞技性比参与感更重要'
+  ]
+};
+
 const roundOptions = [3, 5];
 
 const initialConfig = {
@@ -37,6 +88,8 @@ function App() {
   const [isTraining, setIsTraining] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [topicDirection, setTopicDirection] = useState('education');
+  const [generatedTopics, setGeneratedTopics] = useState([]);
 
   const userAnswers = useMemo(
     () => history.filter((item) => item.role === 'user').length,
@@ -61,6 +114,19 @@ function App() {
     if (error) setError('');
   }
 
+  function generateTopics() {
+    if (isTraining || isLoading) return;
+
+    const pool = topicPools[topicDirection] || topicPools.education;
+    setGeneratedTopics(shuffle(pool).slice(0, 4));
+  }
+
+  function selectGeneratedTopic(topic) {
+    if (isTraining || isLoading) return;
+
+    updateConfig({ ...config, topic });
+  }
+
   function selectCelebrityDebater(value) {
     updateConfig({
       ...config,
@@ -71,7 +137,7 @@ function App() {
 
   function validateTrainingConfig() {
     if (!config.topic.trim()) {
-      return '请先输入辩题。';
+      return '请先输入辩题，或从随机生成的候选辩题中选择一个。';
     }
 
     if (!config.userSide) {
@@ -183,6 +249,7 @@ function App() {
     setReview('');
     setError('');
     setIsTraining(false);
+    setGeneratedTopics([]);
   }
 
   return (
@@ -241,6 +308,43 @@ function App() {
               rows={4}
             />
           </label>
+
+          <div className="topic-generator">
+            <OptionGroup
+              label="随机辩题方向"
+              options={topicDirections}
+              value={topicDirection}
+              disabled={isTraining || isLoading}
+              onChange={(value) => {
+                setTopicDirection(value);
+                setGeneratedTopics([]);
+              }}
+              className="topic-direction-options"
+            />
+            <button
+              type="button"
+              className="topic-generate-button"
+              onClick={generateTopics}
+              disabled={isTraining || isLoading}
+            >
+              随机生成候选辩题
+            </button>
+            {generatedTopics.length > 0 && (
+              <div className="generated-topic-list" aria-label="候选辩题">
+                {generatedTopics.map((topic) => (
+                  <button
+                    type="button"
+                    key={topic}
+                    className={topic === config.topic ? 'selected' : ''}
+                    onClick={() => selectGeneratedTopic(topic)}
+                    disabled={isTraining || isLoading}
+                  >
+                    {topic}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <OptionGroup
             label="我的立场"
@@ -406,6 +510,10 @@ function OptionGroup({ label, options, value, onChange, disabled, className = ''
 
 function getOptionLabel(options, value) {
   return options.find((option) => option.value === value)?.label || '';
+}
+
+function shuffle(items) {
+  return [...items].sort(() => Math.random() - 0.5);
 }
 
 function requireContent(data) {
