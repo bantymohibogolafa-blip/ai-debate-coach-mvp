@@ -329,6 +329,41 @@ export function buildReviewMessages({ topic, userSide, difficulty, celebrityDeba
   ];
 }
 
+export function buildPolishMessages({ topic, userSide, difficulty, celebrityDebater, history, answer }) {
+  const userSideLabel = getSideLabel(userSide);
+  const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
+  const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
+  const transcript = formatHistory(history);
+
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是高中生二辩攻辩表达教练。',
+        `用户立场是${userSideLabel}，对手立场是${opponentSideLabel}。`,
+        modeInstruction,
+        '你的任务是把用户当前的口语化回答整理成更适合被质询时使用的比赛表达。',
+        '不要替用户改变核心立场，不要自动帮用户承认对方观点，不要新增虚构事实。',
+        '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
+        '必须只输出合法 JSON，不要使用 Markdown，不要加代码块。',
+        'JSON 字段必须为：polished、concise、tip。',
+        'polished：攻辩整理版，适合直接放进回答框，控制在120字以内。',
+        'concise：30秒比赛版，更短、更有判断和反压，控制在80字以内。',
+        'tip：一句表达质量提示，指出当前回答最该补强的地方。'
+      ].join('\n')
+    },
+    {
+      role: 'user',
+      content: [
+        `辩题：${topic}`,
+        `此前对话：\n${transcript || '暂无'}`,
+        `用户原始回答：${answer}`,
+        `请基于${userSideLabel}立场整理表达。`
+      ].join('\n\n')
+    }
+  ];
+}
+
 function getModeInstruction(difficulty, celebrityDebater) {
   const debater = celebrityDebaters[celebrityDebater];
 

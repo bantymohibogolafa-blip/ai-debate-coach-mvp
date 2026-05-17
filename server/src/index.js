@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callDeepSeek } from './deepseek.js';
 import {
+  buildPolishMessages,
   buildRespondMessages,
   buildReviewMessages,
   buildStartMessages,
@@ -56,6 +57,24 @@ app.post('/api/debate/respond', async (req, res, next) => {
     const content = await callDeepSeek(messages, { maxTokens: 420 });
 
     res.json({ content: limitLength(content, 320) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/debate/polish', async (req, res, next) => {
+  try {
+    const payload = validateSessionPayload(req.body);
+    const answer = normalizeText(req.body.answer);
+
+    if (!answer) {
+      return res.status(400).json({ message: '请先输入回答。' });
+    }
+
+    const messages = buildPolishMessages({ ...payload, answer });
+    const content = await callDeepSeek(messages, { maxTokens: 700, temperature: 0.45 });
+
+    res.json(parsePolishContent(content, answer));
   } catch (error) {
     next(error);
   }
@@ -201,4 +220,41 @@ function cleanOpeningQuestion(text) {
     .filter((line) => !/漏洞判断|漏洞[：:]/.test(line))
     .join('\n')
     .trim();
+}
+
+function parsePolishContent(content, fallbackAnswer) {
+  const clean = normalizeText(content);
+  const jsonText = extractJsonObject(clean);
+
+  if (jsonText) {
+    try {
+      const parsed = JSON.parse(jsonText);
+      return {
+        original: fallbackAnswer,
+        polished: limitLength(parsed.polished, 180) || fallbackAnswer,
+        concise: limitLength(parsed.concise, 130) || limitLength(fallbackAnswer, 130),
+        tip: limitLength(parsed.tip, 120) || '建议先给结论，再补一个清晰标准。'
+      };
+    } catch {
+      // Fall through to the conservative fallback below.
+    }
+  }
+
+  return {
+    original: fallbackAnswer,
+    polished: limitLength(clean, 180) || fallbackAnswer,
+    concise: limitLength(fallbackAnswer, 130),
+    tip: '建议先给结论，再补一个清晰标准。'
+  };
+}
+
+function extractJsonObject(text) {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+
+  if (start === -1 || end === -1 || end <= start) {
+    return '';
+  }
+
+  return text.slice(start, end + 1);
 }

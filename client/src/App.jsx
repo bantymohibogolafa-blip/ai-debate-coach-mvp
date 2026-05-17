@@ -90,6 +90,8 @@ function App() {
   const [error, setError] = useState('');
   const [topicDirection, setTopicDirection] = useState('education');
   const [generatedTopics, setGeneratedTopics] = useState([]);
+  const [isPolishing, setIsPolishing] = useState(false);
+  const [polishResult, setPolishResult] = useState(null);
   const [isListening, setIsListening] = useState(false);
   const [speechError, setSpeechError] = useState('');
   const [speechStatus, setSpeechStatus] = useState('');
@@ -113,6 +115,8 @@ function App() {
   const selectedDifficultyLabel = isCelebrityMode
     ? `市赛 · ${selectedDebater?.shortName || '明星辩手'}`
     : getOptionLabel(difficulties, config.difficulty);
+  const latestAiMessage = useMemo(() => getLatestMessage(history, 'ai'), [history]);
+  const isBusy = isLoading || isPolishing;
 
   useEffect(() => {
     const SpeechRecognition = getSpeechRecognition();
@@ -139,14 +143,14 @@ function App() {
   }
 
   function generateTopics() {
-    if (isTraining || isLoading) return;
+    if (isTraining || isBusy) return;
 
     const pool = topicPools[topicDirection] || topicPools.education;
     setGeneratedTopics(shuffle(pool).slice(0, 4));
   }
 
   function selectGeneratedTopic(topic) {
-    if (isTraining || isLoading) return;
+    if (isTraining || isBusy) return;
 
     updateConfig({ ...config, topic });
   }
@@ -172,7 +176,7 @@ function App() {
   }
 
   async function startTraining() {
-    if (isLoading) return;
+    if (isBusy) return;
 
     const validationError = validateTrainingConfig();
     if (validationError) {
@@ -184,6 +188,7 @@ function App() {
     setError('');
     setReview('');
     setHistory([]);
+    setPolishResult(null);
 
     try {
       const data = await postJson('/api/debate/start', {
@@ -202,7 +207,7 @@ function App() {
   }
 
   async function submitAnswer() {
-    if (isLoading || isListening) return;
+    if (isBusy || isListening) return;
 
     const trimmedAnswer = answer.trim();
     if (!trimmedAnswer) {
@@ -214,6 +219,7 @@ function App() {
     setHistory(nextHistory);
     setAnswer('');
     setError('');
+    setPolishResult(null);
 
     if (userAnswers + 1 >= config.rounds) {
       return;
@@ -238,7 +244,7 @@ function App() {
   }
 
   async function finishAndReview() {
-    if (isLoading || isListening) return;
+    if (isBusy || isListening) return;
 
     if (!history.length) {
       setError('暂无对话，无法复盘。');
@@ -265,7 +271,7 @@ function App() {
   }
 
   function resetTraining() {
-    if (isLoading || isListening) return;
+    if (isBusy || isListening) return;
 
     setConfig(initialConfig);
     setHistory([]);
@@ -274,12 +280,13 @@ function App() {
     setError('');
     setSpeechError(isSpeechSupported ? '' : '当前浏览器不支持实时语音识别，请使用文字输入，或切换到 Chrome / Edge 浏览器。');
     setSpeechStatus('');
+    setPolishResult(null);
     setIsTraining(false);
     setGeneratedTopics([]);
   }
 
   function startSpeechRecognition() {
-    if (isLoading || isListening) return;
+    if (isBusy || isListening) return;
 
     const SpeechRecognition = getSpeechRecognition();
     if (!SpeechRecognition) {
@@ -303,6 +310,7 @@ function App() {
         const separator = currentAnswer.trim() ? '\n' : '';
         return `${currentAnswer}${separator}${transcript}`;
       });
+      setPolishResult(null);
       setSpeechError('');
       setSpeechStatus('识别完成，请检查文字后提交。');
     };
@@ -340,6 +348,45 @@ function App() {
     recognitionRef.current.stop();
     setIsListening(false);
     setSpeechStatus('');
+  }
+
+  async function polishAnswer() {
+    if (isBusy || isListening) return;
+
+    const trimmedAnswer = answer.trim();
+    if (!trimmedAnswer) {
+      setError('请先输入你的回答。');
+      return;
+    }
+
+    setIsPolishing(true);
+    setError('');
+    setSpeechStatus('');
+
+    try {
+      const data = await postJson('/api/debate/polish', {
+        ...config,
+        history,
+        answer: trimmedAnswer
+      });
+
+      setPolishResult({
+        original: data.original || trimmedAnswer,
+        polished: data.polished || trimmedAnswer,
+        concise: data.concise || trimmedAnswer,
+        tip: data.tip || '建议先给结论，再补一个清晰标准。'
+      });
+    } catch (requestError) {
+      setError(getFriendlyError(requestError));
+    } finally {
+      setIsPolishing(false);
+    }
+  }
+
+  function usePolishedAnswer(text) {
+    setAnswer(text);
+    setSpeechStatus('已放入回答框，请检查文字后提交。');
+    setSpeechError('');
   }
 
   return (
@@ -392,7 +439,7 @@ function App() {
             <span>辩题</span>
             <textarea
               value={config.topic}
-              disabled={isTraining || isLoading}
+              disabled={isTraining || isBusy}
               onChange={(event) => updateConfig({ ...config, topic: event.target.value })}
               placeholder="例如：中学生使用 AI 工具利大于弊"
               rows={4}
@@ -404,7 +451,7 @@ function App() {
               label="随机辩题方向"
               options={topicDirections}
               value={topicDirection}
-              disabled={isTraining || isLoading}
+              disabled={isTraining || isBusy}
               onChange={(value) => {
                 setTopicDirection(value);
                 setGeneratedTopics([]);
@@ -415,7 +462,7 @@ function App() {
               type="button"
               className="topic-generate-button"
               onClick={generateTopics}
-              disabled={isTraining || isLoading}
+              disabled={isTraining || isBusy}
             >
               随机生成候选辩题
             </button>
@@ -427,7 +474,7 @@ function App() {
                     key={topic}
                     className={topic === config.topic ? 'selected' : ''}
                     onClick={() => selectGeneratedTopic(topic)}
-                    disabled={isTraining || isLoading}
+                    disabled={isTraining || isBusy}
                   >
                     {topic}
                   </button>
@@ -440,7 +487,7 @@ function App() {
             label="我的立场"
             options={sides}
             value={config.userSide}
-            disabled={isTraining || isLoading}
+            disabled={isTraining || isBusy}
             onChange={(value) => updateConfig({ ...config, userSide: value })}
           />
 
@@ -448,7 +495,7 @@ function App() {
             label="明星辩手模式"
             options={celebrityDebaters}
             value={config.celebrityDebater}
-            disabled={isTraining || isLoading}
+            disabled={isTraining || isBusy}
             onChange={selectCelebrityDebater}
             className="celebrity-options"
           />
@@ -463,7 +510,7 @@ function App() {
             label="难度"
             options={difficulties}
             value={config.difficulty}
-            disabled={isTraining || isLoading || isCelebrityMode}
+            disabled={isTraining || isBusy || isCelebrityMode}
             onChange={(value) => updateConfig({ ...config, difficulty: value })}
           />
 
@@ -471,7 +518,7 @@ function App() {
             label="轮数"
             options={roundOptions.map((value) => ({ label: `${value}轮`, value }))}
             value={config.rounds}
-            disabled={isTraining || isLoading}
+            disabled={isTraining || isBusy}
             onChange={(value) => updateConfig({ ...config, rounds: value })}
           />
 
@@ -486,10 +533,10 @@ function App() {
           </div>
 
           <div className="button-stack">
-            <button className="primary-button" onClick={startTraining} disabled={isLoading || isTraining}>
+            <button className="primary-button" onClick={startTraining} disabled={isBusy || isTraining}>
               {isLoading && !isTraining ? '生成中...' : '开始训练'}
             </button>
-            <button className="ghost-button" onClick={resetTraining} disabled={isLoading}>
+            <button className="ghost-button" onClick={resetTraining} disabled={isBusy}>
               重新设置
             </button>
           </div>
@@ -536,13 +583,18 @@ function App() {
                 <div className="finish-hint">训练轮数已完成，可以结束并生成复盘报告。</div>
               ) : (
                 <>
+                  <div className="round-card">
+                    <span>第 {currentRound} / {config.rounds} 轮 · 本轮追问</span>
+                    <p>{latestAiMessage || '等待 AI 追问。'}</p>
+                  </div>
                   <textarea
                     value={answer}
-                    disabled={isLoading}
+                    disabled={isBusy}
                     onChange={(event) => {
                       setAnswer(event.target.value);
                       if (error) setError('');
                       if (speechError && isSpeechSupported) setSpeechError('');
+                      if (polishResult) setPolishResult(null);
                     }}
                     placeholder="输入你的回答，尽量控制在30秒攻辩表达长度内。"
                     rows={4}
@@ -553,7 +605,7 @@ function App() {
                         type="button"
                         className={`voice-button ${isListening ? 'listening' : ''}`}
                         onClick={isListening ? stopSpeechRecognition : startSpeechRecognition}
-                        disabled={isLoading}
+                        disabled={isBusy}
                       >
                         {isListening ? '停止识别' : '🎙 语音输入'}
                       </button>
@@ -565,19 +617,54 @@ function App() {
                     <button type="button" className="upload-soon-button" disabled>
                       录音上传识别（开发中）
                     </button>
+                    <button
+                      type="button"
+                      className="polish-button"
+                      onClick={polishAnswer}
+                      disabled={isBusy || isListening || !answer.trim()}
+                    >
+                      {isPolishing ? '整理中...' : '整理表达'}
+                    </button>
                   </div>
                   {(speechStatus || speechError) && (
                     <div className={speechError ? 'speech-message error' : 'speech-message'}>
                       {speechError || speechStatus}
                     </div>
                   )}
-                  <button className="primary-button" onClick={submitAnswer} disabled={isLoading || isListening}>
+                  {polishResult && (
+                    <div className="polish-card">
+                      <div className="polish-card-header">
+                        <span>表达整理</span>
+                        <strong>先选稿，再提交</strong>
+                      </div>
+                      <div className="polish-option">
+                        <span>原始文本</span>
+                        <p>{polishResult.original}</p>
+                      </div>
+                      <div className="polish-option featured">
+                        <span>攻辩整理版</span>
+                        <p>{polishResult.polished}</p>
+                        <button type="button" onClick={() => usePolishedAnswer(polishResult.polished)}>
+                          使用整理版
+                        </button>
+                      </div>
+                      <div className="polish-option">
+                        <span>30秒比赛版</span>
+                        <p>{polishResult.concise}</p>
+                        <button type="button" onClick={() => usePolishedAnswer(polishResult.concise)}>
+                          使用30秒版
+                        </button>
+                      </div>
+                      <div className="polish-tip">{polishResult.tip}</div>
+                    </div>
+                  )}
+                  <button className="primary-button" onClick={submitAnswer} disabled={isBusy || isListening}>
                     {isLoading ? '分析中...' : '提交回答'}
                   </button>
                 </>
               )}
 
-              <button className="secondary-button" onClick={finishAndReview} disabled={isLoading || isListening || !history.length}>
+              <button className="secondary-button" onClick={finishAndReview} disabled={isBusy || isListening || !history.length}>
                 结束并复盘
               </button>
             </div>
@@ -625,6 +712,16 @@ function OptionGroup({ label, options, value, onChange, disabled, className = ''
 
 function getOptionLabel(options, value) {
   return options.find((option) => option.value === value)?.label || '';
+}
+
+function getLatestMessage(history, role) {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index].role === role) {
+      return history[index].content;
+    }
+  }
+
+  return '';
 }
 
 function shuffle(items) {
