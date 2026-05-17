@@ -89,7 +89,7 @@ app.post('/api/debate/review', async (req, res, next) => {
     }
 
     const messages = buildReviewMessages(payload);
-    const content = await callDeepSeek(messages, { maxTokens: 900, temperature: 0.5 });
+    const content = await callDeepSeek(messages, { maxTokens: 2200, temperature: 0.5 });
 
     res.json({ content });
   } catch (error) {
