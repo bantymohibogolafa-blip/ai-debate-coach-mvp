@@ -93,11 +93,22 @@ function App() {
   const [generatedTopics, setGeneratedTopics] = useState([]);
   const [isPolishing, setIsPolishing] = useState(false);
   const [polishResult, setPolishResult] = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [recordingError, setRecordingError] = useState('');
+  const [recordingStatus, setRecordingStatus] = useState('');
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [speechError, setSpeechError] = useState('');
   const [speechStatus, setSpeechStatus] = useState('');
   const [isSpeechSupported, setIsSpeechSupported] = useState(true);
   const recognitionRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const recordingChunksRef = useRef([]);
+  const recordingStreamRef = useRef(null);
+  const recordingTimerRef = useRef(null);
+  const recordingStartedAtRef = useRef(0);
 
   const userAnswers = useMemo(
     () => history.filter((item) => item.role === 'user').length,
@@ -117,7 +128,7 @@ function App() {
     ? `市赛 · ${selectedDebater?.shortName || '明星辩手'}`
     : getOptionLabel(difficulties, config.difficulty);
   const latestAiMessage = useMemo(() => getLatestMessage(history, 'ai'), [history]);
-  const isBusy = isLoading || isPolishing;
+  const isBusy = isLoading || isPolishing || isTranscribing;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
 
   useEffect(() => {
@@ -126,6 +137,8 @@ function App() {
 
     if (!SpeechRecognition) {
       setSpeechError('当前浏览器不支持实时语音识别，请使用文字输入，或切换到 Chrome / Edge 浏览器。');
+    } else if (isWeChatBrowser()) {
+      setSpeechStatus('微信内实时语音识别可能不稳定，建议优先使用录音回答。');
     }
 
     return () => {
@@ -136,6 +149,7 @@ function App() {
         recognitionRef.current.stop();
         recognitionRef.current = null;
       }
+      stopRecordingResources(false);
     };
   }, []);
 
@@ -221,7 +235,7 @@ function App() {
   }
 
   async function submitAnswer() {
-    if (isBusy || isListening) return;
+    if (isBusy || isListening || isRecording) return;
 
     const trimmedAnswer = answer.trim();
     if (!trimmedAnswer) {
@@ -295,13 +309,21 @@ function App() {
     setSpeechError(isSpeechSupported ? '' : '当前浏览器不支持实时语音识别，请使用文字输入，或切换到 Chrome / Edge 浏览器。');
     setSpeechStatus('');
     setPolishResult(null);
+    setRecordingError('');
+    setRecordingStatus('');
+    setRecordedAudioUrl((currentUrl) => {
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      return '';
+    });
+    setRecordingDuration(0);
+    stopRecordingResources();
     setIsTraining(false);
     setGeneratedTopics([]);
     setSetupStep('topic');
   }
 
   function startSpeechRecognition() {
-    if (isBusy || isListening) return;
+    if (isBusy || isListening || isRecording) return;
 
     const SpeechRecognition = getSpeechRecognition();
     if (!SpeechRecognition) {
@@ -321,10 +343,7 @@ function App() {
       const transcript = event.results?.[0]?.[0]?.transcript?.trim();
       if (!transcript) return;
 
-      setAnswer((currentAnswer) => {
-        const separator = currentAnswer.trim() ? '\n' : '';
-        return `${currentAnswer}${separator}${transcript}`;
-      });
+      appendAnswerText(transcript);
       setPolishResult(null);
       setSpeechError('');
       setSpeechStatus('识别完成，请检查文字后提交。');
@@ -365,8 +384,135 @@ function App() {
     setSpeechStatus('');
   }
 
+  async function startAudioRecording() {
+    if (isBusy || isRecording || isListening) return;
+
+    if (!isAudioRecorderSupported()) {
+      setRecordingStatus('');
+      setRecordingError('当前浏览器不支持录音上传，请使用文字输入。');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      const mimeType = getSupportedAudioMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+
+      recordingChunksRef.current = [];
+      recordingStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      recordingStartedAtRef.current = Date.now();
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size > 0) {
+          recordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        setIsRecording(false);
+        setRecordingStatus('');
+        setRecordingError('录音失败，请重试或改用文字输入。');
+        stopRecordingResources();
+      };
+
+      recorder.onstop = () => {
+        uploadRecordedAudio(recorder.mimeType || mimeType || 'audio/webm');
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      setRecordingDuration(0);
+      setRecordingError('');
+      setSpeechStatus('');
+      setRecordingStatus('正在录音，请开始回答。最多录制 60 秒。');
+
+      recordingTimerRef.current = window.setInterval(() => {
+        const seconds = Math.floor((Date.now() - recordingStartedAtRef.current) / 1000);
+        setRecordingDuration(seconds);
+
+        if (seconds >= 60) {
+          stopAudioRecording();
+        }
+      }, 500);
+    } catch (recordError) {
+      setIsRecording(false);
+      setRecordingStatus('');
+      setRecordingError(isPermissionDenied(recordError) ? '请允许浏览器使用麦克风后再试。' : '录音失败，请重试或改用文字输入。');
+      stopRecordingResources();
+    }
+  }
+
+  function stopAudioRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') return;
+
+    setIsRecording(false);
+    setRecordingStatus('正在上传录音并转文字...');
+    clearRecordingTimer();
+    recorder.stop();
+  }
+
+  async function uploadRecordedAudio(mimeType) {
+    const chunks = recordingChunksRef.current;
+    stopRecordingTracks();
+
+    if (!chunks.length) {
+      setRecordingStatus('');
+      setRecordingError('没有录到声音，请重新录音。');
+      return;
+    }
+
+    const audioBlob = new Blob(chunks, { type: mimeType });
+    const nextAudioUrl = URL.createObjectURL(audioBlob);
+    setRecordedAudioUrl((currentUrl) => {
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      return nextAudioUrl;
+    });
+    setIsTranscribing(true);
+    setRecordingError('');
+    setRecordingStatus('正在转文字，请稍候。');
+
+    try {
+      const response = await fetch('/api/speech/transcribe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': mimeType
+        },
+        body: audioBlob
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.message || '录音识别失败，请重试或改用文字输入。');
+      }
+
+      const transcript = String(data.text || '').trim();
+      if (!transcript) {
+        throw new Error('录音识别失败，请重试或改用文字输入。');
+      }
+
+      appendAnswerText(transcript);
+      setPolishResult(null);
+      setRecordingStatus('录音识别完成，请检查文字后提交。');
+    } catch (requestError) {
+      setRecordingStatus('');
+      setRecordingError(getFriendlyError(requestError));
+    } finally {
+      setIsTranscribing(false);
+      recordingChunksRef.current = [];
+      mediaRecorderRef.current = null;
+    }
+  }
+
   async function polishAnswer() {
-    if (isBusy || isListening) return;
+    if (isBusy || isListening || isRecording) return;
 
     const trimmedAnswer = answer.trim();
     if (!trimmedAnswer) {
@@ -402,6 +548,42 @@ function App() {
     setAnswer(text);
     setSpeechStatus('已放入回答框，请检查文字后提交。');
     setSpeechError('');
+  }
+
+  function appendAnswerText(text) {
+    setAnswer((currentAnswer) => {
+      const separator = currentAnswer.trim() ? '\n' : '';
+      return `${currentAnswer}${separator}${text}`;
+    });
+  }
+
+  function clearRecordingTimer() {
+    if (recordingTimerRef.current) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  }
+
+  function stopRecordingTracks() {
+    recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+    recordingStreamRef.current = null;
+  }
+
+  function stopRecordingResources(updateState = true) {
+    clearRecordingTimer();
+
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.onstop = null;
+      recorder.stop();
+    }
+
+    mediaRecorderRef.current = null;
+    recordingChunksRef.current = [];
+    stopRecordingTracks();
+    if (updateState) {
+      setIsRecording(false);
+    }
   }
 
   return (
@@ -596,7 +778,7 @@ function App() {
               {isCelebrityMode ? `${selectedDebater.shortName} · 市赛` : `${selectedSideLabel}训练`}
             </span>
             {hasSessionContent && (
-              <button className="compact-reset-button" type="button" onClick={resetTraining} disabled={isBusy || isListening}>
+              <button className="compact-reset-button" type="button" onClick={resetTraining} disabled={isBusy || isListening || isRecording}>
                 重新设置
               </button>
             )}
@@ -654,31 +836,41 @@ function App() {
                         type="button"
                         className={`voice-button ${isListening ? 'listening' : ''}`}
                         onClick={isListening ? stopSpeechRecognition : startSpeechRecognition}
-                        disabled={isBusy}
+                        disabled={isBusy || isRecording}
                       >
-                        {isListening ? '停止识别' : '🎙 语音输入'}
+                        {isListening ? '停止识别' : '实时语音输入（实验）'}
                       </button>
                     ) : (
                       <button type="button" className="voice-button" disabled>
-                        🎙 语音输入
+                        实时语音输入（实验）
                       </button>
                     )}
-                    <button type="button" className="upload-soon-button" disabled>
-                      录音上传识别（开发中）
+                    <button
+                      type="button"
+                      className={`record-button ${isRecording ? 'recording' : ''}`}
+                      onClick={isRecording ? stopAudioRecording : startAudioRecording}
+                      disabled={isBusy || isListening}
+                    >
+                      {isRecording ? `停止并识别 ${formatDuration(recordingDuration)}` : '录音回答'}
                     </button>
                     <button
                       type="button"
                       className="polish-button"
                       onClick={polishAnswer}
-                      disabled={isBusy || isListening || !answer.trim()}
+                      disabled={isBusy || isListening || isRecording || !answer.trim()}
                     >
                       {isPolishing ? '整理中...' : '整理表达'}
                     </button>
                   </div>
-                  {(speechStatus || speechError) && (
-                    <div className={speechError ? 'speech-message error' : 'speech-message'}>
-                      {speechError || speechStatus}
+                  {(speechStatus || speechError || recordingStatus || recordingError) && (
+                    <div className={(speechError || recordingError) ? 'speech-message error' : 'speech-message'}>
+                      {speechError || recordingError || recordingStatus || speechStatus}
                     </div>
+                  )}
+                  {recordedAudioUrl && (
+                    <audio className="recording-preview" controls src={recordedAudioUrl}>
+                      当前浏览器不支持录音回放。
+                    </audio>
                   )}
                   {polishResult && (
                     <div className="polish-card">
@@ -707,13 +899,13 @@ function App() {
                       <div className="polish-tip">{polishResult.tip}</div>
                     </div>
                   )}
-                  <button className="primary-button" onClick={submitAnswer} disabled={isBusy || isListening}>
+                  <button className="primary-button" onClick={submitAnswer} disabled={isBusy || isListening || isRecording}>
                     {isLoading ? '分析中...' : '提交回答'}
                   </button>
                 </>
               )}
 
-              <button className="secondary-button" onClick={finishAndReview} disabled={isBusy || isListening || !history.length}>
+              <button className="secondary-button" onClick={finishAndReview} disabled={isBusy || isListening || isRecording || !history.length}>
                 结束并复盘
               </button>
             </div>
@@ -784,6 +976,49 @@ function getSpeechRecognition() {
   }
 
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function isAudioRecorderSupported() {
+  return (
+    typeof navigator !== 'undefined' &&
+    Boolean(navigator.mediaDevices?.getUserMedia) &&
+    typeof MediaRecorder !== 'undefined'
+  );
+}
+
+function isWeChatBrowser() {
+  if (typeof navigator === 'undefined') {
+    return false;
+  }
+
+  return /micromessenger/i.test(navigator.userAgent || '');
+}
+
+function getSupportedAudioMimeType() {
+  if (typeof MediaRecorder === 'undefined') {
+    return '';
+  }
+
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+    'audio/ogg'
+  ];
+
+  return candidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || '';
+}
+
+function isPermissionDenied(error) {
+  return error?.name === 'NotAllowedError' || error?.name === 'SecurityError';
+}
+
+function formatDuration(seconds) {
+  const safeSeconds = Math.max(0, seconds);
+  const minutes = Math.floor(safeSeconds / 60);
+  const restSeconds = String(safeSeconds % 60).padStart(2, '0');
+  return `${minutes}:${restSeconds}`;
 }
 
 function requireContent(data) {

@@ -97,6 +97,29 @@ app.post('/api/debate/review', async (req, res, next) => {
   }
 });
 
+app.post(
+  '/api/speech/transcribe',
+  express.raw({
+    limit: '12mb',
+    type: ['audio/*', 'application/octet-stream']
+  }),
+  async (req, res, next) => {
+    try {
+      const audioBuffer = req.body;
+      const mimeType = normalizeText(req.headers['content-type']) || 'application/octet-stream';
+
+      if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
+        return res.status(400).json({ message: '没有收到录音文件，请重新录音。' });
+      }
+
+      const transcript = await transcribeAudio(audioBuffer, mimeType);
+      res.json({ text: transcript });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(clientDistPath));
 
@@ -174,6 +197,10 @@ function getPublicStatus(error) {
     return error.status;
   }
 
+  if (error.code === 'ASR_NOT_CONFIGURED') {
+    return 501;
+  }
+
   return 502;
 }
 
@@ -192,6 +219,14 @@ function getPublicErrorMessage(error) {
 
   if (error.status === 429) {
     return 'AI 服务繁忙或额度不足，请稍后重试。';
+  }
+
+  if (error.code === 'ASR_NOT_CONFIGURED') {
+    return '录音识别服务暂未配置，请先使用文字输入。';
+  }
+
+  if (error.code === 'ASR_REQUEST_FAILED' || error.code === 'EMPTY_ASR_CONTENT') {
+    return '录音识别失败，请重试或改用文字输入。';
   }
 
   return 'AI 服务暂时不可用，请稍后重试。';
@@ -257,4 +292,63 @@ function extractJsonObject(text) {
   }
 
   return text.slice(start, end + 1);
+}
+
+async function transcribeAudio(audioBuffer, mimeType) {
+  const apiKey = process.env.ASR_API_KEY;
+  const apiUrl = process.env.ASR_API_URL;
+  const model = process.env.ASR_MODEL || 'whisper-1';
+
+  if (!apiKey || !apiUrl) {
+    const error = new Error('Speech recognition service is not configured.');
+    error.code = 'ASR_NOT_CONFIGURED';
+    error.status = 501;
+    throw error;
+  }
+
+  const fileExtension = getAudioExtension(mimeType);
+  const formData = new FormData();
+  formData.append('model', model);
+  formData.append('language', 'zh');
+  formData.append('file', new Blob([audioBuffer], { type: mimeType }), `answer.${fileExtension}`);
+
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: formData
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    console.error('ASR request failed', {
+      status: response.status,
+      message: data?.error?.message || data?.message
+    });
+
+    const error = new Error('Speech recognition request failed.');
+    error.code = 'ASR_REQUEST_FAILED';
+    error.status = response.status === 429 ? 429 : 502;
+    throw error;
+  }
+
+  const text = normalizeText(data.text || data.transcript || data.result);
+  if (!text) {
+    const error = new Error('Speech recognition returned empty text.');
+    error.code = 'EMPTY_ASR_CONTENT';
+    error.status = 502;
+    throw error;
+  }
+
+  return text;
+}
+
+function getAudioExtension(mimeType) {
+  if (mimeType.includes('mp4')) return 'mp4';
+  if (mimeType.includes('mpeg')) return 'mp3';
+  if (mimeType.includes('wav')) return 'wav';
+  if (mimeType.includes('ogg')) return 'ogg';
+  return 'webm';
 }

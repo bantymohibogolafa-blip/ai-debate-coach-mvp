@@ -40,6 +40,9 @@ npm install
 DEEPSEEK_API_KEY=sk-your-deepseek-api-key
 DEEPSEEK_API_URL=https://api.deepseek.com/chat/completions
 DEEPSEEK_MODEL=deepseek-chat
+ASR_API_KEY=sk-your-asr-api-key
+ASR_API_URL=https://api.openai.com/v1/audio/transcriptions
+ASR_MODEL=whisper-1
 PORT=3001
 ```
 
@@ -110,6 +113,9 @@ DEEPSEEK_API_KEY=sk-your-deepseek-api-key
 DEEPSEEK_API_URL=https://api.deepseek.com/chat/completions
 DEEPSEEK_MODEL=deepseek-chat
 NODE_ENV=production
+ASR_API_KEY=sk-your-asr-api-key
+ASR_API_URL=https://api.openai.com/v1/audio/transcriptions
+ASR_MODEL=whisper-1
 ```
 
 不要把真实的 `server/.env` 上传到公开仓库。线上环境变量应在 Render 后台配置。

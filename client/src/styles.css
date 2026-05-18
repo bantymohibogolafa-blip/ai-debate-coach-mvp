@@ -690,7 +690,7 @@ textarea:focus {
 }
 
 .voice-button,
-.upload-soon-button,
+.record-button,
 .polish-button {
   min-height: 46px;
   border-radius: 8px;
@@ -712,13 +712,18 @@ textarea:focus {
 }
 
 .voice-button:hover:not(:disabled),
-.upload-soon-button:hover:not(:disabled) {
+.record-button:hover:not(:disabled) {
   transform: translateY(-1px);
 }
 
-.upload-soon-button {
-  color: #61737c;
-  background: #edf3f6;
+.record-button {
+  color: #fff;
+  background: linear-gradient(135deg, #1d3038, #425b63);
+}
+
+.record-button.recording {
+  background: linear-gradient(135deg, #c8502d, #a83c20);
+  box-shadow: 0 12px 22px rgba(200, 80, 45, 0.22);
 }
 
 .polish-button {
@@ -743,6 +748,12 @@ textarea:focus {
 .speech-message.error {
   color: #9c2f1d;
   background: #fff0eb;
+}
+
+.recording-preview {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 42px;
 }
 
 .polish-card {
@@ -1068,7 +1079,7 @@ textarea:focus {
   .secondary-button,
   .ghost-button,
   .voice-button,
-  .upload-soon-button,
+  .record-button,
   .polish-button {
     width: 100%;
     min-height: 46px;
