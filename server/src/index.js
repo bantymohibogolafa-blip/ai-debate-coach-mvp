@@ -295,37 +295,40 @@ function extractJsonObject(text) {
 }
 
 async function transcribeAudio(audioBuffer, mimeType) {
-  const apiKey = process.env.ASR_API_KEY;
-  const apiUrl = process.env.ASR_API_URL;
-  const model = process.env.ASR_MODEL || 'whisper-1';
+  const appKey = process.env.ALIYUN_NLS_APPKEY;
+  const token = process.env.ALIYUN_NLS_TOKEN;
+  const apiUrl = process.env.ALIYUN_NLS_URL || 'https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/asr';
 
-  if (!apiKey || !apiUrl) {
+  if (!appKey || !token) {
     const error = new Error('Speech recognition service is not configured.');
     error.code = 'ASR_NOT_CONFIGURED';
     error.status = 501;
     throw error;
   }
 
-  const fileExtension = getAudioExtension(mimeType);
-  const formData = new FormData();
-  formData.append('model', model);
-  formData.append('language', 'zh');
-  formData.append('file', new Blob([audioBuffer], { type: mimeType }), `answer.${fileExtension}`);
+  const requestUrl = new URL(apiUrl);
+  requestUrl.searchParams.set('appkey', appKey);
+  requestUrl.searchParams.set('format', getAliyunAudioFormat(mimeType));
+  requestUrl.searchParams.set('sample_rate', '16000');
+  requestUrl.searchParams.set('enable_punctuation_prediction', 'true');
+  requestUrl.searchParams.set('enable_inverse_text_normalization', 'true');
 
-  const response = await fetch(apiUrl, {
+  const response = await fetch(requestUrl, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`
+      'Content-Type': 'application/octet-stream',
+      'X-NLS-Token': token
     },
-    body: formData
+    body: audioBuffer
   });
 
   const data = await response.json().catch(() => ({}));
 
-  if (!response.ok) {
+  if (!response.ok || !isAliyunSuccess(data)) {
     console.error('ASR request failed', {
       status: response.status,
-      message: data?.error?.message || data?.message
+      message: data?.message,
+      code: data?.status
     });
 
     const error = new Error('Speech recognition request failed.');
@@ -334,7 +337,7 @@ async function transcribeAudio(audioBuffer, mimeType) {
     throw error;
   }
 
-  const text = normalizeText(data.text || data.transcript || data.result);
+  const text = normalizeText(data.result || data.text);
   if (!text) {
     const error = new Error('Speech recognition returned empty text.');
     error.code = 'EMPTY_ASR_CONTENT';
@@ -345,10 +348,11 @@ async function transcribeAudio(audioBuffer, mimeType) {
   return text;
 }
 
-function getAudioExtension(mimeType) {
-  if (mimeType.includes('mp4')) return 'mp4';
-  if (mimeType.includes('mpeg')) return 'mp3';
+function isAliyunSuccess(data) {
+  return data?.status === 20000000 || data?.status === '20000000';
+}
+
+function getAliyunAudioFormat(mimeType) {
   if (mimeType.includes('wav')) return 'wav';
-  if (mimeType.includes('ogg')) return 'ogg';
-  return 'webm';
+  return 'wav';
 }

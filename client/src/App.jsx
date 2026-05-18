@@ -104,11 +104,14 @@ function App() {
   const [speechStatus, setSpeechStatus] = useState('');
   const [isSpeechSupported, setIsSpeechSupported] = useState(true);
   const recognitionRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const recordingChunksRef = useRef([]);
   const recordingStreamRef = useRef(null);
   const recordingTimerRef = useRef(null);
   const recordingStartedAtRef = useRef(0);
+  const audioContextRef = useRef(null);
+  const audioSourceRef = useRef(null);
+  const audioProcessorRef = useRef(null);
+  const recordingPcmChunksRef = useRef([]);
+  const recordingInputSampleRateRef = useRef(48000);
 
   const userAnswers = useMemo(
     () => history.filter((item) => item.role === 'user').length,
@@ -401,32 +404,31 @@ function App() {
           autoGainControl: true
         }
       });
-      const mimeType = getSupportedAudioMimeType();
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      const audioContext = new AudioContextClass();
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      const silentGain = audioContext.createGain();
+      silentGain.gain.value = 0;
 
-      recordingChunksRef.current = [];
+      recordingPcmChunksRef.current = [];
       recordingStreamRef.current = stream;
-      mediaRecorderRef.current = recorder;
+      audioContextRef.current = audioContext;
+      audioSourceRef.current = source;
+      audioProcessorRef.current = processor;
+      recordingInputSampleRateRef.current = audioContext.sampleRate;
       recordingStartedAtRef.current = Date.now();
 
-      recorder.ondataavailable = (event) => {
-        if (event.data?.size > 0) {
-          recordingChunksRef.current.push(event.data);
-        }
+      processor.onaudioprocess = (event) => {
+        if (!recordingStartedAtRef.current) return;
+        const inputData = event.inputBuffer.getChannelData(0);
+        recordingPcmChunksRef.current.push(new Float32Array(inputData));
       };
 
-      recorder.onerror = () => {
-        setIsRecording(false);
-        setRecordingStatus('');
-        setRecordingError('录音失败，请重试或改用文字输入。');
-        stopRecordingResources();
-      };
+      source.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(audioContext.destination);
 
-      recorder.onstop = () => {
-        uploadRecordedAudio(recorder.mimeType || mimeType || 'audio/webm');
-      };
-
-      recorder.start();
       setIsRecording(true);
       setRecordingDuration(0);
       setRecordingError('');
@@ -450,18 +452,18 @@ function App() {
   }
 
   function stopAudioRecording() {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === 'inactive') return;
+    if (!audioProcessorRef.current) return;
 
     setIsRecording(false);
     setRecordingStatus('正在上传录音并转文字...');
     clearRecordingTimer();
-    recorder.stop();
+    uploadRecordedAudio();
   }
 
-  async function uploadRecordedAudio(mimeType) {
-    const chunks = recordingChunksRef.current;
-    stopRecordingTracks();
+  async function uploadRecordedAudio() {
+    const chunks = recordingPcmChunksRef.current;
+    const inputSampleRate = recordingInputSampleRateRef.current;
+    stopRecordingResources(false);
 
     if (!chunks.length) {
       setRecordingStatus('');
@@ -469,8 +471,9 @@ function App() {
       return;
     }
 
-    const audioBlob = new Blob(chunks, { type: mimeType });
-    const nextAudioUrl = URL.createObjectURL(audioBlob);
+    const mergedPcm = mergeFloat32Chunks(chunks);
+    const wavBlob = encodeWav(downsampleBuffer(mergedPcm, inputSampleRate, 16000), 16000);
+    const nextAudioUrl = URL.createObjectURL(wavBlob);
     setRecordedAudioUrl((currentUrl) => {
       if (currentUrl) URL.revokeObjectURL(currentUrl);
       return nextAudioUrl;
@@ -483,9 +486,9 @@ function App() {
       const response = await fetch('/api/speech/transcribe', {
         method: 'POST',
         headers: {
-          'Content-Type': mimeType
+          'Content-Type': 'audio/wav'
         },
-        body: audioBlob
+        body: wavBlob
       });
       const data = await response.json().catch(() => ({}));
 
@@ -506,8 +509,7 @@ function App() {
       setRecordingError(getFriendlyError(requestError));
     } finally {
       setIsTranscribing(false);
-      recordingChunksRef.current = [];
-      mediaRecorderRef.current = null;
+      recordingPcmChunksRef.current = [];
     }
   }
 
@@ -571,15 +573,14 @@ function App() {
 
   function stopRecordingResources(updateState = true) {
     clearRecordingTimer();
-
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.onstop = null;
-      recorder.stop();
-    }
-
-    mediaRecorderRef.current = null;
-    recordingChunksRef.current = [];
+    audioProcessorRef.current?.disconnect();
+    audioSourceRef.current?.disconnect();
+    audioProcessorRef.current = null;
+    audioSourceRef.current = null;
+    recordingStartedAtRef.current = 0;
+    audioContextRef.current?.close().catch(() => {});
+    audioContextRef.current = null;
+    recordingPcmChunksRef.current = [];
     stopRecordingTracks();
     if (updateState) {
       setIsRecording(false);
@@ -979,10 +980,12 @@ function getSpeechRecognition() {
 }
 
 function isAudioRecorderSupported() {
+  const AudioContextClass = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
+
   return (
     typeof navigator !== 'undefined' &&
     Boolean(navigator.mediaDevices?.getUserMedia) &&
-    typeof MediaRecorder !== 'undefined'
+    Boolean(AudioContextClass)
   );
 }
 
@@ -994,22 +997,6 @@ function isWeChatBrowser() {
   return /micromessenger/i.test(navigator.userAgent || '');
 }
 
-function getSupportedAudioMimeType() {
-  if (typeof MediaRecorder === 'undefined') {
-    return '';
-  }
-
-  const candidates = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/mp4',
-    'audio/ogg;codecs=opus',
-    'audio/ogg'
-  ];
-
-  return candidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || '';
-}
-
 function isPermissionDenied(error) {
   return error?.name === 'NotAllowedError' || error?.name === 'SecurityError';
 }
@@ -1019,6 +1006,81 @@ function formatDuration(seconds) {
   const minutes = Math.floor(safeSeconds / 60);
   const restSeconds = String(safeSeconds % 60).padStart(2, '0');
   return `${minutes}:${restSeconds}`;
+}
+
+function mergeFloat32Chunks(chunks) {
+  const totalLength = chunks.reduce((length, chunk) => length + chunk.length, 0);
+  const result = new Float32Array(totalLength);
+  let offset = 0;
+
+  chunks.forEach((chunk) => {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  });
+
+  return result;
+}
+
+function downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+  if (inputSampleRate === outputSampleRate) {
+    return buffer;
+  }
+
+  const sampleRateRatio = inputSampleRate / outputSampleRate;
+  const newLength = Math.round(buffer.length / sampleRateRatio);
+  const result = new Float32Array(newLength);
+
+  for (let index = 0; index < newLength; index += 1) {
+    const start = Math.floor(index * sampleRateRatio);
+    const end = Math.min(Math.floor((index + 1) * sampleRateRatio), buffer.length);
+    let sum = 0;
+    let count = 0;
+
+    for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
+      sum += buffer[sampleIndex];
+      count += 1;
+    }
+
+    result[index] = count ? sum / count : 0;
+  }
+
+  return result;
+}
+
+function encodeWav(samples, sampleRate) {
+  const bytesPerSample = 2;
+  const dataLength = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataLength, true);
+  writeAscii(view, 8, 'WAVE');
+  writeAscii(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, 'data');
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  samples.forEach((sample) => {
+    const clampedSample = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clampedSample < 0 ? clampedSample * 0x8000 : clampedSample * 0x7fff, true);
+    offset += 2;
+  });
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+function writeAscii(view, offset, text) {
+  for (let index = 0; index < text.length; index += 1) {
+    view.setUint8(offset + index, text.charCodeAt(index));
+  }
 }
 
 function requireContent(data) {
