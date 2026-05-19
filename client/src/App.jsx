@@ -157,7 +157,7 @@ function App() {
   const [isTraining, setIsTraining] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [setupStep, setSetupStep] = useState('topic');
+  const [setupStep, setSetupStep] = useState('mode');
   const [topicDirection, setTopicDirection] = useState('education');
   const [generatedTopics, setGeneratedTopics] = useState([]);
   const [isPolishing, setIsPolishing] = useState(false);
@@ -393,6 +393,14 @@ function App() {
       trainingMode: value,
       rounds: mode.rounds
     });
+    setSetupStep('topic');
+    setGeneratedTopics([]);
+  }
+
+  function goToModeStep() {
+    if (isTraining || isBusy) return;
+    setSetupStep('mode');
+    setError('');
   }
 
   function goToDetailsStep() {
@@ -550,7 +558,7 @@ function App() {
     stopRecordingResources();
     setIsTraining(false);
     setGeneratedTopics([]);
-    setSetupStep('topic');
+    setSetupStep('mode');
   }
 
   async function startAudioRecording() {
@@ -831,6 +839,7 @@ function App() {
 
       {activeTab === 'training' && (
       <>
+      {!hasSessionContent && setupStep === 'mode' && (
       <section className="mode-selector-panel" aria-label="单项训练模式">
         {trainingModes.map((mode) => (
           <button
@@ -845,6 +854,7 @@ function App() {
           </button>
         ))}
       </section>
+      )}
 
       <section className="arena-hero">
         <div className="hero-copy">
@@ -890,7 +900,7 @@ function App() {
       )}
 
       <section className={`layout ${hasSessionContent ? 'debate-layout' : 'setup-layout'}`}>
-        {!hasSessionContent && (
+        {!hasSessionContent && setupStep !== 'mode' && (
         <aside className="panel setup-panel">
           <div className="panel-title">
             <p className="eyebrow">赛前设置</p>
@@ -898,8 +908,9 @@ function App() {
           </div>
 
           <div className="setup-progress" aria-label="赛前设置进度">
-            <span className={setupStep === 'topic' ? 'active' : 'done'}>1 辩题</span>
-            <span className={setupStep === 'details' ? 'active' : ''}>2 训练方式</span>
+            <span className="done">1 模式</span>
+            <span className={setupStep === 'topic' ? 'active' : 'done'}>2 辩题</span>
+            <span className={setupStep === 'details' ? 'active' : ''}>3 训练方式</span>
           </div>
 
           {setupStep === 'topic' ? (
@@ -955,6 +966,9 @@ function App() {
               <button className="primary-button" onClick={goToDetailsStep} disabled={isBusy}>
                 下一步
               </button>
+              <button className="ghost-button" onClick={goToModeStep} disabled={isBusy}>
+                上一步
+              </button>
             </>
           ) : (
             <>
@@ -966,16 +980,13 @@ function App() {
                 </button>
               </div>
 
-              <OptionGroup
-                label="训练模式"
-                options={trainingModes}
-                value={config.trainingMode}
-                disabled={isBusy}
-                onChange={selectTrainingMode}
-                className="training-mode-options"
-              />
-
-              <p className="mode-note">{selectedTrainingMode.description}</p>
+              <div className="selected-topic-card">
+                <span>已选模式</span>
+                <strong>{selectedTrainingMode.label}</strong>
+                <button type="button" onClick={goToModeStep} disabled={isBusy}>
+                  修改模式
+                </button>
+              </div>
 
               <OptionGroup
                 label="我的立场"

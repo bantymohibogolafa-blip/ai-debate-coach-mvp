@@ -154,6 +154,7 @@ textarea:disabled {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 16px;
+  animation: rise-in 560ms ease both;
 }
 
 .mode-selector-panel button {
@@ -400,7 +401,7 @@ h2 {
 
 .setup-progress {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin-bottom: 18px;
 }
@@ -1418,7 +1419,7 @@ textarea:focus {
   }
 
   .setup-progress {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   .selected-topic-card button {
