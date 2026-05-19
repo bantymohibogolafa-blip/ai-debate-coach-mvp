@@ -43,7 +43,9 @@ DEEPSEEK_MODEL=deepseek-v4-pro
 DEEPSEEK_THINKING=disabled
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
-SUPABASE_TRAINING_TABLE=debate_training_records
+SUPABASE_TRAINING_TABLE=training_records
+SUPABASE_TEAMS_TABLE=teams
+SUPABASE_TEAM_MEMBERS_TABLE=team_members
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
 ALIYUN_ACCESS_KEY_ID=your-aliyun-access-key-id
 ALIYUN_ACCESS_KEY_SECRET=your-aliyun-access-key-secret
@@ -59,9 +61,27 @@ PORT=3001
 在 Supabase SQL Editor 中执行：
 
 ```sql
-create table if not exists public.debate_training_records (
+create table if not exists public.teams (
+  team_code text primary key,
+  team_name text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.team_members (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null,
+  team_code text not null references public.teams(team_code) on delete cascade,
+  local_user_id text not null,
+  nickname text not null,
+  created_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  unique (team_code, local_user_id)
+);
+
+create table if not exists public.training_records (
+  id uuid primary key default gen_random_uuid(),
+  team_code text not null references public.teams(team_code) on delete cascade,
+  local_user_id text not null,
+  nickname text not null,
   topic text not null,
   user_side text not null check (user_side in ('affirmative', 'negative')),
   ai_side text not null check (ai_side in ('affirmative', 'negative')),
@@ -71,14 +91,21 @@ create table if not exists public.debate_training_records (
   review text not null,
   score integer check (score is null or (score >= 0 and score <= 100)),
   result text,
+  battlefield text,
   created_at timestamptz not null default now()
 );
 
-create index if not exists debate_training_records_user_created_idx
-  on public.debate_training_records (user_id, created_at desc);
+create index if not exists training_records_team_created_idx
+  on public.training_records (team_code, created_at desc);
+
+create index if not exists training_records_member_created_idx
+  on public.training_records (team_code, local_user_id, created_at desc);
+
+create index if not exists team_members_team_idx
+  on public.team_members (team_code);
 ```
 
-本项目后端使用 service role key 访问 Supabase REST API，因此最小可行版本不依赖前端 Supabase 客户端，也不会把 service role key 暴露给浏览器。
+如果你已经建过旧版 `debate_training_records`，可以保留旧表；团队数据功能默认使用新的 `training_records`、`teams`、`team_members` 三张表。后端使用 service role key 访问 Supabase REST API，因此前端不会接触 Supabase key。
 
 ## 本地运行步骤
 
@@ -152,7 +179,9 @@ DEEPSEEK_THINKING=disabled
 NODE_ENV=production
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
-SUPABASE_TRAINING_TABLE=debate_training_records
+SUPABASE_TRAINING_TABLE=training_records
+SUPABASE_TEAMS_TABLE=teams
+SUPABASE_TEAM_MEMBERS_TABLE=team_members
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
 ALIYUN_ACCESS_KEY_ID=your-aliyun-access-key-id
 ALIYUN_ACCESS_KEY_SECRET=your-aliyun-access-key-secret

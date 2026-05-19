@@ -34,6 +34,7 @@ body::before {
 }
 
 button,
+input,
 textarea {
   font: inherit;
 }
@@ -44,6 +45,7 @@ button {
 }
 
 button:disabled,
+input:disabled,
 textarea:disabled {
   cursor: not-allowed;
   opacity: 0.62;
@@ -53,6 +55,98 @@ textarea:disabled {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
   padding: 28px 0 48px;
+}
+
+.team-join-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+}
+
+.team-join-panel {
+  width: min(100%, 560px);
+}
+
+.team-join-panel h1 {
+  color: #13232b;
+  font-size: 42px;
+  line-height: 1.05;
+}
+
+.team-privacy-note {
+  margin: 14px 0 0;
+  border-left: 4px solid #c8502d;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #6b4b3d;
+  background: #fff3ed;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.team-join-form {
+  display: grid;
+  gap: 16px;
+}
+
+.team-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid rgba(24, 36, 43, 0.11);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 12px 30px rgba(24, 36, 43, 0.08);
+}
+
+.team-topbar div {
+  display: grid;
+  gap: 2px;
+}
+
+.team-topbar span {
+  color: #687982;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.team-topbar strong {
+  color: #13232b;
+  font-size: 17px;
+}
+
+.team-topbar button {
+  min-height: 44px;
+  border-radius: 8px;
+  padding: 0 14px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-weight: 900;
+}
+
+.main-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.main-tabs button {
+  min-height: 46px;
+  border: 1px solid #c8d3da;
+  border-radius: 8px;
+  color: #43535c;
+  background: rgba(255, 255, 255, 0.88);
+  font-weight: 900;
+}
+
+.main-tabs button.active {
+  border-color: #2f7375;
+  color: #fff;
+  background: linear-gradient(135deg, #2f7375, #23575d);
 }
 
 .arena-hero {
@@ -361,6 +455,20 @@ textarea {
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
+input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid #c8d3da;
+  border-radius: 8px;
+  padding: 0 14px;
+  color: #13232b;
+  background: #fbfcfd;
+  font-size: 16px;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+input:focus,
 textarea:focus {
   border-color: #2f7375;
   box-shadow: 0 0 0 4px rgba(47, 115, 117, 0.14);
@@ -989,6 +1097,94 @@ textarea:focus {
   font-family: inherit;
 }
 
+.team-data-panel {
+  margin-top: 0;
+}
+
+.team-stat-grid,
+.team-rank-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.team-stat-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.team-rank-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 20px;
+}
+
+.stat-card,
+.ranking-card {
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcfd;
+}
+
+.stat-card span {
+  display: block;
+  color: #687982;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.stat-card strong {
+  display: block;
+  margin-top: 4px;
+  color: #13232b;
+  font-size: 32px;
+  line-height: 1.1;
+}
+
+.ranking-card h3,
+.team-recent-section h3 {
+  margin: 0 0 12px;
+  color: #13232b;
+  font-size: 18px;
+}
+
+.ranking-card p {
+  margin: 0;
+  color: #687982;
+  font-weight: 800;
+}
+
+.ranking-card ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ranking-card li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #edf2f4;
+  padding-bottom: 9px;
+}
+
+.ranking-card li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.ranking-card span {
+  color: #263942;
+  font-weight: 900;
+}
+
+.ranking-card strong {
+  flex: 0 0 auto;
+  color: #c8502d;
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -1126,8 +1322,19 @@ textarea:focus {
   }
 
   .scoreboard,
-  .match-strip {
+  .match-strip,
+  .main-tabs,
+  .team-stat-grid,
+  .team-rank-grid {
     grid-template-columns: 1fr;
+  }
+
+  .team-topbar {
+    display: grid;
+  }
+
+  .team-topbar button {
+    width: 100%;
   }
 
   .scoreboard div {
@@ -1175,7 +1382,7 @@ textarea:focus {
 
   .selected-topic-card button {
     width: 100%;
-    min-height: 42px;
+    min-height: 44px;
   }
 
   .segmented {
@@ -1224,7 +1431,9 @@ textarea:focus {
   .secondary-button,
   .ghost-button,
   .record-button,
-  .polish-button {
+  .polish-button,
+  .compact-reset-button,
+  .history-detail-header button {
     width: 100%;
     min-height: 46px;
   }

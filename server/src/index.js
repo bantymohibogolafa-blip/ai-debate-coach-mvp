@@ -25,7 +25,9 @@ const port = process.env.PORT || 3001;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
-const supabaseTable = process.env.SUPABASE_TRAINING_TABLE || 'debate_training_records';
+const trainingRecordsTable = process.env.SUPABASE_TRAINING_TABLE || 'training_records';
+const teamsTable = process.env.SUPABASE_TEAMS_TABLE || 'teams';
+const teamMembersTable = process.env.SUPABASE_TEAM_MEMBERS_TABLE || 'team_members';
 const aliyunTokenCache = {
   token: '',
   expireTime: 0
@@ -103,16 +105,30 @@ app.post('/api/debate/review', async (req, res, next) => {
   }
 });
 
+app.post('/api/team/join', async (req, res, next) => {
+  try {
+    const memberPayload = validateTeamMemberPayload(req.body);
+    const { team, member } = await joinTeam(memberPayload);
+
+    res.json({
+      team: mapTeamFromDb(team),
+      member: mapTeamMemberFromDb(member)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/training-records', async (req, res, next) => {
   try {
-    const userId = normalizeText(req.query.userId);
+    const userId = normalizeText(req.query.userId || req.query.localUserId);
     const limit = clampNumber(Number(req.query.limit || 20), 1, 50);
 
-    if (!isValidAnonymousUserId(userId)) {
+    if (!isValidLegacyUserId(userId)) {
       return res.status(400).json({ message: '匿名用户 ID 无效，请刷新页面后重试。' });
     }
 
-    const records = await fetchTrainingRecords(userId, limit);
+    const records = await fetchLegacyTrainingRecords(userId, limit);
     res.json({ records: records.map(mapTrainingRecordFromDb) });
   } catch (error) {
     next(error);
@@ -125,6 +141,52 @@ app.post('/api/training-records', async (req, res, next) => {
     const savedRecords = await insertTrainingRecord(record);
 
     res.status(201).json({ record: mapTrainingRecordFromDb(savedRecords[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/training-records/my', async (req, res, next) => {
+  try {
+    const teamCode = normalizeTeamCode(req.query.teamCode);
+    const localUserId = normalizeText(req.query.localUserId);
+
+    if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId)) {
+      return res.status(400).json({ message: '团队信息无效，请重新加入团队。' });
+    }
+
+    const records = await fetchMyTrainingRecords(teamCode, localUserId, 50);
+    res.json({ records: records.map(mapTrainingRecordFromDb) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/training-records/team', async (req, res, next) => {
+  try {
+    const teamCode = normalizeTeamCode(req.query.teamCode);
+
+    if (!isValidTeamCode(teamCode)) {
+      return res.status(400).json({ message: '团队码无效，请重新加入团队。' });
+    }
+
+    const records = await fetchTeamTrainingRecords(teamCode, 50);
+    res.json({ records: records.map(mapTrainingRecordFromDb) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/team/stats', async (req, res, next) => {
+  try {
+    const teamCode = normalizeTeamCode(req.query.teamCode);
+
+    if (!isValidTeamCode(teamCode)) {
+      return res.status(400).json({ message: '团队码无效，请重新加入团队。' });
+    }
+
+    const stats = await fetchTeamStats(teamCode);
+    res.json(stats);
   } catch (error) {
     next(error);
   }
@@ -216,7 +278,9 @@ function validateSessionPayload(body) {
 }
 
 function validateTrainingRecordPayload(body) {
-  const userId = normalizeText(body.userId || body.user_id);
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const localUserId = normalizeText(body.localUserId || body.local_user_id || body.userId || body.user_id);
+  const nickname = normalizeNickname(body.nickname);
   const topic = normalizeText(body.topic);
   const userSide = normalizeSide(normalizeText(body.userSide || body.user_side));
   const aiSide = normalizeSide(normalizeText(body.aiSide || body.ai_side));
@@ -226,9 +290,10 @@ function validateTrainingRecordPayload(body) {
   const review = normalizeText(body.review);
   const score = parseNullableScore(body.score);
   const result = normalizeText(body.result);
+  const battlefield = normalizeText(body.battlefield);
 
-  if (!isValidAnonymousUserId(userId)) {
-    throw badRequest('匿名用户 ID 无效，请刷新页面后重试。');
+  if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId) || !isValidNickname(nickname)) {
+    throw badRequest('团队身份信息无效，请重新加入团队。');
   }
 
   if (!topic) {
@@ -256,7 +321,9 @@ function validateTrainingRecordPayload(body) {
   }
 
   return {
-    user_id: userId,
+    team_code: teamCode,
+    local_user_id: localUserId,
+    nickname,
     topic,
     user_side: userSide,
     ai_side: aiSide,
@@ -271,12 +338,41 @@ function validateTrainingRecordPayload(body) {
     review,
     score,
     result,
+    battlefield,
     created_at: new Date().toISOString()
   };
 }
 
+function validateTeamMemberPayload(body) {
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const nickname = normalizeNickname(body.nickname);
+  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+
+  if (!isValidTeamCode(teamCode)) {
+    throw badRequest('请输入 3-32 位团队码，只能包含字母、数字、短横线或下划线。');
+  }
+
+  if (!isValidNickname(nickname)) {
+    throw badRequest('请输入 1-20 个字符的昵称。');
+  }
+
+  if (!isValidLocalUserId(localUserId)) {
+    throw badRequest('用户身份无效，请刷新页面后重试。');
+  }
+
+  return { teamCode, nickname, localUserId };
+}
+
 function normalizeText(value) {
   return String(value || '').trim();
+}
+
+function normalizeTeamCode(value) {
+  return normalizeText(value).toUpperCase();
+}
+
+function normalizeNickname(value) {
+  return normalizeText(value).replace(/\s+/g, ' ');
 }
 
 function badRequest(message) {
@@ -343,8 +439,20 @@ function limitLength(text, maxLength) {
   return `${clean.slice(0, maxLength - 1)}…`;
 }
 
-function isValidAnonymousUserId(userId) {
+function isValidLegacyUserId(userId) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId);
+}
+
+function isValidLocalUserId(localUserId) {
+  return /^user_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(localUserId);
+}
+
+function isValidTeamCode(teamCode) {
+  return /^[A-Z0-9_-]{3,32}$/.test(teamCode);
+}
+
+function isValidNickname(nickname) {
+  return nickname.length >= 1 && nickname.length <= 20 && !/[<>]/.test(nickname);
 }
 
 function clampNumber(value, min, max) {
@@ -379,19 +487,175 @@ function getSupabaseConfig() {
   return { url, serviceRoleKey };
 }
 
-async function fetchTrainingRecords(userId, limit) {
+async function joinTeam({ teamCode, nickname, localUserId }) {
+  let team = await getSingleByQuery(
+    teamsTable,
+    new URLSearchParams({
+      select: 'team_code,team_name,created_at',
+      team_code: `eq.${teamCode}`,
+      limit: '1'
+    })
+  );
+
+  if (!team) {
+    const createdTeams = await supabaseRequest(teamsTable, {
+      method: 'POST',
+      body: {
+        team_code: teamCode,
+        team_name: teamCode,
+        created_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    });
+    team = createdTeams[0];
+  }
+
+  let member = await getSingleByQuery(
+    teamMembersTable,
+    new URLSearchParams({
+      select: 'id,team_code,local_user_id,nickname,created_at,last_seen_at',
+      team_code: `eq.${teamCode}`,
+      local_user_id: `eq.${localUserId}`,
+      limit: '1'
+    })
+  );
+
+  if (!member) {
+    const createdMembers = await supabaseRequest(teamMembersTable, {
+      method: 'POST',
+      body: {
+        team_code: teamCode,
+        local_user_id: localUserId,
+        nickname,
+        created_at: new Date().toISOString(),
+        last_seen_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    });
+    member = createdMembers[0];
+  } else {
+    const updatedMembers = await supabaseRequest(
+      `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(localUserId)}`,
+      {
+        method: 'PATCH',
+        body: {
+          nickname,
+          last_seen_at: new Date().toISOString()
+        },
+        prefer: 'return=representation'
+      }
+    );
+    member = updatedMembers[0] || member;
+  }
+
+  return { team, member };
+}
+
+async function getSingleByQuery(tableName, query) {
+  const rows = await supabaseRequest(`${tableName}?${query.toString()}`);
+  return rows[0] || null;
+}
+
+async function fetchLegacyTrainingRecords(userId, limit) {
   const query = new URLSearchParams({
-    select: 'id,user_id,topic,user_side,ai_side,difficulty,style_id,messages,review,score,result,created_at',
-    user_id: `eq.${userId}`,
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,messages,review,score,result,battlefield,created_at',
+    local_user_id: `eq.user_${userId}`,
     order: 'created_at.desc',
     limit: String(limit)
   });
 
-  return supabaseRequest(`${supabaseTable}?${query.toString()}`);
+  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+}
+
+async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
+  const query = new URLSearchParams({
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,messages,review,score,result,battlefield,created_at',
+    team_code: `eq.${teamCode}`,
+    local_user_id: `eq.${localUserId}`,
+    order: 'created_at.desc',
+    limit: String(limit)
+  });
+
+  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+}
+
+async function fetchTeamTrainingRecords(teamCode, limit) {
+  const query = new URLSearchParams({
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,messages,review,score,result,battlefield,created_at',
+    team_code: `eq.${teamCode}`,
+    order: 'created_at.desc',
+    limit: String(limit)
+  });
+
+  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+}
+
+async function fetchTeamStats(teamCode) {
+  const records = await fetchAllTeamRecordsForStats(teamCode);
+  const scoredRecords = records.filter((record) => Number.isFinite(Number(record.score)));
+  const memberMap = new Map();
+  const recentRecords = records
+    .slice(0, 10)
+    .map(mapTrainingRecordFromDb);
+
+  records.forEach((record) => {
+    const key = record.local_user_id;
+    if (!key) return;
+    const current = memberMap.get(key) || {
+      nickname: record.nickname || '未命名成员',
+      localUserId: key,
+      count: 0,
+      scoreTotal: 0,
+      scoreCount: 0,
+      highestScore: null
+    };
+    const score = Number(record.score);
+    current.nickname = record.nickname || current.nickname;
+    current.count += 1;
+    if (Number.isFinite(score)) {
+      current.scoreTotal += score;
+      current.scoreCount += 1;
+      current.highestScore = current.highestScore === null ? score : Math.max(current.highestScore, score);
+    }
+    memberMap.set(key, current);
+  });
+
+  const memberStats = Array.from(memberMap.values())
+    .map((member) => ({
+      nickname: member.nickname,
+      localUserId: member.localUserId,
+      count: member.count,
+      averageScore: member.scoreCount ? roundToOne(member.scoreTotal / member.scoreCount) : null,
+      highestScore: member.highestScore
+    }))
+    .sort((a, b) => b.count - a.count || (b.averageScore || 0) - (a.averageScore || 0));
+
+  return {
+    totalRecords: records.length,
+    averageScore: scoredRecords.length
+      ? roundToOne(scoredRecords.reduce((sum, record) => sum + Number(record.score), 0) / scoredRecords.length)
+      : null,
+    highestScore: scoredRecords.length
+      ? Math.max(...scoredRecords.map((record) => Number(record.score)))
+      : null,
+    memberStats,
+    recentRecords
+  };
+}
+
+async function fetchAllTeamRecordsForStats(teamCode) {
+  const query = new URLSearchParams({
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,messages,review,score,result,battlefield,created_at',
+    team_code: `eq.${teamCode}`,
+    order: 'created_at.desc',
+    limit: '1000'
+  });
+
+  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
 }
 
 async function insertTrainingRecord(record) {
-  return supabaseRequest(supabaseTable, {
+  return supabaseRequest(trainingRecordsTable, {
     method: 'POST',
     body: record,
     prefer: 'return=representation'
@@ -431,7 +695,9 @@ async function supabaseRequest(pathname, options = {}) {
 function mapTrainingRecordFromDb(record = {}) {
   return {
     id: record.id,
-    userId: record.user_id,
+    teamCode: record.team_code,
+    localUserId: record.local_user_id,
+    nickname: record.nickname,
     topic: record.topic,
     userSide: record.user_side,
     aiSide: record.ai_side,
@@ -441,8 +707,32 @@ function mapTrainingRecordFromDb(record = {}) {
     review: record.review || '',
     score: record.score ?? null,
     result: record.result || '',
+    battlefield: record.battlefield || '',
     createdAt: record.created_at
   };
+}
+
+function mapTeamFromDb(team = {}) {
+  return {
+    teamCode: team.team_code,
+    teamName: team.team_name,
+    createdAt: team.created_at
+  };
+}
+
+function mapTeamMemberFromDb(member = {}) {
+  return {
+    id: member.id,
+    teamCode: member.team_code,
+    localUserId: member.local_user_id,
+    nickname: member.nickname,
+    createdAt: member.created_at,
+    lastSeenAt: member.last_seen_at
+  };
+}
+
+function roundToOne(value) {
+  return Math.round(value * 10) / 10;
 }
 
 function cleanOpeningQuestion(text) {

@@ -80,17 +80,28 @@ const initialConfig = {
   rounds: 3
 };
 
-const anonymousUserIdStorageKey = 'ai-debate-coach-anonymous-user-id';
+const teamCodeStorageKey = 'ai-debate-coach-team-code';
+const nicknameStorageKey = 'ai-debate-coach-nickname';
+const localUserIdStorageKey = 'ai-debate-coach-local-user-id';
 const trainingRecordLimit = 20;
 
 function App() {
   const [config, setConfig] = useState(initialConfig);
   const [history, setHistory] = useState([]);
-  const [anonymousUserId, setAnonymousUserId] = useState('');
+  const [localUserId, setLocalUserId] = useState('');
+  const [teamIdentity, setTeamIdentity] = useState({ teamCode: '', nickname: '' });
+  const [joinForm, setJoinForm] = useState({ teamCode: '', nickname: '' });
+  const [joinError, setJoinError] = useState('');
+  const [isJoiningTeam, setIsJoiningTeam] = useState(false);
+  const [activeTab, setActiveTab] = useState('training');
   const [trainingRecords, setTrainingRecords] = useState([]);
+  const [teamRecords, setTeamRecords] = useState([]);
+  const [teamStats, setTeamStats] = useState(null);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [isTeamDataLoading, setIsTeamDataLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const [teamDataError, setTeamDataError] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
   const [answer, setAnswer] = useState('');
   const [review, setReview] = useState('');
@@ -137,16 +148,23 @@ function App() {
   const latestAiMessage = useMemo(() => getLatestMessage(history, 'ai'), [history]);
   const isBusy = isLoading || isPolishing || isTranscribing;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
+  const hasJoinedTeam = Boolean(teamIdentity.teamCode && teamIdentity.nickname && localUserId);
 
   useEffect(() => {
-    setAnonymousUserId(getOrCreateAnonymousUserId());
+    const storedLocalUserId = getOrCreateLocalUserId();
+    const storedTeamCode = normalizeTeamCode(localStorage.getItem(teamCodeStorageKey));
+    const storedNickname = String(localStorage.getItem(nicknameStorageKey) || '').trim();
+
+    setLocalUserId(storedLocalUserId);
+    setTeamIdentity({ teamCode: storedTeamCode, nickname: storedNickname });
+    setJoinForm({ teamCode: storedTeamCode, nickname: storedNickname });
   }, []);
 
   useEffect(() => {
-    if (!anonymousUserId) return;
+    if (!hasJoinedTeam) return;
 
-    loadTrainingRecords(anonymousUserId);
-  }, [anonymousUserId]);
+    loadTeamDashboard(teamIdentity.teamCode, localUserId);
+  }, [hasJoinedTeam, teamIdentity.teamCode, localUserId]);
 
   useEffect(() => {
     return () => {
@@ -154,13 +172,74 @@ function App() {
     };
   }, []);
 
-  async function loadTrainingRecords(userId) {
+  async function joinTeam(event) {
+    event.preventDefault();
+    if (isJoiningTeam) return;
+
+    const nextTeamCode = normalizeTeamCode(joinForm.teamCode);
+    const nextNickname = joinForm.nickname.trim();
+    const validationMessage = validateTeamJoinInput(nextTeamCode, nextNickname);
+
+    if (validationMessage) {
+      setJoinError(validationMessage);
+      return;
+    }
+
+    const nextLocalUserId = localUserId || getOrCreateLocalUserId();
+    setIsJoiningTeam(true);
+    setJoinError('');
+
+    try {
+      await postJson('/api/team/join', {
+        teamCode: nextTeamCode,
+        nickname: nextNickname,
+        localUserId: nextLocalUserId
+      });
+
+      localStorage.setItem(teamCodeStorageKey, nextTeamCode);
+      localStorage.setItem(nicknameStorageKey, nextNickname);
+      localStorage.setItem(localUserIdStorageKey, nextLocalUserId);
+      setLocalUserId(nextLocalUserId);
+      setTeamIdentity({ teamCode: nextTeamCode, nickname: nextNickname });
+      setJoinForm({ teamCode: nextTeamCode, nickname: nextNickname });
+      setActiveTab('training');
+    } catch (requestError) {
+      setJoinError(getFriendlyError(requestError));
+    } finally {
+      setIsJoiningTeam(false);
+    }
+  }
+
+  function switchTeam() {
+    if (isBusy || isRecording) return;
+
+    localStorage.removeItem(teamCodeStorageKey);
+    localStorage.removeItem(nicknameStorageKey);
+    setTeamIdentity({ teamCode: '', nickname: '' });
+    setJoinForm({ teamCode: '', nickname: '' });
+    setTrainingRecords([]);
+    setTeamRecords([]);
+    setTeamStats(null);
+    setSelectedRecord(null);
+    setSaveStatus('');
+    setHistoryError('');
+    setTeamDataError('');
+  }
+
+  async function loadTeamDashboard(teamCode, userId) {
+    await Promise.all([
+      loadMyTrainingRecords(teamCode, userId),
+      loadTeamData(teamCode)
+    ]);
+  }
+
+  async function loadMyTrainingRecords(teamCode, userId) {
     setIsHistoryLoading(true);
     setHistoryError('');
 
     try {
       const data = await getJson(
-        `/api/training-records?userId=${encodeURIComponent(userId)}&limit=${trainingRecordLimit}`
+        `/api/training-records/my?teamCode=${encodeURIComponent(teamCode)}&localUserId=${encodeURIComponent(userId)}`
       );
       setTrainingRecords(Array.isArray(data.records) ? data.records : []);
     } catch (requestError) {
@@ -170,12 +249,32 @@ function App() {
     }
   }
 
+  async function loadTeamData(teamCode) {
+    setIsTeamDataLoading(true);
+    setTeamDataError('');
+
+    try {
+      const [recordsData, statsData] = await Promise.all([
+        getJson(`/api/training-records/team?teamCode=${encodeURIComponent(teamCode)}`),
+        getJson(`/api/team/stats?teamCode=${encodeURIComponent(teamCode)}`)
+      ]);
+      setTeamRecords(Array.isArray(recordsData.records) ? recordsData.records : []);
+      setTeamStats(statsData);
+    } catch (requestError) {
+      setTeamDataError(getFriendlyError(requestError));
+    } finally {
+      setIsTeamDataLoading(false);
+    }
+  }
+
   async function saveTrainingRecord(reviewContent) {
     setSaveStatus('正在保存本次训练记录...');
 
     try {
       const data = await postJson('/api/training-records', {
-        userId: anonymousUserId,
+        teamCode: teamIdentity.teamCode,
+        localUserId,
+        nickname: teamIdentity.nickname,
         topic: config.topic,
         userSide: config.userSide,
         aiSide: getOpponentSideValue(config.userSide),
@@ -184,7 +283,8 @@ function App() {
         messages: history,
         review: reviewContent,
         score: extractScoreFromReview(reviewContent),
-        result: extractResultFromReview(reviewContent)
+        result: extractResultFromReview(reviewContent),
+        battlefield: extractBattlefieldFromReview(reviewContent)
       });
 
       if (data.record) {
@@ -192,11 +292,16 @@ function App() {
           data.record,
           ...currentRecords.filter((record) => record.id !== data.record.id)
         ].slice(0, trainingRecordLimit));
+        setTeamRecords((currentRecords) => [
+          data.record,
+          ...currentRecords.filter((record) => record.id !== data.record.id)
+        ].slice(0, 50));
       }
 
       setSaveStatus('本次训练记录已保存。');
+      loadTeamData(teamIdentity.teamCode);
     } catch (requestError) {
-      setSaveStatus(`复盘已生成，但历史记录保存失败：${getFriendlyError(requestError)}`);
+      setSaveStatus('复盘已生成，但记录同步失败，请稍后重试。');
     }
   }
 
@@ -570,8 +675,86 @@ function App() {
     }
   }
 
+  if (!hasJoinedTeam) {
+    return (
+      <main className="app-shell team-join-shell">
+        <section className="panel team-join-panel">
+          <div className="panel-title">
+            <p className="eyebrow">团队空间</p>
+            <h1>加入团队</h1>
+            <p className="team-privacy-note">
+              加入团队后，你的昵称、训练次数、分数、辩题和复盘结果可能被团队成员或队长查看，请勿输入私人敏感内容。
+            </p>
+          </div>
+
+          <form className="team-join-form" onSubmit={joinTeam}>
+            <label className="field">
+              <span>昵称</span>
+              <input
+                value={joinForm.nickname}
+                disabled={isJoiningTeam}
+                onChange={(event) => setJoinForm({ ...joinForm, nickname: event.target.value })}
+                placeholder="例如：党梓豪"
+                maxLength={20}
+              />
+            </label>
+
+            <label className="field">
+              <span>团队码</span>
+              <input
+                value={joinForm.teamCode}
+                disabled={isJoiningTeam}
+                onChange={(event) => setJoinForm({ ...joinForm, teamCode: event.target.value })}
+                placeholder="例如：JXCH-DEBATE"
+                maxLength={32}
+              />
+            </label>
+
+            {joinError && <div className="error-box">{joinError}</div>}
+
+            <button className="primary-button" type="submit" disabled={isJoiningTeam}>
+              {isJoiningTeam ? '加入中...' : '加入团队'}
+            </button>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className={`app-shell ${hasSessionContent ? 'session-active' : ''}`}>
+      <section className="team-topbar" aria-label="当前团队信息">
+        <div>
+          <span>当前团队：{teamIdentity.teamCode}</span>
+          <strong>当前用户：{teamIdentity.nickname}</strong>
+        </div>
+        <button type="button" onClick={switchTeam} disabled={isBusy || isRecording}>
+          切换团队
+        </button>
+      </section>
+
+      <nav className="main-tabs" aria-label="功能分区">
+        {[
+          { label: '训练区', value: 'training' },
+          { label: '我的记录', value: 'mine' },
+          { label: '团队数据', value: 'team' }
+        ].map((tab) => (
+          <button
+            type="button"
+            key={tab.value}
+            className={activeTab === tab.value ? 'active' : ''}
+            onClick={() => {
+              setActiveTab(tab.value);
+              setSelectedRecord(null);
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === 'training' && (
+      <>
       <section className="arena-hero">
         <div className="hero-copy">
           <p className="eyebrow">高中辩论训练场</p>
@@ -896,18 +1079,19 @@ function App() {
           <pre>{review}</pre>
         </section>
       )}
+      </>
+      )}
 
+      {activeTab === 'mine' && (
       <section className="panel history-panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">匿名历史</p>
-            <h2>历史记录</h2>
+            <p className="eyebrow">个人训练</p>
+            <h2>我的记录</h2>
           </div>
           {isHistoryLoading && <span className="badge">加载中</span>}
         </div>
-        <p className="anonymous-note">
-          当前为匿名记录模式，记录仅在当前设备和浏览器中关联保存。
-        </p>
+        <p className="anonymous-note">当前记录同步到团队空间，仅展示你在当前团队下的训练记录。</p>
         {saveStatus && <div className="history-status">{saveStatus}</div>}
         {historyError && <div className="error-box">{historyError}</div>}
 
@@ -969,7 +1153,156 @@ function App() {
           </div>
         )}
       </section>
+      )}
+
+      {activeTab === 'team' && (
+        <TeamDataPanel
+          records={teamRecords}
+          stats={teamStats}
+          selectedRecord={selectedRecord}
+          isLoading={isTeamDataLoading}
+          error={teamDataError}
+          onSelectRecord={setSelectedRecord}
+          onClearRecord={() => setSelectedRecord(null)}
+        />
+      )}
     </main>
+  );
+}
+
+function TeamDataPanel({
+  records,
+  stats,
+  selectedRecord,
+  isLoading,
+  error,
+  onSelectRecord,
+  onClearRecord
+}) {
+  const memberStats = Array.isArray(stats?.memberStats) ? stats.memberStats : [];
+  const countRanking = [...memberStats].sort((a, b) => b.count - a.count);
+  const scoreRanking = [...memberStats].sort((a, b) => (b.averageScore || 0) - (a.averageScore || 0));
+
+  return (
+    <section className="panel team-data-panel">
+      <div className="panel-header">
+        <div>
+          <p className="eyebrow">团队复盘</p>
+          <h2>团队数据</h2>
+        </div>
+        {isLoading && <span className="badge">加载中</span>}
+      </div>
+
+      {error && <div className="error-box">{error}</div>}
+
+      <div className="team-stat-grid">
+        <div className="stat-card">
+          <span>团队训练总次数</span>
+          <strong>{stats?.totalRecords ?? 0}</strong>
+        </div>
+        <div className="stat-card">
+          <span>团队平均分</span>
+          <strong>{formatNullableNumber(stats?.averageScore)}</strong>
+        </div>
+        <div className="stat-card">
+          <span>团队最高分</span>
+          <strong>{formatNullableNumber(stats?.highestScore)}</strong>
+        </div>
+      </div>
+
+      <div className="team-rank-grid">
+        <RankingList title="成员训练次数排行" items={countRanking} metric={(item) => `${item.count} 次`} />
+        <RankingList title="成员平均分排行" items={scoreRanking} metric={(item) => `${formatNullableNumber(item.averageScore)} 分`} />
+      </div>
+
+      <div className="team-recent-section">
+        <h3>最近训练记录</h3>
+        {records.length === 0 ? (
+          <div className="history-empty">暂无训练记录</div>
+        ) : (
+          <div className="history-list">
+            {records.map((record) => (
+              <button
+                type="button"
+                key={record.id || record.createdAt}
+                className={`history-item ${selectedRecord?.id === record.id ? 'active' : ''}`}
+                onClick={() => onSelectRecord(record)}
+              >
+                <span>{formatRecordDate(record.createdAt)} · {record.nickname || '未命名成员'}</span>
+                <strong>{record.topic}</strong>
+                <small>
+                  {getOptionLabel(difficulties, record.difficulty)}
+                  {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
+                  {record.result ? ` / ${record.result}` : ''}
+                </small>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedRecord && (
+        <RecordDetail record={selectedRecord} onClose={onClearRecord} />
+      )}
+    </section>
+  );
+}
+
+function RankingList({ title, items, metric }) {
+  return (
+    <div className="ranking-card">
+      <h3>{title}</h3>
+      {items.length === 0 ? (
+        <p>暂无数据</p>
+      ) : (
+        <ol>
+          {items.map((item) => (
+            <li key={item.localUserId}>
+              <span>{item.nickname || '未命名成员'}</span>
+              <strong>{metric(item)}</strong>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+function RecordDetail({ record, onClose }) {
+  return (
+    <div className="history-detail">
+      <div className="history-detail-header">
+        <div>
+          <span>{formatRecordDate(record.createdAt)} · {record.nickname || '我的训练'}</span>
+          <h3>{record.topic}</h3>
+        </div>
+        <button type="button" onClick={onClose}>
+          收起
+        </button>
+      </div>
+
+      <div className="history-meta">
+        <span>我的立场：{getOptionLabel(sides, record.userSide)}</span>
+        <span>AI 立场：{getOptionLabel(sides, record.aiSide)}</span>
+        <span>难度：{getOptionLabel(difficulties, record.difficulty)}</span>
+        <span>风格：{getOptionLabel(celebrityDebaters, record.styleId) || '普通 AI'}</span>
+        {record.battlefield && <span>战场：{record.battlefield}</span>}
+      </div>
+
+      <div className="conversation history-conversation">
+        {record.messages.map((item, index) => (
+          <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
+            <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
+            <p>{item.content}</p>
+          </article>
+        ))}
+      </div>
+
+      <div className="history-review">
+        <h3>复盘报告</h3>
+        <pre>{record.review}</pre>
+      </div>
+    </div>
   );
 }
 
@@ -1012,15 +1345,15 @@ function getOpponentSideValue(userSide) {
   return userSide === 'affirmative' ? 'negative' : 'affirmative';
 }
 
-function getOrCreateAnonymousUserId() {
-  const existingUserId = localStorage.getItem(anonymousUserIdStorageKey);
+function getOrCreateLocalUserId() {
+  const existingUserId = localStorage.getItem(localUserIdStorageKey);
 
-  if (isUuid(existingUserId)) {
+  if (isLocalUserId(existingUserId)) {
     return existingUserId;
   }
 
-  const nextUserId = createUuid();
-  localStorage.setItem(anonymousUserIdStorageKey, nextUserId);
+  const nextUserId = `user_${createUuid()}`;
+  localStorage.setItem(localUserIdStorageKey, nextUserId);
   return nextUserId;
 }
 
@@ -1047,6 +1380,26 @@ function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
 
+function isLocalUserId(value) {
+  return /^user_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+function normalizeTeamCode(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function validateTeamJoinInput(teamCode, nickname) {
+  if (!nickname || nickname.length > 20 || /[<>]/.test(nickname)) {
+    return '请输入 1-20 个字符的昵称。';
+  }
+
+  if (!/^[A-Z0-9_-]{3,32}$/.test(teamCode)) {
+    return '请输入 3-32 位团队码，只能包含字母、数字、短横线或下划线。';
+  }
+
+  return '';
+}
+
 function extractScoreFromReview(reviewText) {
   const match = String(reviewText || '').match(/总分[：:]\s*(\d{1,3})\s*\/\s*100/);
 
@@ -1060,6 +1413,15 @@ function extractScoreFromReview(reviewText) {
 function extractResultFromReview(reviewText) {
   const match = String(reviewText || '').match(/胜负倾向[：:]\s*(?:\n|\r\n)?\s*(用户明显胜|用户小优|势均力敌|用户偏劣)/);
   return match?.[1] || '';
+}
+
+function extractBattlefieldFromReview(reviewText) {
+  const match = String(reviewText || '').match(/核心战场归属[：:]\s*(?:\n|\r\n)?\s*(用户小优|AI小优|势均力敌)/);
+  return match?.[1] || '';
+}
+
+function formatNullableNumber(value) {
+  return value === null || value === undefined ? '--' : value;
 }
 
 function formatRecordDate(value) {
