@@ -856,6 +856,7 @@ function App() {
       </section>
       )}
 
+      {setupStep !== 'mode' && (
       <section className="arena-hero">
         <div className="hero-copy">
           <p className="eyebrow">锋辩</p>
@@ -884,6 +885,7 @@ function App() {
           </div>
         </div>
       </section>
+      )}
 
       {!hasSessionContent && setupStep === 'details' && (
         <section className="match-strip" aria-label="对阵信息">
