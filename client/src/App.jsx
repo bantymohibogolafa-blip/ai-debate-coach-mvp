@@ -1081,7 +1081,7 @@ function App() {
               history.map((item, index) => (
                 <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
                   <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
-                  <p>{item.content}</p>
+                  <p>{formatConversationContent(item.content, item.role)}</p>
                 </article>
               ))
             )}
@@ -1102,7 +1102,7 @@ function App() {
                 <>
                   <div className="round-card">
                     <span>第 {currentRound} / {config.rounds} 轮 · {getRoundPromptLabel(config.trainingMode)}</span>
-                    <p>{latestAiMessage || '等待 AI 追问。'}</p>
+                    <p>{latestAiMessage ? formatConversationContent(latestAiMessage, 'ai') : '等待 AI 追问。'}</p>
                   </div>
                   <textarea
                     value={answer}
@@ -1260,7 +1260,7 @@ function App() {
               {selectedRecord.messages.map((item, index) => (
                 <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
                   <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
-                  <p>{item.content}</p>
+                  <p>{formatConversationContent(item.content, item.role)}</p>
                 </article>
               ))}
             </div>
@@ -1413,7 +1413,7 @@ function RecordDetail({ record, onClose }) {
         {record.messages.map((item, index) => (
           <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
             <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
-            <p>{item.content}</p>
+            <p>{formatConversationContent(item.content, item.role)}</p>
           </article>
         ))}
       </div>
@@ -1471,6 +1471,28 @@ function getRoundPromptLabel(trainingMode) {
   if (trainingMode === 'summary') return '场上已有交锋点';
   if (trainingMode === 'closing') return '对立方结辩素材';
   return '本轮追问';
+}
+
+function formatConversationContent(content, role) {
+  const text = String(content || '').trim();
+
+  if (!text || role !== 'ai') {
+    return text;
+  }
+
+  return text
+    .replace(/\*\*/g, '')
+    .replace(/[ \t]*\r?\n[ \t]*/g, '\n')
+    .replace(/\s*(对立方一辩陈词摘要|对立方已提出的关键点|对立方已形成的结辩素材|场上已有交锋点)[：:]?/g, '\n$1\n')
+    .replace(/\s*(核心标准[：:])/g, '\n$1')
+    .replace(/\s*(核心胜负判断[：:])/g, '\n$1')
+    .replace(/\s*((?:\d+[.、]\s*)?(?:分论点|交锋点|主要论点)[一二三四五六七八九十\d]*[：:])/g, '\n\n$1')
+    .replace(/\s*(摘要[：:])/g, '\n$1')
+    .replace(/\s*(事实依据[：:])/g, '\n$1')
+    .replace(/\s*(对立方主张[：:])/g, '\n$1')
+    .replace(/\s*(理由[：:])/g, '\n$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function getOrCreateLocalUserId() {

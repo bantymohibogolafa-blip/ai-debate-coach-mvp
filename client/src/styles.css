@@ -761,7 +761,9 @@ textarea:focus {
 
 .message p {
   margin: 7px 0 0;
+  line-height: 1.65;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .message.ai {
@@ -829,7 +831,9 @@ textarea:focus {
   color: #182a32;
   font-size: 17px;
   font-weight: 800;
-  line-height: 1.55;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .speech-panel {
