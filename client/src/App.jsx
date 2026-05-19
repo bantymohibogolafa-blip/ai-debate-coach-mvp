@@ -80,9 +80,18 @@ const initialConfig = {
   rounds: 3
 };
 
+const anonymousUserIdStorageKey = 'ai-debate-coach-anonymous-user-id';
+const trainingRecordLimit = 20;
+
 function App() {
   const [config, setConfig] = useState(initialConfig);
   const [history, setHistory] = useState([]);
+  const [anonymousUserId, setAnonymousUserId] = useState('');
+  const [trainingRecords, setTrainingRecords] = useState([]);
+  const [selectedRecord, setSelectedRecord] = useState(null);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [saveStatus, setSaveStatus] = useState('');
   const [answer, setAnswer] = useState('');
   const [review, setReview] = useState('');
   const [isTraining, setIsTraining] = useState(false);
@@ -130,10 +139,66 @@ function App() {
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
 
   useEffect(() => {
+    setAnonymousUserId(getOrCreateAnonymousUserId());
+  }, []);
+
+  useEffect(() => {
+    if (!anonymousUserId) return;
+
+    loadTrainingRecords(anonymousUserId);
+  }, [anonymousUserId]);
+
+  useEffect(() => {
     return () => {
       stopRecordingResources(false);
     };
   }, []);
+
+  async function loadTrainingRecords(userId) {
+    setIsHistoryLoading(true);
+    setHistoryError('');
+
+    try {
+      const data = await getJson(
+        `/api/training-records?userId=${encodeURIComponent(userId)}&limit=${trainingRecordLimit}`
+      );
+      setTrainingRecords(Array.isArray(data.records) ? data.records : []);
+    } catch (requestError) {
+      setHistoryError(getFriendlyError(requestError));
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  }
+
+  async function saveTrainingRecord(reviewContent) {
+    setSaveStatus('正在保存本次训练记录...');
+
+    try {
+      const data = await postJson('/api/training-records', {
+        userId: anonymousUserId,
+        topic: config.topic,
+        userSide: config.userSide,
+        aiSide: getOpponentSideValue(config.userSide),
+        difficulty: config.difficulty,
+        styleId: config.celebrityDebater,
+        messages: history,
+        review: reviewContent,
+        score: extractScoreFromReview(reviewContent),
+        result: extractResultFromReview(reviewContent)
+      });
+
+      if (data.record) {
+        setTrainingRecords((currentRecords) => [
+          data.record,
+          ...currentRecords.filter((record) => record.id !== data.record.id)
+        ].slice(0, trainingRecordLimit));
+      }
+
+      setSaveStatus('本次训练记录已保存。');
+    } catch (requestError) {
+      setSaveStatus(`复盘已生成，但历史记录保存失败：${getFriendlyError(requestError)}`);
+    }
+  }
 
   function updateConfig(nextConfig) {
     setConfig(nextConfig);
@@ -199,6 +264,8 @@ function App() {
     setReview('');
     setHistory([]);
     setPolishResult(null);
+    setSelectedRecord(null);
+    setSaveStatus('');
 
     try {
       const data = await postJson('/api/debate/start', {
@@ -273,6 +340,7 @@ function App() {
 
       setReview(content);
       setIsTraining(false);
+      await saveTrainingRecord(content);
     } catch (requestError) {
       setError(getFriendlyError(requestError));
     } finally {
@@ -288,6 +356,8 @@ function App() {
     setAnswer('');
     setReview('');
     setError('');
+    setSelectedRecord(null);
+    setSaveStatus('');
     setPolishResult(null);
     setRecordingError('');
     setRecordingStatus('');
@@ -826,6 +896,79 @@ function App() {
           <pre>{review}</pre>
         </section>
       )}
+
+      <section className="panel history-panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">匿名历史</p>
+            <h2>历史记录</h2>
+          </div>
+          {isHistoryLoading && <span className="badge">加载中</span>}
+        </div>
+        <p className="anonymous-note">
+          当前为匿名记录模式，记录仅在当前设备和浏览器中关联保存。
+        </p>
+        {saveStatus && <div className="history-status">{saveStatus}</div>}
+        {historyError && <div className="error-box">{historyError}</div>}
+
+        {!isHistoryLoading && trainingRecords.length === 0 ? (
+          <div className="history-empty">暂无训练记录</div>
+        ) : (
+          <div className="history-list">
+            {trainingRecords.map((record) => (
+              <button
+                type="button"
+                key={record.id || record.createdAt}
+                className={`history-item ${selectedRecord?.id === record.id ? 'active' : ''}`}
+                onClick={() => setSelectedRecord(record)}
+              >
+                <span>{formatRecordDate(record.createdAt)}</span>
+                <strong>{record.topic}</strong>
+                <small>
+                  {getOptionLabel(sides, record.userSide)} / {getOptionLabel(difficulties, record.difficulty)}
+                  {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
+                  {record.result ? ` / ${record.result}` : ''}
+                </small>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selectedRecord && (
+          <div className="history-detail">
+            <div className="history-detail-header">
+              <div>
+                <span>{formatRecordDate(selectedRecord.createdAt)}</span>
+                <h3>{selectedRecord.topic}</h3>
+              </div>
+              <button type="button" onClick={() => setSelectedRecord(null)}>
+                收起
+              </button>
+            </div>
+
+            <div className="history-meta">
+              <span>我的立场：{getOptionLabel(sides, selectedRecord.userSide)}</span>
+              <span>AI 立场：{getOptionLabel(sides, selectedRecord.aiSide)}</span>
+              <span>难度：{getOptionLabel(difficulties, selectedRecord.difficulty)}</span>
+              <span>风格：{getOptionLabel(celebrityDebaters, selectedRecord.styleId) || '普通 AI'}</span>
+            </div>
+
+            <div className="conversation history-conversation">
+              {selectedRecord.messages.map((item, index) => (
+                <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
+                  <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
+                  <p>{item.content}</p>
+                </article>
+              ))}
+            </div>
+
+            <div className="history-review">
+              <h3>复盘报告</h3>
+              <pre>{selectedRecord.review}</pre>
+            </div>
+          </div>
+        )}
+      </section>
     </main>
   );
 }
@@ -863,6 +1006,76 @@ function getLatestMessage(history, role) {
   }
 
   return '';
+}
+
+function getOpponentSideValue(userSide) {
+  return userSide === 'affirmative' ? 'negative' : 'affirmative';
+}
+
+function getOrCreateAnonymousUserId() {
+  const existingUserId = localStorage.getItem(anonymousUserIdStorageKey);
+
+  if (isUuid(existingUserId)) {
+    return existingUserId;
+  }
+
+  const nextUserId = createUuid();
+  localStorage.setItem(anonymousUserIdStorageKey, nextUserId);
+  return nextUserId;
+}
+
+function createUuid() {
+  if (crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+
+  return [
+    hex.slice(0, 4).join(''),
+    hex.slice(4, 6).join(''),
+    hex.slice(6, 8).join(''),
+    hex.slice(8, 10).join(''),
+    hex.slice(10, 16).join('')
+  ].join('-');
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+function extractScoreFromReview(reviewText) {
+  const match = String(reviewText || '').match(/总分[：:]\s*(\d{1,3})\s*\/\s*100/);
+
+  if (!match) {
+    return null;
+  }
+
+  return Math.min(100, Math.max(0, Number(match[1])));
+}
+
+function extractResultFromReview(reviewText) {
+  const match = String(reviewText || '').match(/胜负倾向[：:]\s*(?:\n|\r\n)?\s*(用户明显胜|用户小优|势均力敌|用户偏劣)/);
+  return match?.[1] || '';
+}
+
+function formatRecordDate(value) {
+  if (!value) return '未知时间';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '未知时间';
+  }
+
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function shuffle(items) {
@@ -1013,6 +1226,24 @@ async function postJson(url, body) {
       },
       body: JSON.stringify(body)
     });
+  } catch {
+    throw new Error('网络连接异常，请稍后重试。');
+  }
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(getServerErrorMessage(response.status, data.message));
+  }
+
+  return data;
+}
+
+async function getJson(url) {
+  let response;
+
+  try {
+    response = await fetch(url);
   } catch {
     throw new Error('网络连接异常，请稍后重试。');
   }

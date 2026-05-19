@@ -39,7 +39,11 @@ npm install
 ```env
 DEEPSEEK_API_KEY=sk-your-deepseek-api-key
 DEEPSEEK_API_URL=https://api.deepseek.com/chat/completions
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_THINKING=disabled
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+SUPABASE_TRAINING_TABLE=debate_training_records
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
 ALIYUN_ACCESS_KEY_ID=your-aliyun-access-key-id
 ALIYUN_ACCESS_KEY_SECRET=your-aliyun-access-key-secret
@@ -47,6 +51,34 @@ ALIYUN_NLS_URL=https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/asr
 ALIYUN_NLS_TOKEN_URL=http://nls-meta.cn-shanghai.aliyuncs.com/
 PORT=3001
 ```
+
+`SUPABASE_SERVICE_ROLE_KEY` 只放在 `server/.env` 或线上后端环境变量中，不要放到前端代码、Vite 环境变量或公开仓库。
+
+## Supabase 建表 SQL
+
+在 Supabase SQL Editor 中执行：
+
+```sql
+create table if not exists public.debate_training_records (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  topic text not null,
+  user_side text not null check (user_side in ('affirmative', 'negative')),
+  ai_side text not null check (ai_side in ('affirmative', 'negative')),
+  difficulty text not null check (difficulty in ('novice', 'campus', 'city')),
+  style_id text not null default 'none',
+  messages jsonb not null default '[]'::jsonb,
+  review text not null,
+  score integer check (score is null or (score >= 0 and score <= 100)),
+  result text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists debate_training_records_user_created_idx
+  on public.debate_training_records (user_id, created_at desc);
+```
+
+本项目后端使用 service role key 访问 Supabase REST API，因此最小可行版本不依赖前端 Supabase 客户端，也不会把 service role key 暴露给浏览器。
 
 ## 本地运行步骤
 
@@ -70,7 +102,9 @@ Copy-Item server/.env.example server/.env
 
 3. 把 `server/.env` 中的 `DEEPSEEK_API_KEY` 改成自己的 Key。
 
-4. 同时启动前后端：
+4. 在 Supabase 创建项目，执行上面的建表 SQL，并把 `SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY` 填入 `server/.env`。
+
+5. 同时启动前后端：
 
 ```bash
 npm run dev
@@ -82,7 +116,7 @@ npm run dev
 npm.cmd run dev
 ```
 
-5. 打开前端页面：
+6. 打开前端页面：
 
 ```text
 http://localhost:5173
@@ -113,8 +147,12 @@ npm start
 ```env
 DEEPSEEK_API_KEY=sk-your-deepseek-api-key
 DEEPSEEK_API_URL=https://api.deepseek.com/chat/completions
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_THINKING=disabled
 NODE_ENV=production
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+SUPABASE_TRAINING_TABLE=debate_training_records
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
 ALIYUN_ACCESS_KEY_ID=your-aliyun-access-key-id
 ALIYUN_ACCESS_KEY_SECRET=your-aliyun-access-key-secret

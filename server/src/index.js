@@ -25,6 +25,7 @@ const port = process.env.PORT || 3001;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
+const supabaseTable = process.env.SUPABASE_TRAINING_TABLE || 'debate_training_records';
 const aliyunTokenCache = {
   token: '',
   expireTime: 0
@@ -97,6 +98,33 @@ app.post('/api/debate/review', async (req, res, next) => {
     const content = await callDeepSeek(messages, { maxTokens: 2200, temperature: 0.5 });
 
     res.json({ content });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/training-records', async (req, res, next) => {
+  try {
+    const userId = normalizeText(req.query.userId);
+    const limit = clampNumber(Number(req.query.limit || 20), 1, 50);
+
+    if (!isValidAnonymousUserId(userId)) {
+      return res.status(400).json({ message: '匿名用户 ID 无效，请刷新页面后重试。' });
+    }
+
+    const records = await fetchTrainingRecords(userId, limit);
+    res.json({ records: records.map(mapTrainingRecordFromDb) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/training-records', async (req, res, next) => {
+  try {
+    const record = validateTrainingRecordPayload(req.body);
+    const savedRecords = await insertTrainingRecord(record);
+
+    res.status(201).json({ record: mapTrainingRecordFromDb(savedRecords[0]) });
   } catch (error) {
     next(error);
   }
@@ -187,6 +215,66 @@ function validateSessionPayload(body) {
   };
 }
 
+function validateTrainingRecordPayload(body) {
+  const userId = normalizeText(body.userId || body.user_id);
+  const topic = normalizeText(body.topic);
+  const userSide = normalizeSide(normalizeText(body.userSide || body.user_side));
+  const aiSide = normalizeSide(normalizeText(body.aiSide || body.ai_side));
+  const difficulty = normalizeDifficulty(normalizeText(body.difficulty));
+  const styleId = normalizeCelebrityDebater(normalizeText(body.styleId || body.style_id || 'none'));
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const review = normalizeText(body.review);
+  const score = parseNullableScore(body.score);
+  const result = normalizeText(body.result);
+
+  if (!isValidAnonymousUserId(userId)) {
+    throw badRequest('匿名用户 ID 无效，请刷新页面后重试。');
+  }
+
+  if (!topic) {
+    throw badRequest('训练记录缺少辩题。');
+  }
+
+  if (!isValidSide(userSide) || !isValidSide(aiSide)) {
+    throw badRequest('训练记录缺少有效立场。');
+  }
+
+  if (!isValidDifficulty(difficulty)) {
+    throw badRequest('训练记录缺少有效难度。');
+  }
+
+  if (!isValidCelebrityDebater(styleId)) {
+    throw badRequest('训练记录缺少有效风格。');
+  }
+
+  if (!messages.length) {
+    throw badRequest('训练记录缺少完整对话。');
+  }
+
+  if (!review) {
+    throw badRequest('训练记录缺少复盘报告。');
+  }
+
+  return {
+    user_id: userId,
+    topic,
+    user_side: userSide,
+    ai_side: aiSide,
+    difficulty,
+    style_id: styleId,
+    messages: messages
+      .filter((item) => ['ai', 'user'].includes(item.role) && normalizeText(item.content))
+      .map((item) => ({
+        role: item.role,
+        content: normalizeText(item.content)
+      })),
+    review,
+    score,
+    result,
+    created_at: new Date().toISOString()
+  };
+}
+
 function normalizeText(value) {
   return String(value || '').trim();
 }
@@ -202,6 +290,10 @@ function getPublicStatus(error) {
     return error.status;
   }
 
+  if (error.code === 'SUPABASE_NOT_CONFIGURED') {
+    return 501;
+  }
+
   if (error.code === 'ASR_NOT_CONFIGURED') {
     return 501;
   }
@@ -212,10 +304,6 @@ function getPublicStatus(error) {
 function getPublicErrorMessage(error) {
   if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
     return '请求格式有误，请刷新后重试。';
-  }
-
-  if (error.status === 400 && error.message) {
-    return error.message;
   }
 
   if (error.code === 'EMPTY_DEEPSEEK_CONTENT') {
@@ -230,6 +318,18 @@ function getPublicErrorMessage(error) {
     return '录音识别服务暂未配置，请先使用文字输入。';
   }
 
+  if (error.code === 'SUPABASE_NOT_CONFIGURED') {
+    return '历史记录服务暂未配置，请检查 Supabase 环境变量。';
+  }
+
+  if (error.code === 'SUPABASE_REQUEST_FAILED') {
+    return '历史记录保存或读取失败，请稍后重试。';
+  }
+
+  if (error.status === 400 && error.message) {
+    return error.message;
+  }
+
   if (error.code === 'ASR_REQUEST_FAILED' || error.code === 'EMPTY_ASR_CONTENT') {
     return '录音识别失败，请重试或改用文字输入。';
   }
@@ -241,6 +341,108 @@ function limitLength(text, maxLength) {
   const clean = normalizeText(text);
   if (clean.length <= maxLength) return clean;
   return `${clean.slice(0, maxLength - 1)}…`;
+}
+
+function isValidAnonymousUserId(userId) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId);
+}
+
+function clampNumber(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function parseNullableScore(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const score = Number(value);
+  if (!Number.isFinite(score)) {
+    return null;
+  }
+
+  return clampNumber(Math.round(score), 0, 100);
+}
+
+function getSupabaseConfig() {
+  const url = normalizeText(process.env.SUPABASE_URL).replace(/\/$/, '');
+  const serviceRoleKey = normalizeText(process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+  if (!url || !serviceRoleKey) {
+    const error = new Error('Supabase is not configured.');
+    error.code = 'SUPABASE_NOT_CONFIGURED';
+    error.status = 501;
+    throw error;
+  }
+
+  return { url, serviceRoleKey };
+}
+
+async function fetchTrainingRecords(userId, limit) {
+  const query = new URLSearchParams({
+    select: 'id,user_id,topic,user_side,ai_side,difficulty,style_id,messages,review,score,result,created_at',
+    user_id: `eq.${userId}`,
+    order: 'created_at.desc',
+    limit: String(limit)
+  });
+
+  return supabaseRequest(`${supabaseTable}?${query.toString()}`);
+}
+
+async function insertTrainingRecord(record) {
+  return supabaseRequest(supabaseTable, {
+    method: 'POST',
+    body: record,
+    prefer: 'return=representation'
+  });
+}
+
+async function supabaseRequest(pathname, options = {}) {
+  const { url, serviceRoleKey } = getSupabaseConfig();
+  const response = await fetch(`${url}/rest/v1/${pathname}`, {
+    method: options.method || 'GET',
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      'Content-Type': 'application/json',
+      ...(options.prefer ? { Prefer: options.prefer } : {})
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    console.error('Supabase request failed', {
+      status: response.status,
+      message: data?.message,
+      details: data?.details
+    });
+
+    const error = new Error('Supabase request failed.');
+    error.code = 'SUPABASE_REQUEST_FAILED';
+    error.status = response.status;
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+function mapTrainingRecordFromDb(record = {}) {
+  return {
+    id: record.id,
+    userId: record.user_id,
+    topic: record.topic,
+    userSide: record.user_side,
+    aiSide: record.ai_side,
+    difficulty: record.difficulty,
+    styleId: record.style_id,
+    messages: Array.isArray(record.messages) ? record.messages : [],
+    review: record.review || '',
+    score: record.score ?? null,
+    result: record.result || '',
+    createdAt: record.created_at
+  };
 }
 
 function cleanOpeningQuestion(text) {
