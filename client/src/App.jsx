@@ -195,7 +195,6 @@ function App() {
   const heroTitle = `锋辩——${trainingModeVenueNames[config.trainingMode] || '自由辩论训练场'}`;
   const isSingleSpeechMode = ['constructive', 'summary', 'closing'].includes(config.trainingMode);
   const isAttackMode = config.trainingMode === 'attack';
-  const userStartsMode = config.userSide === 'affirmative' && (isSingleSpeechMode || isAttackMode);
   const selectedDifficultyLabel = isCelebrityMode
     ? `市赛 · ${selectedDebater?.shortName || '明星辩手'}`
     : getOptionLabel(difficulties, config.difficulty);
@@ -438,20 +437,13 @@ function App() {
     setSaveStatus('');
 
     try {
-      if (userStartsMode) {
-        setHistory([{
-          role: 'ai',
-          content: getUserStartInstruction(config.trainingMode, config.userSide)
-        }]);
-      } else {
-        const data = await postJson('/api/debate/start', {
-          ...config,
-          history: []
-        });
-        const content = requireContent(data);
+      const data = await postJson('/api/debate/start', {
+        ...config,
+        history: []
+      });
+      const content = requireContent(data);
 
-        setHistory([{ role: 'ai', content }]);
-      }
+      setHistory([{ role: 'ai', content }]);
       setIsTraining(true);
     } catch (requestError) {
       setError(getFriendlyError(requestError));
@@ -1096,7 +1088,7 @@ function App() {
               ) : (
                 <>
                   <div className="round-card">
-                    <span>第 {currentRound} / {config.rounds} 轮 · 本轮追问</span>
+                    <span>第 {currentRound} / {config.rounds} 轮 · {getRoundPromptLabel(config.trainingMode)}</span>
                     <p>{latestAiMessage || '等待 AI 追问。'}</p>
                   </div>
                   <textarea
@@ -1460,21 +1452,12 @@ function getOpponentSideValue(userSide) {
   return userSide === 'affirmative' ? 'negative' : 'affirmative';
 }
 
-function getUserStartInstruction(trainingMode, userSide) {
-  const sideLabel = getOptionLabel(sides, userSide);
-  if (trainingMode === 'attack') {
-    return `对立方一辩关键点已给出。${sideLabel}攻辩方请直接输入第一轮质询问题。`;
-  }
-  if (trainingMode === 'constructive') {
-    return `对立方立论观点已给出。${sideLabel}一辩请直接完成立论。单次输入不超过1200字。`;
-  }
-  if (trainingMode === 'summary') {
-    return `场上已有交锋点已给出。${sideLabel}请直接完成攻辩小结。`;
-  }
-  if (trainingMode === 'closing') {
-    return `对立方结辩素材已给出。${sideLabel}四辩请直接完成结辩。单次输入不超过1200字。`;
-  }
-  return `${sideLabel}先进行。请开始你的发言。`;
+function getRoundPromptLabel(trainingMode) {
+  if (trainingMode === 'attack') return '对立方一辩关键点';
+  if (trainingMode === 'constructive') return '对立方立论摘要';
+  if (trainingMode === 'summary') return '场上已有交锋点';
+  if (trainingMode === 'closing') return '对立方结辩素材';
+  return '本轮追问';
 }
 
 function getOrCreateLocalUserId() {
