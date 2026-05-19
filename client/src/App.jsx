@@ -1453,16 +1453,16 @@ function getOpponentSideValue(userSide) {
 function getUserStartInstruction(trainingMode, userSide) {
   const sideLabel = getOptionLabel(sides, userSide);
   if (trainingMode === 'attack') {
-    return `对立面观点已给出。${sideLabel}先进行，请直接输入你的第一轮质询问题。`;
+    return `对立方一辩关键点已给出。${sideLabel}攻辩方请直接输入第一轮质询问题。`;
   }
   if (trainingMode === 'constructive') {
-    return `对立面观点已给出。${sideLabel}先进行，请直接完成一辩立论。单次输入不超过1200字。`;
+    return `对立方立论观点已给出。${sideLabel}一辩请直接完成立论。单次输入不超过1200字。`;
   }
   if (trainingMode === 'summary') {
-    return `对立面观点已给出。${sideLabel}先进行，请直接完成攻辩小结。`;
+    return `场上已有交锋点已给出。${sideLabel}请直接完成攻辩小结。`;
   }
   if (trainingMode === 'closing') {
-    return `对立面观点已给出。${sideLabel}先进行，请直接完成四辩结辩。单次输入不超过1200字。`;
+    return `对立方结辩素材已给出。${sideLabel}四辩请直接完成结辩。单次输入不超过1200字。`;
   }
   return `${sideLabel}先进行。请开始你的发言。`;
 }
