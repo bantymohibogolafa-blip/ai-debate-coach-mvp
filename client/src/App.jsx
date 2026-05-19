@@ -94,14 +94,14 @@ const trainingModes = [
   {
     label: '攻辩训练',
     value: 'attack',
-    rounds: 5,
-    description: '用户只攻不防，AI 只能防守，固定5轮。'
+    rounds: 3,
+    description: '用户只攻不防，AI 只能防守，可选择3轮或5轮。'
   },
   {
     label: '防守训练',
     value: 'defense',
-    rounds: 5,
-    description: 'AI 只攻，用户只能防守，固定5轮。'
+    rounds: 3,
+    description: 'AI 只攻，用户只能防守，可选择3轮或5轮。'
   },
   {
     label: '结辩训练',
@@ -1010,7 +1010,7 @@ function App() {
                 label="轮数"
                 options={roundOptions.map((value) => ({ label: `${value}轮`, value }))}
                 value={config.rounds}
-                disabled={isBusy || config.trainingMode !== 'free_debate'}
+                disabled={isBusy || !['free_debate', 'attack', 'defense'].includes(config.trainingMode)}
                 onChange={(value) => updateConfig({ ...config, rounds: value })}
               />
 
