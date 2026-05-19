@@ -1,4 +1,4 @@
-import cors from 'cors';
+﻿import cors from 'cors';
 import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 import express from 'express';
@@ -13,9 +13,11 @@ import {
   isValidCelebrityDebater,
   isValidDifficulty,
   isValidSide,
+  isValidTrainingMode,
   normalizeCelebrityDebater,
   normalizeDifficulty,
-  normalizeSide
+  normalizeSide,
+  normalizeTrainingMode
 } from './prompts.js';
 
 dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
@@ -238,6 +240,7 @@ function validateSessionPayload(body) {
   const topic = normalizeText(body.topic);
   const userSide = normalizeSide(normalizeText(body.userSide));
   const celebrityDebater = normalizeCelebrityDebater(normalizeText(body.celebrityDebater));
+  const trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode));
   const difficulty = celebrityDebater === 'none' ? normalizeDifficulty(normalizeText(body.difficulty)) : 'city';
   const rounds = Number(body.rounds);
   const history = Array.isArray(body.history) ? body.history : [];
@@ -258,8 +261,12 @@ function validateSessionPayload(body) {
     throw badRequest('请选择有效的辩手模式。');
   }
 
-  if (![3, 5].includes(rounds)) {
-    throw badRequest('请选择3轮或5轮。');
+  if (!isValidTrainingMode(trainingMode)) {
+    throw badRequest('请选择有效的训练模式。');
+  }
+
+  if (![1, 3, 5].includes(rounds)) {
+    throw badRequest('请选择有效训练轮数。');
   }
 
   return {
@@ -267,6 +274,7 @@ function validateSessionPayload(body) {
     userSide,
     difficulty,
     celebrityDebater,
+    trainingMode,
     rounds,
     history: history
       .filter((item) => ['ai', 'user'].includes(item.role) && normalizeText(item.content))
@@ -286,6 +294,7 @@ function validateTrainingRecordPayload(body) {
   const aiSide = normalizeSide(normalizeText(body.aiSide || body.ai_side));
   const difficulty = normalizeDifficulty(normalizeText(body.difficulty));
   const styleId = normalizeCelebrityDebater(normalizeText(body.styleId || body.style_id || 'none'));
+  const trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode));
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const review = normalizeText(body.review);
   const score = parseNullableScore(body.score);
@@ -312,8 +321,22 @@ function validateTrainingRecordPayload(body) {
     throw badRequest('训练记录缺少有效风格。');
   }
 
+  if (!isValidTrainingMode(trainingMode)) {
+    throw badRequest('训练记录缺少有效训练模式。');
+  }
+
   if (!messages.length) {
     throw badRequest('训练记录缺少完整对话。');
+  }
+
+  if (['constructive', 'summary', 'closing'].includes(trainingMode)) {
+    const longestUserMessage = messages
+      .filter((item) => item.role === 'user')
+      .reduce((maxLength, item) => Math.max(maxLength, normalizeText(item.content).length), 0);
+
+    if (longestUserMessage > 1200) {
+      throw badRequest('单项训练发言不能超过1200字。');
+    }
   }
 
   if (!review) {
@@ -329,6 +352,7 @@ function validateTrainingRecordPayload(body) {
     ai_side: aiSide,
     difficulty,
     style_id: styleId,
+    training_mode: trainingMode,
     messages: messages
       .filter((item) => ['ai', 'user'].includes(item.role) && normalizeText(item.content))
       .map((item) => ({
@@ -558,7 +582,7 @@ async function getSingleByQuery(tableName, query) {
 
 async function fetchLegacyTrainingRecords(userId, limit) {
   const query = new URLSearchParams({
-    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,messages,review,score,result,battlefield,created_at',
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
     local_user_id: `eq.user_${userId}`,
     order: 'created_at.desc',
     limit: String(limit)
@@ -569,7 +593,7 @@ async function fetchLegacyTrainingRecords(userId, limit) {
 
 async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
   const query = new URLSearchParams({
-    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,messages,review,score,result,battlefield,created_at',
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
     team_code: `eq.${teamCode}`,
     local_user_id: `eq.${localUserId}`,
     order: 'created_at.desc',
@@ -581,7 +605,7 @@ async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
 
 async function fetchTeamTrainingRecords(teamCode, limit) {
   const query = new URLSearchParams({
-    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,messages,review,score,result,battlefield,created_at',
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
     team_code: `eq.${teamCode}`,
     order: 'created_at.desc',
     limit: String(limit)
@@ -645,7 +669,7 @@ async function fetchTeamStats(teamCode) {
 
 async function fetchAllTeamRecordsForStats(teamCode) {
   const query = new URLSearchParams({
-    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,messages,review,score,result,battlefield,created_at',
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
     team_code: `eq.${teamCode}`,
     order: 'created_at.desc',
     limit: '1000'
@@ -703,6 +727,7 @@ function mapTrainingRecordFromDb(record = {}) {
     aiSide: record.ai_side,
     difficulty: record.difficulty,
     styleId: record.style_id,
+    trainingMode: record.training_mode || 'free_debate',
     messages: Array.isArray(record.messages) ? record.messages : [],
     review: record.review || '',
     score: record.score ?? null,

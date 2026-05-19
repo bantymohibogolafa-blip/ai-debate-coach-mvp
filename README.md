@@ -87,6 +87,7 @@ create table if not exists public.training_records (
   ai_side text not null check (ai_side in ('affirmative', 'negative')),
   difficulty text not null check (difficulty in ('novice', 'campus', 'city')),
   style_id text not null default 'none',
+  training_mode text not null default 'free_debate',
   messages jsonb not null default '[]'::jsonb,
   review text not null,
   score integer check (score is null or (score >= 0 and score <= 100)),
@@ -103,6 +104,13 @@ create index if not exists training_records_member_created_idx
 
 create index if not exists team_members_team_idx
   on public.team_members (team_code);
+```
+
+如果已经执行过上一版团队 SQL，请补充执行：
+
+```sql
+alter table public.training_records
+  add column if not exists training_mode text not null default 'free_debate';
 ```
 
 如果你已经建过旧版 `debate_training_records`，可以保留旧表；团队数据功能默认使用新的 `training_records`、`teams`、`team_members` 三张表。后端使用 service role key 访问 Supabase REST API，因此前端不会接触 Supabase key。

@@ -18,6 +18,53 @@ const sideLabels = {
   negative: '反方'
 };
 
+const trainingModeProfiles = {
+  constructive: {
+    label: '立论训练',
+    startRole: 'speech',
+    reviewFocus: '一辩立论结构、论点完整度、论据使用和价值标准清晰度',
+    opening: '请输出正方一辩立论，篇幅控制在朗读3分钟以内，约800-1000字。必须包含明确价值标准、2-3个主要论点和事实/现实论据。',
+    response: '请输出反方一辩立论，回应正方核心标准，并提出反方2-3个主要论点，篇幅控制在朗读3分钟以内，约800-1000字。',
+    userTask: '用户正在进行一辩立论训练。评价重点是立论结构、论证链、论据使用和表达完整度。'
+  },
+  summary: {
+    label: '攻辩小结训练',
+    startRole: 'prep',
+    reviewFocus: '攻辩小结的战场提炼、交锋点回应、事实支撑和短时表达效率',
+    opening: '请先生成本场攻辩小结训练材料：列出3个主要交锋点、双方主要论点、以及可供使用的3-5条事实论据。然后给出正方攻辩小结示范，控制在约600字以内。',
+    response: '请根据已有材料和正方小结，输出反方攻辩小结示范，聚焦拆解正方战场和重建己方标准，控制在约600字以内。',
+    userTask: '用户正在进行攻辩小结训练。评价重点是能否抓住交锋点、压缩战场、回应对方并形成总结性推进。'
+  },
+  free_debate: {
+    label: '自由辩论',
+    startRole: 'question',
+    reviewFocus: '自由辩论中的回应、推进、攻防转换和战场控制',
+    userTask: '用户正在进行自由辩论训练。评价重点是回应质量、推进意识、反压能力和战场控制。'
+  },
+  attack: {
+    label: '攻辩训练',
+    startRole: 'user_attack',
+    reviewFocus: '质询设计、追问连续性、问题压迫感和战场推进',
+    opening: '请给用户一个可进攻的战场提示：指出对方立场最容易被质询的1个关键漏洞，并给出2个可追问方向。不要替用户发问。',
+    response: '你只能防守，不能反问、不能转为攻辩。请针对用户刚才的质询作答，尽量守住己方立场，并暴露适量可继续追问的空间。控制在160字以内。',
+    userTask: '用户正在进行攻辩训练，用户只攻不防。评价重点是问题设计、追问连续性、压迫感和是否真正打到对方标准。'
+  },
+  defense: {
+    label: '防守训练',
+    startRole: 'question',
+    reviewFocus: '被质询时的正面回应、概念切割、陷阱识别和防守反压',
+    userTask: '用户正在进行防守训练，用户只能防守，不能反问或质询。评价重点是正面回应、守住立场、识别预设和避免致命承认。'
+  },
+  closing: {
+    label: '结辩训练',
+    startRole: 'prep',
+    reviewFocus: '四辩结辩的战场归纳、价值升维、胜负判断和表达收束',
+    opening: '请先生成本场关键交锋点，提供四辩可发挥的战场，再输出正方四辩结辩示范。结辩控制在朗读3分钟以内，约800-1000字。',
+    response: '请根据已有交锋点和正方结辩，输出反方四辩结辩示范。需要回应正方胜负判断并重建反方战场，控制在朗读3分钟以内，约800-1000字。',
+    userTask: '用户正在进行结辩训练。评价重点是战场归纳、胜负判断、价值升维和结尾收束。'
+  }
+};
+
 const celebrityDebaters = {
   none: null,
   huang_zhizhong_style: {
@@ -257,6 +304,14 @@ export function isValidCelebrityDebater(value) {
   return Object.hasOwn(celebrityDebaters, value);
 }
 
+export function normalizeTrainingMode(value) {
+  return value || 'free_debate';
+}
+
+export function isValidTrainingMode(value) {
+  return Object.hasOwn(trainingModeProfiles, value);
+}
+
 export function getSideLabel(side) {
   return sideLabels[side] || '正方';
 }
@@ -265,10 +320,37 @@ export function getOpponentSide(userSide) {
   return userSide === 'affirmative' ? 'negative' : 'affirmative';
 }
 
-export function buildStartMessages({ topic, userSide, difficulty, celebrityDebater }) {
+export function buildStartMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
   const modeInstruction = getOpeningModeInstruction(difficulty, celebrityDebater);
+  const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
+
+  if (trainingMode !== 'free_debate' && trainingMode !== 'defense') {
+    const aiSideLabel = userSide === 'affirmative' ? opponentSideLabel : '正方';
+    const task = modeProfile.startRole === 'user_attack' && userSide === 'affirmative'
+      ? modeProfile.opening
+      : modeProfile.opening || `请先代表${aiSideLabel}完成本模式的第一段发言。`;
+
+    return [
+      {
+        role: 'system',
+        content: [
+          '你是高中生辩论训练教练。',
+          `当前训练模式：${modeProfile.label}。`,
+          `用户立场是${userSideLabel}，AI 立场是${opponentSideLabel}。`,
+          modeInstruction,
+          '正方永远先进行，反方随后进行。',
+          '如果用户是正方，请只提供准备材料或引导，不要替用户完成用户方发言；如果用户是反方，请先代表正方完成第一段发言或示范。',
+          '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断。'
+        ].join('\n')
+      },
+      {
+        role: 'user',
+        content: `辩题：${topic}\n用户立场：${userSideLabel}\nAI立场：${opponentSideLabel}\n任务：${task}`
+      }
+    ];
+  }
 
   return [
     {
@@ -289,11 +371,38 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
   ];
 }
 
-export function buildRespondMessages({ topic, userSide, difficulty, celebrityDebater, history, answer }) {
+export function buildRespondMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, history, answer }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
   const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
+  const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
   const transcript = formatHistory(history);
+
+  if (trainingMode && trainingMode !== 'free_debate' && trainingMode !== 'defense') {
+    return [
+      {
+        role: 'system',
+        content: [
+          '你是高中生辩论训练陪练。',
+          `当前训练模式：${modeProfile.label}。`,
+          `用户立场是${userSideLabel}，AI 立场是${opponentSideLabel}。`,
+          modeInstruction,
+          '正方永远先进行，反方随后进行。',
+          modeProfile.userTask,
+          '如果轮到 AI 发言，只输出 AI 方本轮内容；如果是攻辩训练，AI 只能防守，不能反问、不能质询。'
+        ].join('\n')
+      },
+      {
+        role: 'user',
+        content: [
+          `辩题：${topic}`,
+          `此前流程：\n${transcript || '暂无'}`,
+          `用户最新输入：${answer}`,
+          `请按模式要求继续：${modeProfile.response || '代表 AI 方完成下一段发言，保持赛场表达。'}`
+        ].join('\n\n')
+      }
+    ];
+  }
 
   return [
     {
@@ -319,10 +428,11 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
   ];
 }
 
-export function buildReviewMessages({ topic, userSide, difficulty, celebrityDebater, history }) {
+export function buildReviewMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, history }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
   const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
+  const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
   const transcript = formatHistory(history);
 
   return [
@@ -331,10 +441,11 @@ export function buildReviewMessages({ topic, userSide, difficulty, celebrityDeba
       content: [
         '你是高中生辩论训练教练。',
         `用户立场是${userSideLabel}，陪练 AI 立场是${opponentSideLabel}。`,
+        `当前训练模式：${modeProfile.label}。`,
         modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
         reviewScoringInstruction,
-        '请根据完整攻辩对话生成“被质询模式”复盘报告。',
+        `请根据完整训练过程生成复盘报告。额外关注：${modeProfile.reviewFocus}。`,
         '请用简洁中文输出，适合高中学生阅读。'
       ].join('\n')
     },

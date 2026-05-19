@@ -149,6 +149,42 @@ textarea:disabled {
   background: linear-gradient(135deg, #2f7375, #23575d);
 }
 
+.mode-selector-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.mode-selector-panel button {
+  display: grid;
+  min-height: 86px;
+  gap: 5px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 12px;
+  color: #263942;
+  background: rgba(255, 255, 255, 0.9);
+  text-align: left;
+}
+
+.mode-selector-panel button.active {
+  border-color: #c8502d;
+  background: #fff7f2;
+}
+
+.mode-selector-panel strong {
+  color: #13232b;
+  font-size: 15px;
+}
+
+.mode-selector-panel span {
+  color: #687982;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .arena-hero {
   position: relative;
   display: grid;
@@ -508,6 +544,10 @@ textarea:focus {
 
 .celebrity-options .segmented button:first-child {
   grid-column: 1 / -1;
+}
+
+.training-mode-options .segmented {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .topic-generator {
@@ -1324,6 +1364,7 @@ textarea:focus {
   .scoreboard,
   .match-strip,
   .main-tabs,
+  .mode-selector-panel,
   .team-stat-grid,
   .team-rank-grid {
     grid-template-columns: 1fr;
@@ -1390,6 +1431,10 @@ textarea:focus {
   }
 
   .celebrity-options .segmented {
+    grid-template-columns: 1fr;
+  }
+
+  .training-mode-options .segmented {
     grid-template-columns: 1fr;
   }
 

@@ -72,11 +72,51 @@ const topicPools = {
 
 const roundOptions = [3, 5];
 
+const trainingModes = [
+  {
+    label: '立论训练',
+    value: 'constructive',
+    rounds: 1,
+    description: '一辩立论，正方先、反方后。AI 可提供论据和对方示范。'
+  },
+  {
+    label: '攻辩小结',
+    value: 'summary',
+    rounds: 1,
+    description: '围绕交锋点做小结，AI 提供场上论点和事实论据。'
+  },
+  {
+    label: '自由辩论',
+    value: 'free_debate',
+    rounds: 3,
+    description: '沿用当前一问一答训练流程，可选择3轮或5轮。'
+  },
+  {
+    label: '攻辩训练',
+    value: 'attack',
+    rounds: 5,
+    description: '用户只攻不防，AI 只能防守，固定5轮。'
+  },
+  {
+    label: '防守训练',
+    value: 'defense',
+    rounds: 5,
+    description: 'AI 只攻，用户只能防守，固定5轮。'
+  },
+  {
+    label: '结辩训练',
+    value: 'closing',
+    rounds: 1,
+    description: '四辩结辩，AI 提供关键交锋点和战场材料。'
+  }
+];
+
 const initialConfig = {
   topic: '',
   userSide: '',
   difficulty: 'novice',
   celebrityDebater: 'none',
+  trainingMode: 'free_debate',
   rounds: 3
 };
 
@@ -142,6 +182,10 @@ function App() {
       : '正方'
     : '待定';
   const selectedDebater = celebrityDebaters.find((item) => item.value === config.celebrityDebater);
+  const selectedTrainingMode = trainingModes.find((item) => item.value === config.trainingMode) || trainingModes[2];
+  const isSingleSpeechMode = ['constructive', 'summary', 'closing'].includes(config.trainingMode);
+  const isAttackMode = config.trainingMode === 'attack';
+  const userStartsMode = config.userSide === 'affirmative' && (isSingleSpeechMode || isAttackMode);
   const selectedDifficultyLabel = isCelebrityMode
     ? `市赛 · ${selectedDebater?.shortName || '明星辩手'}`
     : getOptionLabel(difficulties, config.difficulty);
@@ -149,6 +193,7 @@ function App() {
   const isBusy = isLoading || isPolishing || isTranscribing;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
   const hasJoinedTeam = Boolean(teamIdentity.teamCode && teamIdentity.nickname && localUserId);
+  const maxRecordingSeconds = isSingleSpeechMode ? 180 : 60;
 
   useEffect(() => {
     const storedLocalUserId = getOrCreateLocalUserId();
@@ -280,6 +325,7 @@ function App() {
         aiSide: getOpponentSideValue(config.userSide),
         difficulty: config.difficulty,
         styleId: config.celebrityDebater,
+        trainingMode: config.trainingMode,
         messages: history,
         review: reviewContent,
         score: extractScoreFromReview(reviewContent),
@@ -331,6 +377,15 @@ function App() {
     });
   }
 
+  function selectTrainingMode(value) {
+    const mode = trainingModes.find((item) => item.value === value) || trainingModes[2];
+    updateConfig({
+      ...config,
+      trainingMode: value,
+      rounds: mode.rounds
+    });
+  }
+
   function goToDetailsStep() {
     if (isTraining || isBusy) return;
 
@@ -373,13 +428,20 @@ function App() {
     setSaveStatus('');
 
     try {
-      const data = await postJson('/api/debate/start', {
-        ...config,
-        history: []
-      });
-      const content = requireContent(data);
+      if (userStartsMode) {
+        setHistory([{
+          role: 'ai',
+          content: getUserStartInstruction(config.trainingMode, config.userSide)
+        }]);
+      } else {
+        const data = await postJson('/api/debate/start', {
+          ...config,
+          history: []
+        });
+        const content = requireContent(data);
 
-      setHistory([{ role: 'ai', content }]);
+        setHistory([{ role: 'ai', content }]);
+      }
       setIsTraining(true);
     } catch (requestError) {
       setError(getFriendlyError(requestError));
@@ -397,13 +459,22 @@ function App() {
       return;
     }
 
+    if (isSingleSpeechMode && trimmedAnswer.length > 1200) {
+      setError('本模式单次输入不能超过1200字。');
+      return;
+    }
+
     const nextHistory = [...history, { role: 'user', content: trimmedAnswer }];
     setHistory(nextHistory);
     setAnswer('');
     setError('');
     setPolishResult(null);
 
-    if (userAnswers + 1 >= config.rounds) {
+    if (isSingleSpeechMode && config.userSide === 'negative') {
+      return;
+    }
+
+    if (userAnswers + 1 >= config.rounds && !isSingleSpeechMode) {
       return;
     }
 
@@ -418,6 +489,9 @@ function App() {
       const content = requireContent(data);
 
       setHistory([...nextHistory, { role: 'ai', content }]);
+      if (isSingleSpeechMode) {
+        setIsTraining(false);
+      }
     } catch (requestError) {
       setError(getFriendlyError(requestError));
     } finally {
@@ -522,13 +596,13 @@ function App() {
       setIsRecording(true);
       setRecordingDuration(0);
       setRecordingError('');
-      setRecordingStatus('正在录音，请开始回答。最多录制 60 秒。');
+      setRecordingStatus(`正在录音，请开始回答。最多录制 ${maxRecordingSeconds} 秒。`);
 
       recordingTimerRef.current = window.setInterval(() => {
         const seconds = Math.floor((Date.now() - recordingStartedAtRef.current) / 1000);
         setRecordingDuration(seconds);
 
-        if (seconds >= 60) {
+        if (seconds >= maxRecordingSeconds) {
           stopAudioRecording();
         }
       }, 500);
@@ -755,6 +829,21 @@ function App() {
 
       {activeTab === 'training' && (
       <>
+      <section className="mode-selector-panel" aria-label="单项训练模式">
+        {trainingModes.map((mode) => (
+          <button
+            type="button"
+            key={mode.value}
+            className={config.trainingMode === mode.value ? 'active' : ''}
+            onClick={() => selectTrainingMode(mode.value)}
+            disabled={isBusy || isTraining || hasSessionContent}
+          >
+            <strong>{mode.label}</strong>
+            <span>{mode.description}</span>
+          </button>
+        ))}
+      </section>
+
       <section className="arena-hero">
         <div className="hero-copy">
           <p className="eyebrow">高中辩论训练场</p>
@@ -776,6 +865,10 @@ function App() {
           <div>
             <span>难度</span>
             <strong>{selectedDifficultyLabel}</strong>
+          </div>
+          <div>
+            <span>训练模式</span>
+            <strong>{selectedTrainingMode.label}</strong>
           </div>
         </div>
       </section>
@@ -872,6 +965,17 @@ function App() {
               </div>
 
               <OptionGroup
+                label="训练模式"
+                options={trainingModes}
+                value={config.trainingMode}
+                disabled={isBusy}
+                onChange={selectTrainingMode}
+                className="training-mode-options"
+              />
+
+              <p className="mode-note">{selectedTrainingMode.description}</p>
+
+              <OptionGroup
                 label="我的立场"
                 options={sides}
                 value={config.userSide}
@@ -906,7 +1010,7 @@ function App() {
                 label="轮数"
                 options={roundOptions.map((value) => ({ label: `${value}轮`, value }))}
                 value={config.rounds}
-                disabled={isBusy}
+                disabled={isBusy || config.trainingMode !== 'free_debate'}
                 onChange={(value) => updateConfig({ ...config, rounds: value })}
               />
 
@@ -1106,10 +1210,10 @@ function App() {
                 className={`history-item ${selectedRecord?.id === record.id ? 'active' : ''}`}
                 onClick={() => setSelectedRecord(record)}
               >
-                <span>{formatRecordDate(record.createdAt)}</span>
-                <strong>{record.topic}</strong>
-                <small>
-                  {getOptionLabel(sides, record.userSide)} / {getOptionLabel(difficulties, record.difficulty)}
+                  <span>{formatRecordDate(record.createdAt)}</span>
+                  <strong>{record.topic}</strong>
+                  <small>
+                  {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'} / {getOptionLabel(sides, record.userSide)} / {getOptionLabel(difficulties, record.difficulty)}
                   {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
                   {record.result ? ` / ${record.result}` : ''}
                 </small>
@@ -1231,7 +1335,7 @@ function TeamDataPanel({
                 <span>{formatRecordDate(record.createdAt)} · {record.nickname || '未命名成员'}</span>
                 <strong>{record.topic}</strong>
                 <small>
-                  {getOptionLabel(difficulties, record.difficulty)}
+                  {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'} / {getOptionLabel(difficulties, record.difficulty)}
                   {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
                   {record.result ? ` / ${record.result}` : ''}
                 </small>
@@ -1284,6 +1388,7 @@ function RecordDetail({ record, onClose }) {
       <div className="history-meta">
         <span>我的立场：{getOptionLabel(sides, record.userSide)}</span>
         <span>AI 立场：{getOptionLabel(sides, record.aiSide)}</span>
+        <span>模式：{getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'}</span>
         <span>难度：{getOptionLabel(difficulties, record.difficulty)}</span>
         <span>风格：{getOptionLabel(celebrityDebaters, record.styleId) || '普通 AI'}</span>
         {record.battlefield && <span>战场：{record.battlefield}</span>}
@@ -1343,6 +1448,23 @@ function getLatestMessage(history, role) {
 
 function getOpponentSideValue(userSide) {
   return userSide === 'affirmative' ? 'negative' : 'affirmative';
+}
+
+function getUserStartInstruction(trainingMode, userSide) {
+  const sideLabel = getOptionLabel(sides, userSide);
+  if (trainingMode === 'attack') {
+    return `${sideLabel}先进行。请直接输入你的第一轮质询问题；本模式中你只负责进攻，AI 只会防守。`;
+  }
+  if (trainingMode === 'constructive') {
+    return `${sideLabel}先进行。请完成一辩立论，单次输入不超过1200字，建议控制在3分钟以内。`;
+  }
+  if (trainingMode === 'summary') {
+    return `${sideLabel}先进行。请完成攻辩小结，聚焦主要交锋点、事实论据和本方战场。`;
+  }
+  if (trainingMode === 'closing') {
+    return `${sideLabel}先进行。请完成四辩结辩，控制在3分钟以内，围绕关键交锋点收束比赛。`;
+  }
+  return `${sideLabel}先进行。请开始你的发言。`;
 }
 
 function getOrCreateLocalUserId() {
