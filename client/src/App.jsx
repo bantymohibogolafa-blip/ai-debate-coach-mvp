@@ -77,13 +77,13 @@ const trainingModes = [
     label: '立论训练',
     value: 'constructive',
     rounds: 1,
-    description: '一辩立论，正方先、反方后。AI 可提供论据和对方示范。'
+    description: '一辩立论，AI 只给对立面观点，发言后再复盘。'
   },
   {
     label: '攻辩小结',
     value: 'summary',
     rounds: 1,
-    description: '围绕交锋点做小结，AI 提供场上论点和事实论据。'
+    description: 'AI 只给场上交锋点和对方论点，用户自主小结。'
   },
   {
     label: '自由辩论',
@@ -107,7 +107,7 @@ const trainingModes = [
     label: '结辩训练',
     value: 'closing',
     rounds: 1,
-    description: '四辩结辩，AI 提供关键交锋点和战场材料。'
+    description: 'AI 只给对立面关键交锋点，结辩后再评分分析。'
   }
 ];
 
@@ -1453,16 +1453,16 @@ function getOpponentSideValue(userSide) {
 function getUserStartInstruction(trainingMode, userSide) {
   const sideLabel = getOptionLabel(sides, userSide);
   if (trainingMode === 'attack') {
-    return `${sideLabel}先进行。请直接输入你的第一轮质询问题；本模式中你只负责进攻，AI 只会防守。`;
+    return `对立面观点已给出。${sideLabel}先进行，请直接输入你的第一轮质询问题。`;
   }
   if (trainingMode === 'constructive') {
-    return `${sideLabel}先进行。请完成一辩立论，单次输入不超过1200字，建议控制在3分钟以内。`;
+    return `对立面观点已给出。${sideLabel}先进行，请直接完成一辩立论。单次输入不超过1200字。`;
   }
   if (trainingMode === 'summary') {
-    return `${sideLabel}先进行。请完成攻辩小结，聚焦主要交锋点、事实论据和本方战场。`;
+    return `对立面观点已给出。${sideLabel}先进行，请直接完成攻辩小结。`;
   }
   if (trainingMode === 'closing') {
-    return `${sideLabel}先进行。请完成四辩结辩，控制在3分钟以内，围绕关键交锋点收束比赛。`;
+    return `对立面观点已给出。${sideLabel}先进行，请直接完成四辩结辩。单次输入不超过1200字。`;
   }
   return `${sideLabel}先进行。请开始你的发言。`;
 }
