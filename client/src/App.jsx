@@ -99,11 +99,6 @@ function App() {
   const [recordingError, setRecordingError] = useState('');
   const [recordingStatus, setRecordingStatus] = useState('');
   const [recordedAudioUrl, setRecordedAudioUrl] = useState('');
-  const [isListening, setIsListening] = useState(false);
-  const [speechError, setSpeechError] = useState('');
-  const [speechStatus, setSpeechStatus] = useState('');
-  const [isSpeechSupported, setIsSpeechSupported] = useState(true);
-  const recognitionRef = useRef(null);
   const recordingStreamRef = useRef(null);
   const recordingTimerRef = useRef(null);
   const recordingStartedAtRef = useRef(0);
@@ -135,23 +130,7 @@ function App() {
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
 
   useEffect(() => {
-    const SpeechRecognition = getSpeechRecognition();
-    setIsSpeechSupported(Boolean(SpeechRecognition));
-
-    if (!SpeechRecognition) {
-      setSpeechError('当前浏览器不支持实时语音识别，请使用文字输入，或切换到 Chrome / Edge 浏览器。');
-    } else if (isWeChatBrowser()) {
-      setSpeechStatus('微信内实时语音识别可能不稳定，建议优先使用录音回答。');
-    }
-
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.onresult = null;
-        recognitionRef.current.onerror = null;
-        recognitionRef.current.onend = null;
-        recognitionRef.current.stop();
-        recognitionRef.current = null;
-      }
       stopRecordingResources(false);
     };
   }, []);
@@ -238,7 +217,7 @@ function App() {
   }
 
   async function submitAnswer() {
-    if (isBusy || isListening || isRecording) return;
+    if (isBusy || isRecording) return;
 
     const trimmedAnswer = answer.trim();
     if (!trimmedAnswer) {
@@ -275,7 +254,7 @@ function App() {
   }
 
   async function finishAndReview() {
-    if (isBusy || isListening) return;
+    if (isBusy || isRecording) return;
 
     if (!history.length) {
       setError('暂无对话，无法复盘。');
@@ -302,15 +281,13 @@ function App() {
   }
 
   function resetTraining() {
-    if (isBusy || isListening) return;
+    if (isBusy || isRecording) return;
 
     setConfig(initialConfig);
     setHistory([]);
     setAnswer('');
     setReview('');
     setError('');
-    setSpeechError(isSpeechSupported ? '' : '当前浏览器不支持实时语音识别，请使用文字输入，或切换到 Chrome / Edge 浏览器。');
-    setSpeechStatus('');
     setPolishResult(null);
     setRecordingError('');
     setRecordingStatus('');
@@ -325,70 +302,8 @@ function App() {
     setSetupStep('topic');
   }
 
-  function startSpeechRecognition() {
-    if (isBusy || isListening || isRecording) return;
-
-    const SpeechRecognition = getSpeechRecognition();
-    if (!SpeechRecognition) {
-      setIsSpeechSupported(false);
-      setSpeechStatus('');
-      setSpeechError('当前浏览器不支持实时语音识别，请使用文字输入，或切换到 Chrome / Edge 浏览器。');
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'zh-CN';
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = (event) => {
-      const transcript = event.results?.[0]?.[0]?.transcript?.trim();
-      if (!transcript) return;
-
-      appendAnswerText(transcript);
-      setPolishResult(null);
-      setSpeechError('');
-      setSpeechStatus('识别完成，请检查文字后提交。');
-    };
-
-    recognition.onerror = (event) => {
-      const isPermissionError = event.error === 'not-allowed' || event.error === 'service-not-allowed';
-      setSpeechStatus('');
-      setSpeechError(isPermissionError ? '请允许浏览器使用麦克风后再试。' : '识别失败，请重试。');
-      setIsListening(false);
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-      recognitionRef.current = null;
-    };
-
-    recognitionRef.current = recognition;
-    setSpeechError('');
-    setSpeechStatus('正在聆听，请开始回答。');
-    setIsListening(true);
-
-    try {
-      recognition.start();
-    } catch {
-      setIsListening(false);
-      setSpeechStatus('');
-      setSpeechError('识别失败，请重试。');
-      recognitionRef.current = null;
-    }
-  }
-
-  function stopSpeechRecognition() {
-    if (!recognitionRef.current) return;
-
-    recognitionRef.current.stop();
-    setIsListening(false);
-    setSpeechStatus('');
-  }
-
   async function startAudioRecording() {
-    if (isBusy || isRecording || isListening) return;
+    if (isBusy || isRecording) return;
 
     if (!isAudioRecorderSupported()) {
       setRecordingStatus('');
@@ -432,7 +347,6 @@ function App() {
       setIsRecording(true);
       setRecordingDuration(0);
       setRecordingError('');
-      setSpeechStatus('');
       setRecordingStatus('正在录音，请开始回答。最多录制 60 秒。');
 
       recordingTimerRef.current = window.setInterval(() => {
@@ -514,7 +428,7 @@ function App() {
   }
 
   async function polishAnswer() {
-    if (isBusy || isListening || isRecording) return;
+    if (isBusy || isRecording) return;
 
     const trimmedAnswer = answer.trim();
     if (!trimmedAnswer) {
@@ -524,7 +438,6 @@ function App() {
 
     setIsPolishing(true);
     setError('');
-    setSpeechStatus('');
 
     try {
       const data = await postJson('/api/debate/polish', {
@@ -548,8 +461,8 @@ function App() {
 
   function usePolishedAnswer(text) {
     setAnswer(text);
-    setSpeechStatus('已放入回答框，请检查文字后提交。');
-    setSpeechError('');
+    setRecordingStatus('已放入回答框，请检查文字后提交。');
+    setRecordingError('');
   }
 
   function appendAnswerText(text) {
@@ -779,7 +692,7 @@ function App() {
               {isCelebrityMode ? `${selectedDebater.shortName} · 市赛` : `${selectedSideLabel}训练`}
             </span>
             {hasSessionContent && (
-              <button className="compact-reset-button" type="button" onClick={resetTraining} disabled={isBusy || isListening || isRecording}>
+              <button className="compact-reset-button" type="button" onClick={resetTraining} disabled={isBusy || isRecording}>
                 重新设置
               </button>
             )}
@@ -825,32 +738,17 @@ function App() {
                     onChange={(event) => {
                       setAnswer(event.target.value);
                       if (error) setError('');
-                      if (speechError && isSpeechSupported) setSpeechError('');
                       if (polishResult) setPolishResult(null);
                     }}
                     placeholder="输入你的回答，尽量控制在30秒攻辩表达长度内。"
                     rows={4}
                   />
                   <div className="speech-panel">
-                    {isSpeechSupported ? (
-                      <button
-                        type="button"
-                        className={`voice-button ${isListening ? 'listening' : ''}`}
-                        onClick={isListening ? stopSpeechRecognition : startSpeechRecognition}
-                        disabled={isBusy || isRecording}
-                      >
-                        {isListening ? '停止识别' : '实时语音输入（实验）'}
-                      </button>
-                    ) : (
-                      <button type="button" className="voice-button" disabled>
-                        实时语音输入（实验）
-                      </button>
-                    )}
                     <button
                       type="button"
                       className={`record-button ${isRecording ? 'recording' : ''}`}
                       onClick={isRecording ? stopAudioRecording : startAudioRecording}
-                      disabled={isBusy || isListening}
+                      disabled={isBusy}
                     >
                       {isRecording ? `停止并识别 ${formatDuration(recordingDuration)}` : '录音回答'}
                     </button>
@@ -858,14 +756,14 @@ function App() {
                       type="button"
                       className="polish-button"
                       onClick={polishAnswer}
-                      disabled={isBusy || isListening || isRecording || !answer.trim()}
+                      disabled={isBusy || isRecording || !answer.trim()}
                     >
                       {isPolishing ? '整理中...' : '整理表达'}
                     </button>
                   </div>
-                  {(speechStatus || speechError || recordingStatus || recordingError) && (
-                    <div className={(speechError || recordingError) ? 'speech-message error' : 'speech-message'}>
-                      {speechError || recordingError || recordingStatus || speechStatus}
+                  {(recordingStatus || recordingError) && (
+                    <div className={recordingError ? 'speech-message error' : 'speech-message'}>
+                      {recordingError || recordingStatus}
                     </div>
                   )}
                   {recordedAudioUrl && (
@@ -900,13 +798,13 @@ function App() {
                       <div className="polish-tip">{polishResult.tip}</div>
                     </div>
                   )}
-                  <button className="primary-button" onClick={submitAnswer} disabled={isBusy || isListening || isRecording}>
+                  <button className="primary-button" onClick={submitAnswer} disabled={isBusy || isRecording}>
                     {isLoading ? '分析中...' : '提交回答'}
                   </button>
                 </>
               )}
 
-              <button className="secondary-button" onClick={finishAndReview} disabled={isBusy || isListening || isRecording || !history.length}>
+              <button className="secondary-button" onClick={finishAndReview} disabled={isBusy || isRecording || !history.length}>
                 结束并复盘
               </button>
             </div>
@@ -971,14 +869,6 @@ function shuffle(items) {
   return [...items].sort(() => Math.random() - 0.5);
 }
 
-function getSpeechRecognition() {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-}
-
 function isAudioRecorderSupported() {
   const AudioContextClass = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
 
@@ -987,14 +877,6 @@ function isAudioRecorderSupported() {
     Boolean(navigator.mediaDevices?.getUserMedia) &&
     Boolean(AudioContextClass)
   );
-}
-
-function isWeChatBrowser() {
-  if (typeof navigator === 'undefined') {
-    return false;
-  }
-
-  return /micromessenger/i.test(navigator.userAgent || '');
 }
 
 function isPermissionDenied(error) {

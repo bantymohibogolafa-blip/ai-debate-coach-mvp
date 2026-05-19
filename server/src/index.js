@@ -1,4 +1,5 @@
 import cors from 'cors';
+import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 import express from 'express';
 import path from 'node:path';
@@ -24,6 +25,10 @@ const port = process.env.PORT || 3001;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
+const aliyunTokenCache = {
+  token: '',
+  expireTime: 0
+};
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
@@ -296,15 +301,16 @@ function extractJsonObject(text) {
 
 async function transcribeAudio(audioBuffer, mimeType) {
   const appKey = process.env.ALIYUN_NLS_APPKEY;
-  const token = process.env.ALIYUN_NLS_TOKEN;
   const apiUrl = process.env.ALIYUN_NLS_URL || 'https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/asr';
 
-  if (!appKey || !token) {
+  if (!appKey) {
     const error = new Error('Speech recognition service is not configured.');
     error.code = 'ASR_NOT_CONFIGURED';
     error.status = 501;
     throw error;
   }
+
+  const token = await getAliyunNlsToken();
 
   const requestUrl = new URL(apiUrl);
   requestUrl.searchParams.set('appkey', appKey);
@@ -355,4 +361,81 @@ function isAliyunSuccess(data) {
 function getAliyunAudioFormat(mimeType) {
   if (mimeType.includes('wav')) return 'wav';
   return 'wav';
+}
+
+async function getAliyunNlsToken() {
+  const now = Math.floor(Date.now() / 1000);
+  if (aliyunTokenCache.token && aliyunTokenCache.expireTime - now > 300) {
+    return aliyunTokenCache.token;
+  }
+
+  const staticToken = normalizeText(process.env.ALIYUN_NLS_TOKEN);
+  const accessKeyId = normalizeText(process.env.ALIYUN_ACCESS_KEY_ID || process.env.ALIYUN_AK_ID);
+  const accessKeySecret = normalizeText(process.env.ALIYUN_ACCESS_KEY_SECRET || process.env.ALIYUN_AK_SECRET);
+
+  if (!accessKeyId || !accessKeySecret) {
+    if (staticToken) {
+      return staticToken;
+    }
+
+    const error = new Error('Aliyun AccessKey is not configured.');
+    error.code = 'ASR_NOT_CONFIGURED';
+    error.status = 501;
+    throw error;
+  }
+
+  const endpoint = process.env.ALIYUN_NLS_TOKEN_URL || 'http://nls-meta.cn-shanghai.aliyuncs.com/';
+  const parameters = {
+    AccessKeyId: accessKeyId,
+    Action: 'CreateToken',
+    Format: 'JSON',
+    RegionId: 'cn-shanghai',
+    SignatureMethod: 'HMAC-SHA1',
+    SignatureNonce: crypto.randomUUID(),
+    SignatureVersion: '1.0',
+    Timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    Version: '2019-02-28'
+  };
+  const canonicalQuery = canonicalizeAliyunParameters(parameters);
+  const stringToSign = `GET&${percentEncode('/')}&${percentEncode(canonicalQuery)}`;
+  const signature = crypto
+    .createHmac('sha1', `${accessKeySecret}&`)
+    .update(stringToSign)
+    .digest('base64');
+  const requestUrl = `${endpoint}?Signature=${percentEncode(signature)}&${canonicalQuery}`;
+  const response = await fetch(requestUrl);
+  const data = await response.json().catch(() => ({}));
+  const token = normalizeText(data?.Token?.Id);
+  const expireTime = Number(data?.Token?.ExpireTime || 0);
+
+  if (!response.ok || !token || !expireTime) {
+    console.error('Aliyun token request failed', {
+      status: response.status,
+      message: data?.Message,
+      code: data?.Code
+    });
+
+    const error = new Error('Aliyun token request failed.');
+    error.code = 'ASR_REQUEST_FAILED';
+    error.status = 502;
+    throw error;
+  }
+
+  aliyunTokenCache.token = token;
+  aliyunTokenCache.expireTime = expireTime;
+  return token;
+}
+
+function canonicalizeAliyunParameters(parameters) {
+  return Object.keys(parameters)
+    .sort()
+    .map((key) => `${percentEncode(key)}=${percentEncode(parameters[key])}`)
+    .join('&');
+}
+
+function percentEncode(value) {
+  return encodeURIComponent(String(value))
+    .replace(/\+/g, '%20')
+    .replace(/\*/g, '%2A')
+    .replace(/%7E/g, '~');
 }

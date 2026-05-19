@@ -41,8 +41,10 @@ DEEPSEEK_API_KEY=sk-your-deepseek-api-key
 DEEPSEEK_API_URL=https://api.deepseek.com/chat/completions
 DEEPSEEK_MODEL=deepseek-chat
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
-ALIYUN_NLS_TOKEN=your-aliyun-nls-token
+ALIYUN_ACCESS_KEY_ID=your-aliyun-access-key-id
+ALIYUN_ACCESS_KEY_SECRET=your-aliyun-access-key-secret
 ALIYUN_NLS_URL=https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/asr
+ALIYUN_NLS_TOKEN_URL=http://nls-meta.cn-shanghai.aliyuncs.com/
 PORT=3001
 ```
 
@@ -114,8 +116,10 @@ DEEPSEEK_API_URL=https://api.deepseek.com/chat/completions
 DEEPSEEK_MODEL=deepseek-chat
 NODE_ENV=production
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
-ALIYUN_NLS_TOKEN=your-aliyun-nls-token
+ALIYUN_ACCESS_KEY_ID=your-aliyun-access-key-id
+ALIYUN_ACCESS_KEY_SECRET=your-aliyun-access-key-secret
 ALIYUN_NLS_URL=https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/asr
+ALIYUN_NLS_TOKEN_URL=http://nls-meta.cn-shanghai.aliyuncs.com/
 ```
 
 不要把真实的 `server/.env` 上传到公开仓库。线上环境变量应在 Render 后台配置。
