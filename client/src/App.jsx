@@ -111,6 +111,15 @@ const trainingModes = [
   }
 ];
 
+const trainingModeVenueNames = {
+  constructive: '立论训练场',
+  summary: '攻辩小结训练场',
+  free_debate: '自由辩论训练场',
+  attack: '攻辩训练场',
+  defense: '防守训练场',
+  closing: '结辩训练场'
+};
+
 const initialConfig = {
   topic: '',
   userSide: '',
@@ -183,6 +192,7 @@ function App() {
     : '待定';
   const selectedDebater = celebrityDebaters.find((item) => item.value === config.celebrityDebater);
   const selectedTrainingMode = trainingModes.find((item) => item.value === config.trainingMode) || trainingModes[2];
+  const heroTitle = `锋辩——${trainingModeVenueNames[config.trainingMode] || '自由辩论训练场'}`;
   const isSingleSpeechMode = ['constructive', 'summary', 'closing'].includes(config.trainingMode);
   const isAttackMode = config.trainingMode === 'attack';
   const userStartsMode = config.userSide === 'affirmative' && (isSingleSpeechMode || isAttackMode);
@@ -846,8 +856,8 @@ function App() {
 
       <section className="arena-hero">
         <div className="hero-copy">
-          <p className="eyebrow">高中辩论训练场</p>
-          <h1>AI 二辩攻辩陪练</h1>
+          <p className="eyebrow">锋辩</p>
+          <h1>{heroTitle}</h1>
           <p className="subtitle">
             输入辩题，选择立场与难度，让 AI 站在你的对立面进行一问一答式攻辩训练。
           </p>
