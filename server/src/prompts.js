@@ -18,6 +18,13 @@ const sideLabels = {
   negative: '反方'
 };
 
+const sideJudgementInstruction = `
+立场判断规则：
+1. 正方是持肯定立场、支持辩题观点的一方；反方是持否定立场、反对辩题观点的一方。
+2. 如果辩题是开放二选一形式，正方支持前一个论点，反方支持后一个论点。例如“人生是旷野还是轨道”，正方观点是“人生是旷野”，反方观点是“人生是轨道”。
+3. 你必须始终站在被分配的立场上，不得跳立场，不得替对方证明核心观点。
+`;
+
 const trainingModeProfiles = {
   constructive: {
     label: '立论训练',
@@ -39,7 +46,7 @@ const trainingModeProfiles = {
     label: '自由辩论',
     startRole: 'question',
     reviewFocus: '自由辩论中的回应、推进、攻防转换和战场控制',
-    userTask: '用户正在进行自由辩论训练。评价重点是回应质量、推进意识、反压能力和战场控制。'
+    userTask: '用户正在进行自由辩论训练。自由辩论不是一问一答接质，评价重点是回应质量、推进意识、反压能力、多点处理和战场控制。'
   },
   attack: {
     label: '攻辩训练',
@@ -334,6 +341,7 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
           '你是高中生辩论训练教练。',
           `当前训练模式：${modeProfile.label}。`,
           `用户立场是${userSideLabel}，AI 立场是${opponentSideLabel}。`,
+          sideJudgementInstruction,
           modeInstruction,
           '正方永远先进行，反方随后进行。',
           '开局要先模拟“用户对立面”已经完成的一辩、交锋或前半场论证，但只能展示提取后的材料。',
@@ -363,15 +371,18 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
       content: [
         '你是高中生辩论赛中的二辩攻辩陪练。',
         `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
+        sideJudgementInstruction,
         modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。',
-        '现在生成第一轮攻辩问题。注意：用户还没有回答，所以不得输出“漏洞判断”、不得评价用户回答、不得使用【漏洞判断】格式。',
-        '严格要求：只能问一个问题；不要给答案；不要列多个问题；语言适合高中学生；输出中只保留问题本身；问题要完整，不要为了压缩字数截断句子。'
+        '现在生成第一轮自由辩论发言。自由辩论不是一问一答接质，双方都可以在同一轮中回应、推进并提出一个或多个问题。',
+        '如果上面的风格提示要求“每次只提出一个问题”或使用【漏洞判断】格式，在自由辩论模式中不适用，以本段自由辩论规则为准。',
+        '注意：用户还没有回答，所以不得输出“漏洞判断”、不得评价用户回答、不得使用【漏洞判断】格式。',
+        '严格要求：发言要像自由辩论中的短促发言，控制在80-160字左右；可以提出多个问题或多个推进点，但不要写成长篇立论；语言适合高中学生；句子必须完整，不要为了压缩字数截断。'
       ].join('\n')
     },
     {
       role: 'user',
-      content: `辩题：${topic}\n请站在${opponentSideLabel}，向${userSideLabel}提出第一轮攻辩问题。`
+      content: `辩题：${topic}\n请站在${opponentSideLabel}，向${userSideLabel}做第一轮自由辩论发言。`
     }
   ];
 }
@@ -391,6 +402,7 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
           '你是高中生辩论训练陪练。',
           `当前训练模式：${modeProfile.label}。`,
           `用户立场是${userSideLabel}，AI 立场是${opponentSideLabel}。`,
+          sideJudgementInstruction,
           modeInstruction,
           '正方永远先进行，反方随后进行。',
           modeProfile.userTask,
@@ -415,10 +427,13 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
       content: [
         '你是高中生辩论赛中的二辩攻辩陪练。',
         `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
+        sideJudgementInstruction,
         modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。',
-        '你要根据用户刚才的回答，先判断一个主要漏洞，再提出一个追问。',
-        '严格要求：只能提出一个追问；不要同时给多个问题；保持二辩攻辩的质询感；回答要简洁但句子必须完整，不要为了压缩字数截断。'
+        '当前是自由辩论，不是“一问一答”的接质。你可以在同一轮中回应用户、推进本方论点，并提出一个或多个问题。',
+        '如果上面的风格提示要求“每次只提出一个问题”或使用【漏洞判断】格式，在自由辩论模式中不适用，以本段自由辩论规则为准。',
+        '尽量缩短发言篇幅，保持一二十秒左右的比赛表达，控制在80-180字；可以多点推进，但不要写成长篇攻辩稿。',
+        '不要使用【漏洞判断】格式；不要只抛一个问题就结束；句子必须完整，不要为了压缩字数截断。'
       ].join('\n')
     },
     {
@@ -427,7 +442,7 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
         `辩题：${topic}`,
         `此前对话：\n${transcript || '暂无'}`,
         `用户最新回答：${answer}`,
-        `请站在${opponentSideLabel}输出漏洞判断和一个追问。`
+        `请站在${opponentSideLabel}输出一段自由辩论短发言：先回应，再推进，可提出一个或多个问题。`
       ].join('\n\n')
     }
   ];
@@ -447,6 +462,7 @@ export function buildReviewMessages({ topic, userSide, difficulty, celebrityDeba
         '你是高中生辩论训练教练。',
         `用户立场是${userSideLabel}，陪练 AI 立场是${opponentSideLabel}。`,
         `当前训练模式：${modeProfile.label}。`,
+        sideJudgementInstruction,
         modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
         reviewScoringInstruction,
@@ -473,6 +489,7 @@ export function buildPolishMessages({ topic, userSide, difficulty, celebrityDeba
       content: [
         '你是高中生二辩攻辩表达教练。',
         `用户立场是${userSideLabel}，对手立场是${opponentSideLabel}。`,
+        sideJudgementInstruction,
         modeInstruction,
         '你的任务是把用户当前的口语化回答整理成更适合被质询时使用的比赛表达。',
         '不要替用户改变核心立场，不要自动帮用户承认对方观点，不要新增虚构事实。',

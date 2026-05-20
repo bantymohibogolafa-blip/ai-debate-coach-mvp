@@ -89,7 +89,7 @@ const trainingModes = [
     label: '自由辩论',
     value: 'free_debate',
     rounds: 3,
-    description: '沿用当前一问一答训练流程，可选择3轮或5轮。'
+    description: '双方可回应、推进并提问，发言短促，可选择3轮或5轮。'
   },
   {
     label: '攻辩训练',
@@ -125,27 +125,36 @@ const initialConfig = {
   userSide: '',
   difficulty: 'novice',
   celebrityDebater: 'none',
-  trainingMode: 'free_debate',
+  trainingMode: '',
   rounds: 3
 };
 
 const teamCodeStorageKey = 'ai-debate-coach-team-code';
-const nicknameStorageKey = 'ai-debate-coach-nickname';
 const localUserIdStorageKey = 'ai-debate-coach-local-user-id';
 const appModeStorageKey = 'ai-debate-coach-app-mode';
+const selectedSpaceStorageKey = 'ai-debate-coach-selected-space';
 const trainingRecordLimit = 20;
 const personalNickname = '个人用户';
+const personalSpace = { type: 'personal', teamCode: '' };
+const roundSelectionModes = ['free_debate', 'attack', 'defense'];
+const longOutputModes = ['constructive', 'summary', 'closing'];
 
 function App() {
   const [config, setConfig] = useState(initialConfig);
   const [history, setHistory] = useState([]);
   const [localUserId, setLocalUserId] = useState('');
-  const [appMode, setAppMode] = useState('');
-  const [entryMode, setEntryMode] = useState('');
-  const [teamIdentity, setTeamIdentity] = useState({ teamCode: '', nickname: '' });
-  const [joinForm, setJoinForm] = useState({ teamCode: '', nickname: '' });
+  const [currentSpace, setCurrentSpace] = useState(personalSpace);
+  const [joinedTeams, setJoinedTeams] = useState([]);
+  const [joinForm, setJoinForm] = useState({ teamCode: '', teamPassword: '', nickname: '' });
   const [joinError, setJoinError] = useState('');
+  const [joinSuccess, setJoinSuccess] = useState('');
+  const [joinedTeamPrompt, setJoinedTeamPrompt] = useState(null);
   const [isJoiningTeam, setIsJoiningTeam] = useState(false);
+  const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+  const [isTeamsLoading, setIsTeamsLoading] = useState(false);
+  const [leaveTarget, setLeaveTarget] = useState(null);
+  const [leaveError, setLeaveError] = useState('');
+  const [isLeavingTeam, setIsLeavingTeam] = useState(false);
   const [activeTab, setActiveTab] = useState('training');
   const [trainingRecords, setTrainingRecords] = useState([]);
   const [teamRecords, setTeamRecords] = useState([]);
@@ -161,7 +170,8 @@ function App() {
   const [isTraining, setIsTraining] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [setupStep, setSetupStep] = useState('mode');
+  const [setupStep, setSetupStep] = useState('topic');
+  const [longOutputPromptMode, setLongOutputPromptMode] = useState('');
   const [topicDirection, setTopicDirection] = useState('education');
   const [generatedTopics, setGeneratedTopics] = useState([]);
   const [isPolishing, setIsPolishing] = useState(false);
@@ -195,52 +205,56 @@ function App() {
       : '正方'
     : '待定';
   const selectedDebater = celebrityDebaters.find((item) => item.value === config.celebrityDebater);
-  const selectedTrainingMode = trainingModes.find((item) => item.value === config.trainingMode) || trainingModes[2];
-  const heroTitle = `锋辩——${trainingModeVenueNames[config.trainingMode] || '自由辩论训练场'}`;
-  const isSingleSpeechMode = ['constructive', 'summary', 'closing'].includes(config.trainingMode);
+  const selectedTrainingMode = trainingModes.find((item) => item.value === config.trainingMode);
+  const heroTitle = `锋辩——${trainingModeVenueNames[config.trainingMode] || '训练准备'}`;
+  const isSingleSpeechMode = longOutputModes.includes(config.trainingMode);
   const isAttackMode = config.trainingMode === 'attack';
+  const needsRoundSelection = roundSelectionModes.includes(config.trainingMode);
   const selectedDifficultyLabel = isCelebrityMode
     ? `市赛 · ${selectedDebater?.shortName || '明星辩手'}`
     : getOptionLabel(difficulties, config.difficulty);
   const latestAiMessage = useMemo(() => getLatestMessage(history, 'ai'), [history]);
   const isBusy = isLoading || isPolishing || isTranscribing;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
-  const hasJoinedTeam = Boolean(teamIdentity.teamCode && teamIdentity.nickname && localUserId);
-  const hasPersonalMode = appMode === 'personal' && Boolean(localUserId);
-  const hasAppAccess = hasPersonalMode || (appMode === 'team' && hasJoinedTeam);
-  const currentNickname = appMode === 'personal' ? personalNickname : teamIdentity.nickname;
+  const currentTeam = currentSpace.type === 'team'
+    ? joinedTeams.find((team) => team.teamCode === currentSpace.teamCode)
+    : null;
+  const isTeamSpace = Boolean(currentTeam);
+  const currentSpaceLabel = isTeamSpace ? (currentTeam.teamName || currentTeam.teamCode) : '个人模式';
+  const currentNickname = isTeamSpace ? currentTeam.nickname : personalNickname;
+  const currentSpaceValue = isTeamSpace ? `team:${currentTeam.teamCode}` : 'personal';
   const maxRecordingSeconds = isSingleSpeechMode ? 180 : 60;
 
   useEffect(() => {
     const storedLocalUserId = getOrCreateLocalUserId();
-    const storedTeamCode = normalizeTeamCode(localStorage.getItem(teamCodeStorageKey));
-    const storedNickname = String(localStorage.getItem(nicknameStorageKey) || '').trim();
-    const storedAppMode = normalizeAppMode(localStorage.getItem(appModeStorageKey));
-    const nextAppMode = storedAppMode || (storedTeamCode && storedNickname ? 'team' : '');
+    const preferredSpace = parseStoredSpace();
 
     setLocalUserId(storedLocalUserId);
-    setAppMode(nextAppMode);
-    setTeamIdentity({ teamCode: storedTeamCode, nickname: storedNickname });
-    setJoinForm({ teamCode: storedTeamCode, nickname: storedNickname });
+    loadJoinedTeams(storedLocalUserId, preferredSpace.type === 'team' ? preferredSpace.teamCode : '');
   }, []);
 
   useEffect(() => {
-    if (appMode === 'personal' && localUserId) {
-      loadPersonalTrainingRecords(localUserId);
+    if (!localUserId) return;
+
+    if (currentSpace.type === 'personal') {
+      loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
       return;
     }
 
-    if (appMode !== 'team' || !hasJoinedTeam) return;
+    if (!isTeamSpace) {
+      setCurrentTrainingSpace(personalSpace);
+      return;
+    }
 
-    loadTeamDashboard(teamIdentity.teamCode, localUserId);
-  }, [appMode, hasJoinedTeam, teamIdentity.teamCode, localUserId]);
+    loadTeamDashboard(currentTeam.teamCode, localUserId);
+  }, [currentSpace.type, currentSpace.teamCode, isTeamSpace, localUserId]);
 
   useEffect(() => {
-    if (appMode === 'personal' && activeTab === 'team') {
+    if (currentSpace.type === 'personal' && activeTab === 'team') {
       setActiveTab('training');
       setSelectedRecord(null);
     }
-  }, [appMode, activeTab]);
+  }, [currentSpace.type, activeTab]);
 
   useEffect(() => {
     return () => {
@@ -254,7 +268,8 @@ function App() {
 
     const nextTeamCode = normalizeTeamCode(joinForm.teamCode);
     const nextNickname = joinForm.nickname.trim();
-    const validationMessage = validateTeamJoinInput(nextTeamCode, nextNickname);
+    const nextTeamPassword = joinForm.teamPassword.trim();
+    const validationMessage = validateTeamJoinInput(nextTeamCode, nextTeamPassword, nextNickname);
 
     if (validationMessage) {
       setJoinError(validationMessage);
@@ -264,24 +279,29 @@ function App() {
     const nextLocalUserId = localUserId || getOrCreateLocalUserId();
     setIsJoiningTeam(true);
     setJoinError('');
+    setJoinSuccess('');
 
     try {
-      await postJson('/api/team/join', {
+      const data = await postJson('/api/team/join', {
         teamCode: nextTeamCode,
+        teamPassword: nextTeamPassword,
         nickname: nextNickname,
         localUserId: nextLocalUserId
       });
 
-      localStorage.setItem(teamCodeStorageKey, nextTeamCode);
-      localStorage.setItem(nicknameStorageKey, nextNickname);
       localStorage.setItem(localUserIdStorageKey, nextLocalUserId);
-      localStorage.setItem(appModeStorageKey, 'team');
       setLocalUserId(nextLocalUserId);
-      setAppMode('team');
-      setEntryMode('');
-      setTeamIdentity({ teamCode: nextTeamCode, nickname: nextNickname });
-      setJoinForm({ teamCode: nextTeamCode, nickname: nextNickname });
-      setActiveTab('training');
+      const nextTeams = Array.isArray(data.teams) ? data.teams : [];
+      setJoinedTeams(nextTeams);
+      const joinedTeam = nextTeams.find((team) => team.teamCode === nextTeamCode);
+      if (joinedTeam) {
+        setJoinedTeamPrompt(joinedTeam);
+        setJoinSuccess(`已加入团队：${joinedTeam.teamName || joinedTeam.teamCode}`);
+      } else {
+        setJoinedTeamPrompt({ teamCode: nextTeamCode, teamName: nextTeamCode });
+        setJoinSuccess(`已加入团队：${nextTeamCode}`);
+      }
+      setJoinForm({ teamCode: '', teamPassword: '', nickname: nextNickname });
     } catch (requestError) {
       setJoinError(getFriendlyError(requestError));
     } finally {
@@ -289,76 +309,112 @@ function App() {
     }
   }
 
-  function enterPersonalMode() {
-    if (isBusy || isRecording) return;
+  async function loadJoinedTeams(userId, preferredTeamCode = '') {
+    setIsTeamsLoading(true);
+    try {
+      const data = await getJson(`/api/teams/my?localUserId=${encodeURIComponent(userId)}`);
+      const teams = Array.isArray(data.teams) ? data.teams : [];
+      setJoinedTeams(teams);
 
-    const nextLocalUserId = localUserId || getOrCreateLocalUserId();
-    localStorage.setItem(localUserIdStorageKey, nextLocalUserId);
-    localStorage.setItem(appModeStorageKey, 'personal');
-    setLocalUserId(nextLocalUserId);
-    setAppMode('personal');
-    setEntryMode('');
-    setActiveTab('training');
-    setSelectedRecord(null);
-    setTeamRecords([]);
-    setTeamStats(null);
-    setTeamDataError('');
-    loadPersonalTrainingRecords(nextLocalUserId);
+      const restoredTeamCode = normalizeTeamCode(preferredTeamCode);
+      const restoredTeam = teams.find((team) => team.teamCode === restoredTeamCode);
+      if (restoredTeam) {
+        setCurrentTrainingSpace({ type: 'team', teamCode: restoredTeam.teamCode });
+      } else {
+        setCurrentTrainingSpace(personalSpace);
+      }
+    } catch (requestError) {
+      setJoinedTeams([]);
+      setCurrentTrainingSpace(personalSpace);
+    } finally {
+      setIsTeamsLoading(false);
+    }
   }
 
-  function switchEntryMode() {
-    if (isBusy || isRecording) return;
+  function setCurrentTrainingSpace(space) {
+    const nextSpace = space?.type === 'team' && space.teamCode
+      ? { type: 'team', teamCode: normalizeTeamCode(space.teamCode) }
+      : personalSpace;
 
-    localStorage.removeItem(appModeStorageKey);
-    if (appMode === 'team') {
-      localStorage.removeItem(teamCodeStorageKey);
-      localStorage.removeItem(nicknameStorageKey);
-      setTeamIdentity({ teamCode: '', nickname: '' });
-      setJoinForm({ teamCode: '', nickname: '' });
-    }
-    setAppMode('');
-    setEntryMode('');
-    setActiveTab('training');
-    setTrainingRecords([]);
-    setTeamRecords([]);
-    setTeamStats(null);
+    setCurrentSpace(nextSpace);
+    localStorage.setItem(selectedSpaceStorageKey, stringifySpace(nextSpace));
     setSelectedRecord(null);
     setSaveStatus('');
     setHistoryError('');
     setTeamDataError('');
   }
 
-  async function loadPersonalTrainingRecords(userId) {
-    setIsHistoryLoading(true);
-    setHistoryError('');
+  function selectTrainingSpace(value) {
+    if (isBusy || isRecording) return;
+
+    if (value === 'join') {
+      setJoinError('');
+      setJoinSuccess('');
+      setJoinedTeamPrompt(null);
+      setIsJoinModalOpen(true);
+      return;
+    }
+
+    if (value === 'personal') {
+      setCurrentTrainingSpace(personalSpace);
+      return;
+    }
+
+    const teamCode = normalizeTeamCode(value.replace(/^team:/, ''));
+    const team = joinedTeams.find((item) => item.teamCode === teamCode);
+    if (team) {
+      setCurrentTrainingSpace({ type: 'team', teamCode: team.teamCode });
+    }
+  }
+
+  async function confirmLeaveTeam() {
+    if (!leaveTarget || isLeavingTeam) return;
+
+    setIsLeavingTeam(true);
+    setLeaveError('');
 
     try {
-      const data = await getJson(
-        `/api/training-records?scope=personal&localUserId=${encodeURIComponent(userId)}&limit=50`
-      );
-      setTrainingRecords(Array.isArray(data.records) ? data.records : []);
+      const data = await postJson('/api/team/leave', {
+        teamCode: leaveTarget.teamCode,
+        localUserId
+      });
+      const nextTeams = Array.isArray(data.teams) ? data.teams : [];
+      setJoinedTeams(nextTeams);
+      if (currentSpace.type === 'team' && currentSpace.teamCode === leaveTarget.teamCode) {
+        setCurrentTrainingSpace(personalSpace);
+      }
+      setLeaveTarget(null);
+      setActiveTab('teams');
     } catch (requestError) {
-      setHistoryError(getFriendlyError(requestError));
+      setLeaveError(getFriendlyError(requestError));
     } finally {
-      setIsHistoryLoading(false);
+      setIsLeavingTeam(false);
     }
+  }
+
+  function viewTeamData(team) {
+    setCurrentTrainingSpace({ type: 'team', teamCode: team.teamCode });
+    setActiveTab('team');
   }
 
   async function loadTeamDashboard(teamCode, userId) {
     await Promise.all([
-      loadMyTrainingRecords(teamCode, userId),
-      loadTeamData(teamCode)
+      loadMyTrainingRecords({ spaceType: 'team', teamCode, userId }),
+      loadTeamData(teamCode, userId)
     ]);
   }
 
-  async function loadMyTrainingRecords(teamCode, userId) {
+  async function loadMyTrainingRecords({ spaceType, teamCode = '', userId }) {
     setIsHistoryLoading(true);
     setHistoryError('');
 
     try {
-      const data = await getJson(
-        `/api/training-records/my?teamCode=${encodeURIComponent(teamCode)}&localUserId=${encodeURIComponent(userId)}`
-      );
+      const query = new URLSearchParams({
+        spaceType,
+        localUserId: userId
+      });
+      if (spaceType === 'team') query.set('teamCode', teamCode);
+      const data = await getJson(`/api/training-records/my?${query.toString()}`);
       setTrainingRecords(Array.isArray(data.records) ? data.records : []);
     } catch (requestError) {
       setHistoryError(getFriendlyError(requestError));
@@ -367,14 +423,14 @@ function App() {
     }
   }
 
-  async function loadTeamData(teamCode) {
+  async function loadTeamData(teamCode, userId = localUserId) {
     setIsTeamDataLoading(true);
     setTeamDataError('');
 
     try {
       const [recordsData, statsData] = await Promise.all([
-        getJson(`/api/training-records/team?teamCode=${encodeURIComponent(teamCode)}`),
-        getJson(`/api/team/stats?teamCode=${encodeURIComponent(teamCode)}`)
+        getJson(`/api/training-records/team?teamCode=${encodeURIComponent(teamCode)}&localUserId=${encodeURIComponent(userId)}`),
+        getJson(`/api/team/stats?teamCode=${encodeURIComponent(teamCode)}&localUserId=${encodeURIComponent(userId)}`)
       ]);
       setTeamRecords(Array.isArray(recordsData.records) ? recordsData.records : []);
       setTeamStats(statsData);
@@ -390,8 +446,8 @@ function App() {
 
     try {
       const data = await postJson('/api/training-records', {
-        recordScope: appMode === 'personal' ? 'personal' : 'team',
-        teamCode: appMode === 'personal' ? '' : teamIdentity.teamCode,
+        spaceType: currentSpace.type,
+        teamCode: currentSpace.type === 'team' ? currentSpace.teamCode : '',
         localUserId,
         nickname: currentNickname,
         topic: config.topic,
@@ -419,8 +475,8 @@ function App() {
       }
 
       setSaveStatus('本次训练记录已保存。');
-      if (appMode === 'team') {
-        loadTeamData(teamIdentity.teamCode);
+      if (currentSpace.type === 'team') {
+        loadTeamData(currentSpace.teamCode);
       }
     } catch (requestError) {
       setSaveStatus('复盘已生成，但记录同步失败，请稍后重试。');
@@ -460,29 +516,31 @@ function App() {
       trainingMode: value,
       rounds: mode.rounds
     });
-    setSetupStep('topic');
+    setSetupStep(roundSelectionModes.includes(value) ? 'rounds' : 'ready');
     setGeneratedTopics([]);
+    if (longOutputModes.includes(value)) {
+      setLongOutputPromptMode(value);
+    }
   }
 
   function goToModeStep() {
     if (isTraining || isBusy) return;
+    const validationError = validatePreModeConfig();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setSetupStep('mode');
     setError('');
   }
 
-  function goToDetailsStep() {
+  function goToTopicStep() {
     if (isTraining || isBusy) return;
-
-    if (!config.topic.trim()) {
-      setError('请先输入辩题，或从随机生成的候选辩题中选择一个。');
-      return;
-    }
-
     setError('');
-    setSetupStep('details');
+    setSetupStep('topic');
   }
 
-  function validateTrainingConfig() {
+  function validatePreModeConfig() {
     if (!config.topic.trim()) {
       return '请先输入辩题，或从随机生成的候选辩题中选择一个。';
     }
@@ -490,6 +548,15 @@ function App() {
     if (!config.userSide) {
       return '请先选择你的立场。';
     }
+
+    return '';
+  }
+
+  function validateTrainingConfig() {
+    const preModeError = validatePreModeConfig();
+    if (preModeError) return preModeError;
+
+    if (!config.trainingMode) return '请先选择训练模式。';
 
     return '';
   }
@@ -510,6 +577,13 @@ function App() {
     setPolishResult(null);
     setSelectedRecord(null);
     setSaveStatus('');
+
+    if (config.trainingMode === 'constructive' && config.userSide === 'affirmative') {
+      setHistory([]);
+      setIsTraining(true);
+      setIsLoading(false);
+      return;
+    }
 
     try {
       const data = await postJson('/api/debate/start', {
@@ -547,7 +621,7 @@ function App() {
     setError('');
     setPolishResult(null);
 
-    if (isSingleSpeechMode && config.userSide === 'negative') {
+    if (isSingleSpeechMode) {
       return;
     }
 
@@ -625,7 +699,8 @@ function App() {
     stopRecordingResources();
     setIsTraining(false);
     setGeneratedTopics([]);
-    setSetupStep('mode');
+    setSetupStep('topic');
+    setLongOutputPromptMode('');
   }
 
   async function startAudioRecording() {
@@ -826,44 +901,74 @@ function App() {
     }
   }
 
-  if (!hasAppAccess) {
-    return (
-      <main className="app-shell team-join-shell">
-        <section className="panel team-join-panel">
-          <div className="panel-title">
-            <p className="eyebrow">锋辩入口</p>
-            <h1>{entryMode === 'team' ? '加入团队' : '选择使用方式'}</h1>
-          </div>
+  return (
+    <main className={`app-shell ${hasSessionContent ? 'session-active' : ''}`}>
+      <section className="team-topbar" aria-label="训练空间选择器">
+        <div>
+          <span>当前训练空间：{currentSpaceLabel}</span>
+          <strong>当前用户：{currentNickname}</strong>
+        </div>
+        <label className="space-selector">
+          <span>切换空间</span>
+          <select
+            value={currentSpaceValue}
+            onChange={(event) => selectTrainingSpace(event.target.value)}
+            disabled={isBusy || isRecording || isTeamsLoading}
+          >
+            <option value="personal">个人模式</option>
+            {joinedTeams.map((team) => (
+              <option key={team.teamCode} value={`team:${team.teamCode}`}>
+                {team.teamName || team.teamCode}
+              </option>
+            ))}
+            <option value="join">+ 加入新团队</option>
+          </select>
+        </label>
+      </section>
 
-          {entryMode !== 'team' ? (
-            <div className="entry-options">
-              <button type="button" className="entry-option primary" onClick={enterPersonalMode}>
-                <strong>个人模式</strong>
-                <span>不用团队码，训练记录只在当前设备浏览器中关联查看。</span>
-              </button>
-              <button type="button" className="entry-option" onClick={() => setEntryMode('team')}>
-                <strong>团队模式</strong>
-                <span>输入昵称和团队码，训练数据同步到团队空间。</span>
-              </button>
-            </div>
-          ) : (
-            <>
+      {joinSuccess && <div className="history-status">{joinSuccess}</div>}
+
+      {isJoinModalOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-label="加入新团队">
+            <div className="panel-title">
+              <p className="eyebrow">团队空间</p>
+              <h2>加入新团队</h2>
               <p className="team-privacy-note">
                 加入团队后，你的昵称、训练次数、分数、辩题和复盘结果可能被团队成员或队长查看，请勿输入私人敏感内容。
               </p>
+            </div>
 
+            {joinedTeamPrompt ? (
+              <div className="team-join-form">
+                <div className="history-status">已加入团队：{joinedTeamPrompt.teamName || joinedTeamPrompt.teamCode}</div>
+                <div className="modal-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => {
+                      setCurrentTrainingSpace({ type: 'team', teamCode: joinedTeamPrompt.teamCode });
+                      setIsJoinModalOpen(false);
+                      setJoinedTeamPrompt(null);
+                      setActiveTab('training');
+                    }}
+                  >
+                    切换到该团队
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => {
+                      setIsJoinModalOpen(false);
+                      setJoinedTeamPrompt(null);
+                    }}
+                  >
+                    留在当前空间
+                  </button>
+                </div>
+              </div>
+            ) : (
               <form className="team-join-form" onSubmit={joinTeam}>
-                <label className="field">
-                  <span>昵称</span>
-                  <input
-                    value={joinForm.nickname}
-                    disabled={isJoiningTeam}
-                    onChange={(event) => setJoinForm({ ...joinForm, nickname: event.target.value })}
-                    placeholder="例如：党梓豪"
-                    maxLength={20}
-                  />
-                </label>
-
                 <label className="field">
                   <span>团队码</span>
                   <input
@@ -875,39 +980,101 @@ function App() {
                   />
                 </label>
 
+                <label className="field">
+                  <span>团队密码</span>
+                  <input
+                    type="password"
+                    value={joinForm.teamPassword}
+                    disabled={isJoiningTeam}
+                    onChange={(event) => setJoinForm({ ...joinForm, teamPassword: event.target.value })}
+                    placeholder="请输入团队密码"
+                    autoComplete="off"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>昵称</span>
+                  <input
+                    value={joinForm.nickname}
+                    disabled={isJoiningTeam}
+                    onChange={(event) => setJoinForm({ ...joinForm, nickname: event.target.value })}
+                    placeholder="例如：党梓豪"
+                    maxLength={20}
+                  />
+                </label>
+
                 {joinError && <div className="error-box">{joinError}</div>}
 
-                <button className="primary-button" type="submit" disabled={isJoiningTeam}>
-                  {isJoiningTeam ? '加入中...' : '加入团队'}
-                </button>
-                <button className="ghost-button" type="button" onClick={() => setEntryMode('')} disabled={isJoiningTeam}>
-                  返回入口选择
-                </button>
+                <div className="modal-actions">
+                  <button className="primary-button" type="submit" disabled={isJoiningTeam}>
+                    {isJoiningTeam ? '加入中...' : '加入团队'}
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => {
+                      setIsJoinModalOpen(false);
+                      setJoinError('');
+                    }}
+                    disabled={isJoiningTeam}
+                  >
+                    取消
+                  </button>
+                </div>
               </form>
-            </>
-          )}
-        </section>
-      </main>
-    );
-  }
-
-  return (
-    <main className={`app-shell ${hasSessionContent ? 'session-active' : ''}`}>
-      <section className="team-topbar" aria-label="当前团队信息">
-        <div>
-          <span>{appMode === 'personal' ? '当前模式：个人模式' : `当前团队：${teamIdentity.teamCode}`}</span>
-          <strong>当前用户：{currentNickname}</strong>
+            )}
+          </section>
         </div>
-        <button type="button" onClick={switchEntryMode} disabled={isBusy || isRecording}>
-          切换模式
-        </button>
-      </section>
+      )}
+
+      {leaveTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-label="退出团队确认">
+            <div className="panel-title">
+              <p className="eyebrow">退出团队</p>
+              <h2>确认退出团队「{leaveTarget.teamName || leaveTarget.teamCode}」吗？</h2>
+              <p className="team-privacy-note">
+                退出后你将不能查看该团队数据，也不能将新训练记录保存到该团队。你过去的训练记录会保留在团队历史数据中。
+              </p>
+            </div>
+            {leaveError && <div className="error-box">{leaveError}</div>}
+            <div className="modal-actions">
+              <button className="secondary-button danger" type="button" onClick={confirmLeaveTeam} disabled={isLeavingTeam}>
+                {isLeavingTeam ? '退出中...' : '确认退出'}
+              </button>
+              <button className="ghost-button" type="button" onClick={() => setLeaveTarget(null)} disabled={isLeavingTeam}>
+                取消
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {longOutputPromptMode && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-label="完整输出提示">
+            <div className="panel-title">
+              <p className="eyebrow">{getOptionLabel(trainingModes, longOutputPromptMode)}</p>
+              <h2>准备完整输出</h2>
+              <p className="team-privacy-note">
+                该环节须要一个较长时间的完整输出，请您事先做好论点等的准备。
+              </p>
+            </div>
+            <div className="modal-actions single">
+              <button className="primary-button" type="button" onClick={() => setLongOutputPromptMode('')}>
+                我知道了
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <nav className="main-tabs" aria-label="功能分区">
         {[
           { label: '训练区', value: 'training' },
           { label: '我的记录', value: 'mine' },
-          ...(appMode === 'team' ? [{ label: '团队数据', value: 'team' }] : [])
+          { label: '我的团队', value: 'teams' },
+          ...(isTeamSpace ? [{ label: '团队数据', value: 'team' }] : [])
         ].map((tab) => (
           <button
             type="button"
@@ -926,20 +1093,25 @@ function App() {
       {activeTab === 'training' && (
       <>
       {!hasSessionContent && setupStep === 'mode' && (
-      <section className="mode-selector-panel" aria-label="单项训练模式">
-        {trainingModes.map((mode) => (
-          <button
-            type="button"
-            key={mode.value}
-            className={config.trainingMode === mode.value ? 'active' : ''}
-            onClick={() => selectTrainingMode(mode.value)}
-            disabled={isBusy || isTraining || hasSessionContent}
-          >
-            <strong>{mode.label}</strong>
-            <span>{mode.description}</span>
-          </button>
-        ))}
-      </section>
+      <>
+        <section className="mode-selector-panel" aria-label="单项训练模式">
+          {trainingModes.map((mode) => (
+            <button
+              type="button"
+              key={mode.value}
+              className={config.trainingMode === mode.value ? 'active' : ''}
+              onClick={() => selectTrainingMode(mode.value)}
+              disabled={isBusy || isTraining || hasSessionContent}
+            >
+              <strong>{mode.label}</strong>
+              <span>{mode.description}</span>
+            </button>
+          ))}
+        </section>
+        <button className="ghost-button setup-back-button" onClick={goToTopicStep} disabled={isBusy}>
+          上一步
+        </button>
+      </>
       )}
 
       {setupStep !== 'mode' && (
@@ -948,7 +1120,7 @@ function App() {
           <p className="eyebrow">锋辩</p>
           <h1>{heroTitle}</h1>
           <p className="subtitle">
-            输入辩题，选择立场与难度，让 AI 站在你的对立面进行一问一答式攻辩训练。
+            {getHeroSubtitle(config.trainingMode)}
           </p>
         </div>
 
@@ -967,13 +1139,13 @@ function App() {
           </div>
           <div>
             <span>训练模式</span>
-            <strong>{selectedTrainingMode.label}</strong>
+            <strong>{selectedTrainingMode?.label || '待选择'}</strong>
           </div>
         </div>
       </section>
       )}
 
-      {!hasSessionContent && setupStep === 'details' && (
+      {!hasSessionContent && (setupStep === 'rounds' || setupStep === 'ready') && (
         <section className="match-strip" aria-label="对阵信息">
           <div className="side-card user-side">
             <span>你方</span>
@@ -992,13 +1164,13 @@ function App() {
         <aside className="panel setup-panel">
           <div className="panel-title">
             <p className="eyebrow">赛前设置</p>
-            <h2>{setupStep === 'topic' ? '选择辩题' : '选择训练方式'}</h2>
+            <h2>{setupStep === 'topic' ? '选择辩题与立场' : setupStep === 'rounds' ? '选择训练轮数' : '确认训练设置'}</h2>
           </div>
 
           <div className="setup-progress" aria-label="赛前设置进度">
-            <span className="done">1 模式</span>
-            <span className={setupStep === 'topic' ? 'active' : 'done'}>2 辩题</span>
-            <span className={setupStep === 'details' ? 'active' : ''}>3 训练方式</span>
+            <span className={setupStep === 'topic' ? 'active' : 'done'}>1 辩题</span>
+            <span className={setupStep === 'mode' ? 'active' : setupStep === 'topic' ? '' : 'done'}>2 模式</span>
+            <span className={setupStep === 'rounds' || setupStep === 'ready' ? 'active' : ''}>3 开赛</span>
           </div>
 
           {setupStep === 'topic' ? (
@@ -1051,31 +1223,6 @@ function App() {
                 )}
               </div>
 
-              <button className="primary-button" onClick={goToDetailsStep} disabled={isBusy}>
-                下一步
-              </button>
-              <button className="ghost-button" onClick={goToModeStep} disabled={isBusy}>
-                上一步
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="selected-topic-card">
-                <span>已选辩题</span>
-                <strong>{config.topic}</strong>
-                <button type="button" onClick={() => setSetupStep('topic')} disabled={isBusy}>
-                  修改辩题
-                </button>
-              </div>
-
-              <div className="selected-topic-card">
-                <span>已选模式</span>
-                <strong>{selectedTrainingMode.label}</strong>
-                <button type="button" onClick={goToModeStep} disabled={isBusy}>
-                  修改模式
-                </button>
-              </div>
-
               <OptionGroup
                 label="我的立场"
                 options={sides}
@@ -1107,29 +1254,55 @@ function App() {
                 onChange={(value) => updateConfig({ ...config, difficulty: value })}
               />
 
-              <OptionGroup
-                label="轮数"
-                options={roundOptions.map((value) => ({ label: `${value}轮`, value }))}
-                value={config.rounds}
-                disabled={isBusy || !['free_debate', 'attack', 'defense'].includes(config.trainingMode)}
-                onChange={(value) => updateConfig({ ...config, rounds: value })}
-              />
-
-              <div className="round-progress" aria-label="轮次进度">
-                {Array.from({ length: config.rounds }, (_, index) => (
-                  <span
-                    key={index}
-                    className={index < currentRound ? 'active' : ''}
-                    aria-hidden="true"
-                  />
-                ))}
+              <button className="primary-button" onClick={goToModeStep} disabled={isBusy}>
+                下一步：选择训练模式
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="selected-topic-card">
+                <span>已选辩题</span>
+                <strong>{config.topic}</strong>
+                <button type="button" onClick={goToTopicStep} disabled={isBusy}>
+                  修改辩题
+                </button>
               </div>
+
+              <div className="selected-topic-card">
+                <span>已选模式</span>
+                <strong>{selectedTrainingMode?.label || '待选择'}</strong>
+                <button type="button" onClick={goToModeStep} disabled={isBusy}>
+                  修改模式
+                </button>
+              </div>
+
+              {setupStep === 'rounds' && (
+                <>
+                  <OptionGroup
+                    label="轮数"
+                    options={roundOptions.map((value) => ({ label: `${value}轮`, value }))}
+                    value={config.rounds}
+                    disabled={isBusy}
+                    onChange={(value) => updateConfig({ ...config, rounds: value })}
+                  />
+
+                  <div className="round-progress" aria-label="轮次进度">
+                    {Array.from({ length: config.rounds }, (_, index) => (
+                      <span
+                        key={index}
+                        className={index < currentRound ? 'active' : ''}
+                        aria-hidden="true"
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
 
               <div className="button-stack">
                 <button className="primary-button" onClick={startTraining} disabled={isBusy}>
                   {isLoading && !isTraining ? '生成中...' : '开始训练'}
                 </button>
-                <button className="ghost-button" onClick={() => setSetupStep('topic')} disabled={isBusy}>
+                <button className="ghost-button" onClick={goToModeStep} disabled={isBusy}>
                   上一步
                 </button>
               </div>
@@ -1161,7 +1334,7 @@ function App() {
               <div className="empty-state">
                 <span className="empty-light" />
                 <strong>赛场待命</strong>
-                <p>完成左侧设置后开始训练，AI 将自动站在你的对立面提出第一轮问题。</p>
+                <p>{getEmptyTrainingHint(config.trainingMode, config.userSide)}</p>
               </div>
             ) : (
               history.map((item, index) => (
@@ -1188,7 +1361,7 @@ function App() {
                 <>
                   <div className="round-card">
                     <span>第 {currentRound} / {config.rounds} 轮 · {getRoundPromptLabel(config.trainingMode)}</span>
-                    <p>{latestAiMessage ? formatConversationContent(latestAiMessage, 'ai') : '等待 AI 追问。'}</p>
+                    <p>{latestAiMessage ? formatConversationContent(latestAiMessage, 'ai') : getEmptyTrainingHint(config.trainingMode, config.userSide)}</p>
                   </div>
                   <textarea
                     value={answer}
@@ -1198,7 +1371,7 @@ function App() {
                       if (error) setError('');
                       if (polishResult) setPolishResult(null);
                     }}
-                    placeholder="输入你的回答，尽量控制在30秒攻辩表达长度内。"
+                    placeholder={getAnswerPlaceholder(config.trainingMode)}
                     rows={4}
                   />
                   <div className="speech-panel">
@@ -1291,12 +1464,16 @@ function App() {
       <section className="panel history-panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">个人训练</p>
+            <p className="eyebrow">{isTeamSpace ? '团队空间' : '个人训练'}</p>
             <h2>我的记录</h2>
           </div>
           {isHistoryLoading && <span className="badge">加载中</span>}
         </div>
-        <p className="anonymous-note">当前记录同步到团队空间，仅展示你在当前团队下的训练记录。</p>
+        <p className="anonymous-note">
+          {isTeamSpace
+            ? `当前展示你在「${currentTeam.teamName || currentTeam.teamCode}」中的训练记录。`
+            : '当前展示个人模式记录，不混入团队训练记录。'}
+        </p>
         {saveStatus && <div className="history-status">{saveStatus}</div>}
         {historyError && <div className="error-box">{historyError}</div>}
 
@@ -1360,10 +1537,59 @@ function App() {
       </section>
       )}
 
+      {activeTab === 'teams' && (
+        <section className="panel my-teams-panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">团队空间</p>
+              <h2>我的团队</h2>
+            </div>
+            <button
+              type="button"
+              className="compact-reset-button"
+              onClick={() => {
+                setJoinError('');
+                setJoinSuccess('');
+                setJoinedTeamPrompt(null);
+                setIsJoinModalOpen(true);
+              }}
+            >
+              加入新团队
+            </button>
+          </div>
+
+          {isTeamsLoading && <div className="history-status">正在加载团队列表...</div>}
+          {joinedTeams.length === 0 ? (
+            <div className="history-empty">暂无已加入团队</div>
+          ) : (
+            <div className="team-list">
+              {joinedTeams.map((team) => (
+                <article className="team-list-item" key={team.teamCode}>
+                  <div>
+                    <span>{team.teamCode}</span>
+                    <strong>{team.teamName || team.teamCode}</strong>
+                    <small>我的昵称：{team.nickname || '未命名'} · 角色：{team.role || 'member'}</small>
+                  </div>
+                  <div className="team-list-actions">
+                    <button type="button" onClick={() => viewTeamData(team)}>
+                      查看团队数据
+                    </button>
+                    <button type="button" className="danger" onClick={() => setLeaveTarget(team)}>
+                      退出团队
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       {activeTab === 'team' && (
         <TeamDataPanel
           records={teamRecords}
           stats={teamStats}
+          team={currentTeam}
           selectedRecord={selectedRecord}
           isLoading={isTeamDataLoading}
           error={teamDataError}
@@ -1378,6 +1604,7 @@ function App() {
 function TeamDataPanel({
   records,
   stats,
+  team,
   selectedRecord,
   isLoading,
   error,
@@ -1393,7 +1620,7 @@ function TeamDataPanel({
       <div className="panel-header">
         <div>
           <p className="eyebrow">团队复盘</p>
-          <h2>团队数据</h2>
+          <h2>{team?.teamName || team?.teamCode || '团队数据'}</h2>
         </div>
         {isLoading && <span className="badge">加载中</span>}
       </div>
@@ -1559,6 +1786,50 @@ function getRoundPromptLabel(trainingMode) {
   return '本轮追问';
 }
 
+function getHeroSubtitle(trainingMode) {
+  if (trainingMode === 'free_debate') {
+    return '自由辩论不是一问一答，双方都可以回应、推进和提出多个问题，发言保持短促。';
+  }
+
+  if (trainingMode === 'constructive') {
+    return '完成三分钟以内的一辩立论训练，系统将在发言后给出复盘评分。';
+  }
+
+  if (trainingMode === 'summary') {
+    return '围绕场上交锋点完成攻辩小结，系统将在发言后给出复盘评分。';
+  }
+
+  if (trainingMode === 'closing') {
+    return '围绕关键战场完成三分钟以内结辩，系统将在发言后给出复盘评分。';
+  }
+
+  return '输入辩题，选择立场与难度，让 AI 站在你的对立面进行训练。';
+}
+
+function getAnswerPlaceholder(trainingMode) {
+  if (trainingMode === 'constructive') return '请输入你的完整三分钟立论，尽量做到观点清晰、论证完整、论据充分。';
+  if (trainingMode === 'summary') return '请输入你的完整攻辩小结，集中回应场上交锋点并归纳本方优势。';
+  if (trainingMode === 'closing') return '请输入你的完整三分钟结辩，完成战场归纳、胜负判断和价值收束。';
+  if (trainingMode === 'free_debate') return '请输入你的自由辩论发言，可以回应、推进并提出问题，尽量控制在一二十秒内。';
+  return '输入你的回答，尽量控制在30秒攻辩表达长度内。';
+}
+
+function getEmptyTrainingHint(trainingMode, userSide) {
+  if (trainingMode === 'constructive' && userSide === 'affirmative') {
+    return '正方一辩先进行，请直接完成你的三分钟立论。';
+  }
+
+  if (trainingMode === 'constructive') {
+    return 'AI 将先模拟正方一辩立论，随后请你完成反方三分钟立论。';
+  }
+
+  if (trainingMode === 'free_debate') {
+    return '自由辩论可以在同一轮中回应、推进并提问，发言尽量短促有力。';
+  }
+
+  return '完成设置后开始训练，AI 将根据当前模式给出开局材料或问题。';
+}
+
 function formatConversationContent(content, role) {
   const text = String(content || '').trim();
 
@@ -1624,17 +1895,36 @@ function normalizeTeamCode(value) {
   return String(value || '').trim().toUpperCase();
 }
 
-function normalizeAppMode(value) {
-  return value === 'personal' || value === 'team' ? value : '';
-}
-
-function validateTeamJoinInput(teamCode, nickname) {
-  if (!nickname || nickname.length > 20 || /[<>]/.test(nickname)) {
-    return '请输入 1-20 个字符的昵称。';
+function parseStoredSpace() {
+  const storedSpace = String(localStorage.getItem(selectedSpaceStorageKey) || '');
+  if (storedSpace.startsWith('team:')) {
+    return { type: 'team', teamCode: normalizeTeamCode(storedSpace.slice(5)) };
   }
 
+  const legacyMode = String(localStorage.getItem(appModeStorageKey) || '');
+  const legacyTeamCode = normalizeTeamCode(localStorage.getItem(teamCodeStorageKey));
+  if (legacyMode === 'team' && legacyTeamCode) {
+    return { type: 'team', teamCode: legacyTeamCode };
+  }
+
+  return personalSpace;
+}
+
+function stringifySpace(space) {
+  return space.type === 'team' && space.teamCode ? `team:${space.teamCode}` : 'personal';
+}
+
+function validateTeamJoinInput(teamCode, teamPassword, nickname) {
   if (!/^[A-Z0-9_-]{3,32}$/.test(teamCode)) {
     return '请输入 3-32 位团队码，只能包含字母、数字、短横线或下划线。';
+  }
+
+  if (!teamPassword) {
+    return '请输入团队密码。';
+  }
+
+  if (!nickname || nickname.length > 20 || /[<>]/.test(nickname)) {
+    return '请输入 1-20 个字符的昵称。';
   }
 
   return '';

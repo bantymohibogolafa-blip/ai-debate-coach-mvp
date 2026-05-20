@@ -162,6 +162,73 @@ textarea:disabled {
   font-weight: 900;
 }
 
+.space-selector {
+  display: grid;
+  min-width: min(320px, 100%);
+  gap: 5px;
+}
+
+.space-selector span {
+  color: #687982;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.space-selector select {
+  min-height: 44px;
+  border: 1px solid #c8d3da;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #263942;
+  background: #fff;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(12, 22, 27, 0.48);
+}
+
+.modal-panel {
+  width: min(100%, 520px);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border: 1px solid rgba(24, 36, 43, 0.12);
+  border-radius: 8px;
+  padding: 22px;
+  background: #fff;
+  box-shadow: 0 28px 80px rgba(24, 36, 43, 0.28);
+}
+
+.modal-panel h2 {
+  margin: 0;
+  color: #13232b;
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.modal-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.modal-actions.single {
+  grid-template-columns: 1fr;
+}
+
+.secondary-button.danger,
+.team-list-actions .danger {
+  color: #8b2f1c;
+  background: #fff0ea;
+}
+
 .main-tabs {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
@@ -1181,6 +1248,60 @@ textarea:focus {
   margin-top: 0;
 }
 
+.team-list {
+  display: grid;
+  gap: 12px;
+}
+
+.team-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcfd;
+}
+
+.team-list-item div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.team-list-item span {
+  color: #687982;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.team-list-item strong {
+  color: #13232b;
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.team-list-item small {
+  color: #5e6e76;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.team-list-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.team-list-actions button {
+  min-height: 44px;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-weight: 900;
+}
+
 .team-stat-grid,
 .team-rank-grid {
   display: grid;
@@ -1414,8 +1535,26 @@ textarea:focus {
     display: grid;
   }
 
+  .space-selector {
+    width: 100%;
+  }
+
   .team-topbar button {
     width: 100%;
+  }
+
+  .modal-panel {
+    padding: 18px;
+  }
+
+  .modal-actions,
+  .team-list-actions {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .team-list-item {
+    display: grid;
   }
 
   .scoreboard div {
