@@ -232,6 +232,13 @@ function App() {
   const [leaveTarget, setLeaveTarget] = useState(null);
   const [leaveError, setLeaveError] = useState('');
   const [isLeavingTeam, setIsLeavingTeam] = useState(false);
+  const [memberModalTeam, setMemberModalTeam] = useState(null);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [teamMembersRequester, setTeamMembersRequester] = useState(null);
+  const [isMembersLoading, setIsMembersLoading] = useState(false);
+  const [memberActionError, setMemberActionError] = useState('');
+  const [memberActionStatus, setMemberActionStatus] = useState('');
+  const [activeMemberActionId, setActiveMemberActionId] = useState('');
   const [activeTab, setActiveTab] = useState('training');
   const [trainingRecords, setTrainingRecords] = useState([]);
   const [teamRecords, setTeamRecords] = useState([]);
@@ -475,6 +482,85 @@ function App() {
       setLeaveError(getFriendlyError(requestError));
     } finally {
       setIsLeavingTeam(false);
+    }
+  }
+
+  async function openTeamMembers(team) {
+    if (isBusy || isRecording) return;
+    setMemberModalTeam(team);
+    setMemberActionError('');
+    setMemberActionStatus('');
+    await loadTeamMembers(team.teamCode);
+  }
+
+  async function loadTeamMembers(teamCode) {
+    if (!localUserId) return;
+
+    setIsMembersLoading(true);
+    setMemberActionError('');
+    try {
+      const data = await getJson(`/api/team/members?teamCode=${encodeURIComponent(teamCode)}&localUserId=${encodeURIComponent(localUserId)}`);
+      setTeamMembers(Array.isArray(data.members) ? data.members : []);
+      setTeamMembersRequester(data.requester || null);
+    } catch (requestError) {
+      setTeamMembers([]);
+      setTeamMembersRequester(null);
+      setMemberActionError(getFriendlyError(requestError));
+    } finally {
+      setIsMembersLoading(false);
+    }
+  }
+
+  async function removeTeamMember(member) {
+    if (!memberModalTeam || activeMemberActionId) return;
+    const confirmed = window.confirm(`确认将「${member.nickname || '该成员'}」移出团队吗？对方过去的训练记录会保留，但不能再查看团队数据或保存新记录。`);
+    if (!confirmed) return;
+
+    setActiveMemberActionId(`remove:${member.localUserId}`);
+    setMemberActionError('');
+    setMemberActionStatus('');
+
+    try {
+      const data = await postJson('/api/team/member/remove', {
+        teamCode: memberModalTeam.teamCode,
+        localUserId,
+        targetLocalUserId: member.localUserId
+      });
+      setTeamMembers(Array.isArray(data.members) ? data.members : []);
+      setMemberActionStatus(`已将「${member.nickname || '该成员'}」移出团队。`);
+    } catch (requestError) {
+      setMemberActionError(getFriendlyError(requestError));
+    } finally {
+      setActiveMemberActionId('');
+    }
+  }
+
+  async function transferTeamOwner(member) {
+    if (!memberModalTeam || activeMemberActionId) return;
+    const confirmed = window.confirm(`确认把「${memberModalTeam.teamName || memberModalTeam.teamCode}」的队长权限转让给「${member.nickname || '该成员'}」吗？转让后你将变为普通成员。`);
+    if (!confirmed) return;
+
+    setActiveMemberActionId(`transfer:${member.localUserId}`);
+    setMemberActionError('');
+    setMemberActionStatus('');
+
+    try {
+      const data = await postJson('/api/team/transfer-owner', {
+        teamCode: memberModalTeam.teamCode,
+        localUserId,
+        targetLocalUserId: member.localUserId
+      });
+      const nextTeams = Array.isArray(data.teams) ? data.teams : joinedTeams;
+      setJoinedTeams(nextTeams);
+      setTeamMembers(Array.isArray(data.members) ? data.members : []);
+      setTeamMembersRequester((Array.isArray(data.members) ? data.members : []).find((item) => item.localUserId === localUserId) || null);
+      const updatedTeam = nextTeams.find((team) => team.teamCode === memberModalTeam.teamCode);
+      if (updatedTeam) setMemberModalTeam(updatedTeam);
+      setMemberActionStatus(`已将队长权限转让给「${member.nickname || '该成员'}」。`);
+    } catch (requestError) {
+      setMemberActionError(getFriendlyError(requestError));
+    } finally {
+      setActiveMemberActionId('');
     }
   }
 
@@ -1207,6 +1293,89 @@ function App() {
         </div>
       )}
 
+      {memberModalTeam && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel team-members-modal" role="dialog" aria-modal="true" aria-label="团队成员管理">
+            <div className="panel-title">
+              <p className="eyebrow">团队成员</p>
+              <h2>{memberModalTeam.teamName || memberModalTeam.teamCode}</h2>
+              <p className="team-privacy-note">
+                普通成员可以查看团队成员。队长可以移出成员，也可以把队长权限转让给其他成员。
+              </p>
+            </div>
+
+            {memberActionError && <div className="error-box">{memberActionError}</div>}
+            {memberActionStatus && <div className="history-status">{memberActionStatus}</div>}
+
+            {isMembersLoading ? (
+              <div className="history-status">正在加载成员列表...</div>
+            ) : teamMembers.length === 0 ? (
+              <div className="history-empty">暂无团队成员</div>
+            ) : (
+              <div className="member-list">
+                {teamMembers.map((member) => {
+                  const isSelf = member.localUserId === localUserId;
+                  const isOwner = member.role === 'owner';
+                  const canManage = teamMembersRequester?.role === 'owner' && !isSelf && !isOwner;
+                  return (
+                    <article className="member-list-item" key={member.localUserId}>
+                      <div>
+                        <strong>{member.nickname || '未命名成员'}{isSelf ? '（我）' : ''}</strong>
+                        <span>{getTeamRoleLabel(member.role)} · {formatRecordDate(member.joinedAt)}</span>
+                      </div>
+                      {canManage && (
+                        <div className="member-actions">
+                          <button
+                            type="button"
+                            onClick={() => transferTeamOwner(member)}
+                            disabled={Boolean(activeMemberActionId)}
+                          >
+                            {activeMemberActionId === `transfer:${member.localUserId}` ? '转让中...' : '转让队长'}
+                          </button>
+                          <button
+                            type="button"
+                            className="danger"
+                            onClick={() => removeTeamMember(member)}
+                            disabled={Boolean(activeMemberActionId)}
+                          >
+                            {activeMemberActionId === `remove:${member.localUserId}` ? '移出中...' : '移出成员'}
+                          </button>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => loadTeamMembers(memberModalTeam.teamCode)}
+                disabled={isMembersLoading || Boolean(activeMemberActionId)}
+              >
+                刷新成员
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => {
+                  setMemberModalTeam(null);
+                  setTeamMembers([]);
+                  setTeamMembersRequester(null);
+                  setMemberActionError('');
+                  setMemberActionStatus('');
+                }}
+                disabled={Boolean(activeMemberActionId)}
+              >
+                关闭
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {longOutputPromptMode && (
         <div className="modal-backdrop" role="presentation">
           <section className="modal-panel" role="dialog" aria-modal="true" aria-label="完整输出提示">
@@ -1767,11 +1936,14 @@ function App() {
                   <div>
                     <span>{team.teamCode}</span>
                     <strong>{team.teamName || team.teamCode}</strong>
-                    <small>我的昵称：{team.nickname || '未命名'} · 角色：{team.role || 'member'}</small>
+                    <small>我的昵称：{team.nickname || '未命名'} · 角色：{getTeamRoleLabel(team.role)}</small>
                   </div>
                   <div className="team-list-actions">
                     <button type="button" onClick={() => viewTeamData(team)}>
                       查看团队数据
+                    </button>
+                    <button type="button" onClick={() => openTeamMembers(team)}>
+                      成员管理
                     </button>
                     <button type="button" className="danger" onClick={() => setLeaveTarget(team)}>
                       退出团队
@@ -1961,6 +2133,11 @@ function OptionGroup({ label, options, value, onChange, disabled, className = ''
 
 function getOptionLabel(options, value) {
   return options.find((option) => option.value === value)?.label || '';
+}
+
+function getTeamRoleLabel(role) {
+  if (role === 'owner') return '队长';
+  return '成员';
 }
 
 function getLatestMessage(history, role) {

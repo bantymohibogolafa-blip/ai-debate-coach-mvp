@@ -159,6 +159,55 @@ app.post('/api/team/leave', async (req, res, next) => {
   }
 });
 
+app.get('/api/team/members', async (req, res, next) => {
+  try {
+    const teamCode = normalizeTeamCode(req.query.teamCode);
+    const localUserId = normalizeText(req.query.localUserId);
+
+    if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId)) {
+      return res.status(400).json({ message: '团队或用户身份无效，请刷新后重试。' });
+    }
+
+    const requester = await requireActiveMembership(teamCode, localUserId);
+    const members = await fetchTeamMembers(teamCode);
+    res.json({
+      requester: mapTeamMemberFromDb(requester),
+      members: members.map(mapTeamMemberFromDb)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team/member/remove', async (req, res, next) => {
+  try {
+    const payload = validateTeamMemberActionPayload(req.body);
+    await removeTeamMember(payload);
+    const members = await fetchTeamMembers(payload.teamCode);
+    res.json({ members: members.map(mapTeamMemberFromDb) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team/transfer-owner', async (req, res, next) => {
+  try {
+    const payload = validateTeamMemberActionPayload(req.body);
+    await transferTeamOwner(payload);
+    const [members, teams] = await Promise.all([
+      fetchTeamMembers(payload.teamCode),
+      fetchJoinedTeams(payload.localUserId)
+    ]);
+
+    res.json({
+      teams,
+      members: members.map(mapTeamMemberFromDb)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/training-records', async (req, res, next) => {
   try {
     const userId = normalizeText(req.query.userId || req.query.localUserId);
@@ -519,6 +568,26 @@ function validateLeaveTeamPayload(body) {
   return { teamCode, localUserId };
 }
 
+function validateTeamMemberActionPayload(body) {
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const targetLocalUserId = normalizeText(body.targetLocalUserId || body.target_local_user_id);
+
+  if (!isValidTeamCode(teamCode)) {
+    throw badRequest('团队码无效，请重新选择团队。');
+  }
+
+  if (!isValidLocalUserId(localUserId)) {
+    throw badRequest('用户身份无效，请刷新页面后重试。');
+  }
+
+  if (!isValidLocalUserId(targetLocalUserId)) {
+    throw badRequest('目标成员身份无效，请刷新成员列表后重试。');
+  }
+
+  return { teamCode, localUserId, targetLocalUserId };
+}
+
 function normalizeText(value) {
   return String(value || '').trim();
 }
@@ -787,6 +856,101 @@ async function leaveTeam({ teamCode, localUserId }) {
       body: {
         status: 'left',
         left_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    }
+  );
+}
+
+async function fetchTeamMembers(teamCode) {
+  let members = [];
+
+  try {
+    members = await supabaseRequest(
+      `${teamMembersTable}?${new URLSearchParams({
+        select: 'id,team_code,local_user_id,nickname,role,status,joined_at,left_at,created_at,last_seen_at',
+        team_code: `eq.${teamCode}`,
+        status: 'eq.active',
+        order: 'joined_at.asc'
+      }).toString()}`
+    );
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    members = await supabaseRequest(
+      `${teamMembersTable}?${new URLSearchParams({
+        select: 'id,team_code,local_user_id,nickname,created_at,last_seen_at',
+        team_code: `eq.${teamCode}`,
+        order: 'created_at.asc'
+      }).toString()}`
+    );
+  }
+
+  return members;
+}
+
+async function requireTeamOwner(teamCode, localUserId) {
+  const member = await requireActiveMembership(teamCode, localUserId);
+
+  if ((member.role || 'member') !== 'owner') {
+    throw httpError(403, '只有队长可以管理团队成员。');
+  }
+
+  return member;
+}
+
+async function removeTeamMember({ teamCode, localUserId, targetLocalUserId }) {
+  await requireTeamOwner(teamCode, localUserId);
+
+  if (localUserId === targetLocalUserId) {
+    throw badRequest('不能在成员管理中移出自己，请使用退出团队。');
+  }
+
+  const targetMember = await requireActiveMembership(teamCode, targetLocalUserId);
+  if ((targetMember.role || 'member') === 'owner') {
+    throw badRequest('不能移出队长，请先转让队长权限。');
+  }
+
+  await supabaseRequest(
+    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(targetLocalUserId)}`,
+    {
+      method: 'PATCH',
+      body: {
+        status: 'left',
+        left_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    }
+  );
+}
+
+async function transferTeamOwner({ teamCode, localUserId, targetLocalUserId }) {
+  await requireTeamOwner(teamCode, localUserId);
+  const targetMember = await requireActiveMembership(teamCode, targetLocalUserId);
+
+  if (localUserId === targetLocalUserId || (targetMember.role || 'member') === 'owner') {
+    return;
+  }
+
+  await supabaseRequest(
+    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(targetLocalUserId)}`,
+    {
+      method: 'PATCH',
+      body: {
+        role: 'owner',
+        status: 'active',
+        left_at: null
+      },
+      prefer: 'return=representation'
+    }
+  );
+
+  await supabaseRequest(
+    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(localUserId)}`,
+    {
+      method: 'PATCH',
+      body: {
+        role: 'member',
+        status: 'active'
       },
       prefer: 'return=representation'
     }
