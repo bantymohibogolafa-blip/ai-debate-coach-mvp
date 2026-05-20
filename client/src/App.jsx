@@ -145,7 +145,8 @@ function App() {
   const [localUserId, setLocalUserId] = useState('');
   const [currentSpace, setCurrentSpace] = useState(personalSpace);
   const [joinedTeams, setJoinedTeams] = useState([]);
-  const [joinForm, setJoinForm] = useState({ teamCode: '', teamPassword: '', nickname: '' });
+  const [joinForm, setJoinForm] = useState({ teamCode: '', teamName: '', teamPassword: '', nickname: '' });
+  const [teamFormMode, setTeamFormMode] = useState('join');
   const [joinError, setJoinError] = useState('');
   const [joinSuccess, setJoinSuccess] = useState('');
   const [joinedTeamPrompt, setJoinedTeamPrompt] = useState(null);
@@ -267,9 +268,10 @@ function App() {
     if (isJoiningTeam) return;
 
     const nextTeamCode = normalizeTeamCode(joinForm.teamCode);
+    const nextTeamName = joinForm.teamName.trim();
     const nextNickname = joinForm.nickname.trim();
     const nextTeamPassword = joinForm.teamPassword.trim();
-    const validationMessage = validateTeamJoinInput(nextTeamCode, nextTeamPassword, nextNickname);
+    const validationMessage = validateTeamJoinInput(nextTeamCode, nextTeamPassword, nextNickname, teamFormMode === 'create' ? nextTeamName : null);
 
     if (validationMessage) {
       setJoinError(validationMessage);
@@ -282,12 +284,17 @@ function App() {
     setJoinSuccess('');
 
     try {
-      const data = await postJson('/api/team/join', {
+      const endpoint = teamFormMode === 'create' ? '/api/team/create' : '/api/team/join';
+      const payload = {
         teamCode: nextTeamCode,
         teamPassword: nextTeamPassword,
         nickname: nextNickname,
         localUserId: nextLocalUserId
-      });
+      };
+      if (teamFormMode === 'create') {
+        payload.teamName = nextTeamName;
+      }
+      const data = await postJson(endpoint, payload);
 
       localStorage.setItem(localUserIdStorageKey, nextLocalUserId);
       setLocalUserId(nextLocalUserId);
@@ -301,7 +308,7 @@ function App() {
         setJoinedTeamPrompt({ teamCode: nextTeamCode, teamName: nextTeamCode });
         setJoinSuccess(`已加入团队：${nextTeamCode}`);
       }
-      setJoinForm({ teamCode: '', teamPassword: '', nickname: nextNickname });
+      setJoinForm({ teamCode: '', teamName: '', teamPassword: '', nickname: nextNickname });
     } catch (requestError) {
       setJoinError(getFriendlyError(requestError));
     } finally {
@@ -351,6 +358,7 @@ function App() {
       setJoinError('');
       setJoinSuccess('');
       setJoinedTeamPrompt(null);
+      setTeamFormMode('join');
       setIsJoinModalOpen(true);
       return;
     }
@@ -921,7 +929,7 @@ function App() {
                 {team.teamName || team.teamCode}
               </option>
             ))}
-            <option value="join">+ 加入新团队</option>
+            <option value="join">+ 加入 / 创建团队</option>
           </select>
         </label>
       </section>
@@ -933,7 +941,7 @@ function App() {
           <section className="modal-panel" role="dialog" aria-modal="true" aria-label="加入新团队">
             <div className="panel-title">
               <p className="eyebrow">团队空间</p>
-              <h2>加入新团队</h2>
+              <h2>{teamFormMode === 'create' ? '创建团队' : '加入团队'}</h2>
               <p className="team-privacy-note">
                 加入团队后，你的昵称、训练次数、分数、辩题和复盘结果可能被团队成员或队长查看，请勿输入私人敏感内容。
               </p>
@@ -969,6 +977,44 @@ function App() {
               </div>
             ) : (
               <form className="team-join-form" onSubmit={joinTeam}>
+                <div className="form-mode-switch" aria-label="团队操作">
+                  <button
+                    type="button"
+                    className={teamFormMode === 'join' ? 'active' : ''}
+                    onClick={() => {
+                      setTeamFormMode('join');
+                      setJoinError('');
+                    }}
+                    disabled={isJoiningTeam}
+                  >
+                    加入已有团队
+                  </button>
+                  <button
+                    type="button"
+                    className={teamFormMode === 'create' ? 'active' : ''}
+                    onClick={() => {
+                      setTeamFormMode('create');
+                      setJoinError('');
+                    }}
+                    disabled={isJoiningTeam}
+                  >
+                    创建新团队
+                  </button>
+                </div>
+
+                {teamFormMode === 'create' && (
+                  <label className="field">
+                    <span>团队名称</span>
+                    <input
+                      value={joinForm.teamName}
+                      disabled={isJoiningTeam}
+                      onChange={(event) => setJoinForm({ ...joinForm, teamName: event.target.value })}
+                      placeholder="例如：校辩论队一队"
+                      maxLength={32}
+                    />
+                  </label>
+                )}
+
                 <label className="field">
                   <span>团队码</span>
                   <input
@@ -1007,7 +1053,7 @@ function App() {
 
                 <div className="modal-actions">
                   <button className="primary-button" type="submit" disabled={isJoiningTeam}>
-                    {isJoiningTeam ? '加入中...' : '加入团队'}
+                    {isJoiningTeam ? '处理中...' : teamFormMode === 'create' ? '创建并加入' : '加入团队'}
                   </button>
                   <button
                     className="ghost-button"
@@ -1551,10 +1597,11 @@ function App() {
                 setJoinError('');
                 setJoinSuccess('');
                 setJoinedTeamPrompt(null);
+                setTeamFormMode('join');
                 setIsJoinModalOpen(true);
               }}
             >
-              加入新团队
+              加入 / 创建团队
             </button>
           </div>
 
@@ -1914,13 +1961,17 @@ function stringifySpace(space) {
   return space.type === 'team' && space.teamCode ? `team:${space.teamCode}` : 'personal';
 }
 
-function validateTeamJoinInput(teamCode, teamPassword, nickname) {
+function validateTeamJoinInput(teamCode, teamPassword, nickname, teamName = null) {
   if (!/^[A-Z0-9_-]{3,32}$/.test(teamCode)) {
     return '请输入 3-32 位团队码，只能包含字母、数字、短横线或下划线。';
   }
 
-  if (!teamPassword) {
-    return '请输入团队密码。';
+  if (teamName !== null && (!teamName || teamName.length > 32 || /[<>]/.test(teamName))) {
+    return '请输入 1-32 个字符的团队名称。';
+  }
+
+  if (!teamPassword || teamPassword.length < 4 || teamPassword.length > 64) {
+    return '请输入 4-64 位团队密码。';
   }
 
   if (!nickname || nickname.length > 20 || /[<>]/.test(nickname)) {

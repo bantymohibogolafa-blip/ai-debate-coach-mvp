@@ -121,6 +121,18 @@ app.post('/api/team/join', async (req, res, next) => {
   }
 });
 
+app.post('/api/team/create', async (req, res, next) => {
+  try {
+    const teamPayload = validateTeamCreatePayload(req.body);
+    await createTeam(teamPayload);
+    const teams = await fetchJoinedTeams(teamPayload.localUserId);
+
+    res.status(201).json({ teams });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/teams/my', async (req, res, next) => {
   try {
     const localUserId = normalizeText(req.query.localUserId || req.query.userId);
@@ -456,6 +468,36 @@ function validateTeamMemberPayload(body) {
   return { teamCode, teamPassword, nickname, localUserId };
 }
 
+function validateTeamCreatePayload(body) {
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const teamName = normalizeTeamName(body.teamName || body.team_name || teamCode);
+  const teamPassword = normalizeText(body.teamPassword || body.team_password);
+  const nickname = normalizeNickname(body.nickname);
+  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+
+  if (!isValidTeamCode(teamCode)) {
+    throw badRequest('请输入 3-32 位团队码，只能包含字母、数字、短横线或下划线。');
+  }
+
+  if (!teamName || teamName.length > 32 || /[<>]/.test(teamName)) {
+    throw badRequest('请输入 1-32 个字符的团队名称。');
+  }
+
+  if (!teamPassword || teamPassword.length < 4 || teamPassword.length > 64) {
+    throw badRequest('请输入 4-64 位团队密码。');
+  }
+
+  if (!isValidNickname(nickname)) {
+    throw badRequest('请输入 1-20 个字符的昵称。');
+  }
+
+  if (!isValidLocalUserId(localUserId)) {
+    throw badRequest('用户身份无效，请刷新页面后重试。');
+  }
+
+  return { teamCode, teamName, teamPassword, nickname, localUserId };
+}
+
 function validateLeaveTeamPayload(body) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
   const localUserId = normalizeText(body.localUserId || body.local_user_id);
@@ -480,6 +522,10 @@ function normalizeTeamCode(value) {
 }
 
 function normalizeNickname(value) {
+  return normalizeText(value).replace(/\s+/g, ' ');
+}
+
+function normalizeTeamName(value) {
   return normalizeText(value).replace(/\s+/g, ' ');
 }
 
@@ -684,6 +730,46 @@ async function joinTeam({ teamCode, teamPassword, nickname, localUserId }) {
   }
 
   return { team, member };
+}
+
+async function createTeam({ teamCode, teamName, teamPassword, nickname, localUserId }) {
+  const existingTeam = await getSingleByQuery(
+    teamsTable,
+    new URLSearchParams({
+      select: 'team_code',
+      team_code: `eq.${teamCode}`,
+      limit: '1'
+    })
+  );
+
+  if (existingTeam) {
+    throw httpError(409, '团队码已被占用，请换一个团队码。');
+  }
+
+  await supabaseRequest(teamsTable, {
+    method: 'POST',
+    body: {
+      team_code: teamCode,
+      team_name: teamName,
+      join_password: teamPassword,
+      created_at: new Date().toISOString()
+    },
+    prefer: 'return=representation'
+  });
+
+  await supabaseRequest(teamMembersTable, {
+    method: 'POST',
+    body: {
+      team_code: teamCode,
+      local_user_id: localUserId,
+      nickname,
+      role: 'owner',
+      status: 'active',
+      joined_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString()
+    },
+    prefer: 'return=representation'
+  });
 }
 
 async function leaveTeam({ teamCode, localUserId }) {

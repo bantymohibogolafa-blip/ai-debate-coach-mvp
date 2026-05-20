@@ -124,6 +124,27 @@ textarea:disabled {
   gap: 16px;
 }
 
+.form-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.form-mode-switch button {
+  min-height: 44px;
+  border: 1px solid #c8d3da;
+  border-radius: 8px;
+  color: #43535c;
+  background: #fff;
+  font-weight: 900;
+}
+
+.form-mode-switch button.active {
+  border-color: #2f7375;
+  color: #fff;
+  background: linear-gradient(135deg, #2f7375, #23575d);
+}
+
 .team-topbar {
   display: flex;
   align-items: center;
@@ -1548,7 +1569,8 @@ textarea:focus {
   }
 
   .modal-actions,
-  .team-list-actions {
+  .team-list-actions,
+  .form-mode-switch {
     grid-template-columns: 1fr;
     display: grid;
   }
