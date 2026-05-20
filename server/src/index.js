@@ -124,13 +124,17 @@ app.post('/api/team/join', async (req, res, next) => {
 app.get('/api/training-records', async (req, res, next) => {
   try {
     const userId = normalizeText(req.query.userId || req.query.localUserId);
+    const scope = normalizeRecordScope(req.query.scope);
     const limit = clampNumber(Number(req.query.limit || 20), 1, 50);
+    const localUserId = normalizeLegacyOrLocalUserId(userId);
 
-    if (!isValidLegacyUserId(userId)) {
+    if (!isValidLocalUserId(localUserId)) {
       return res.status(400).json({ message: '匿名用户 ID 无效，请刷新页面后重试。' });
     }
 
-    const records = await fetchLegacyTrainingRecords(userId, limit);
+    const records = scope === 'personal'
+      ? await fetchPersonalTrainingRecords(localUserId, limit)
+      : await fetchLegacyTrainingRecords(localUserId, limit);
     res.json({ records: records.map(mapTrainingRecordFromDb) });
   } catch (error) {
     next(error);
@@ -140,6 +144,9 @@ app.get('/api/training-records', async (req, res, next) => {
 app.post('/api/training-records', async (req, res, next) => {
   try {
     const record = validateTrainingRecordPayload(req.body);
+    if (isPersonalTeamCode(record.team_code)) {
+      await ensurePersonalTeam(record.team_code);
+    }
     const savedRecords = await insertTrainingRecord(record);
 
     res.status(201).json({ record: mapTrainingRecordFromDb(savedRecords[0]) });
@@ -289,6 +296,7 @@ function validateTrainingRecordPayload(body) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
   const localUserId = normalizeText(body.localUserId || body.local_user_id || body.userId || body.user_id);
   const nickname = normalizeNickname(body.nickname);
+  const recordScope = normalizeRecordScope(body.recordScope || body.scope);
   const topic = normalizeText(body.topic);
   const userSide = normalizeSide(normalizeText(body.userSide || body.user_side));
   const aiSide = normalizeSide(normalizeText(body.aiSide || body.ai_side));
@@ -301,7 +309,14 @@ function validateTrainingRecordPayload(body) {
   const result = normalizeText(body.result);
   const battlefield = normalizeText(body.battlefield);
 
-  if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId) || !isValidNickname(nickname)) {
+  if (!isValidLocalUserId(localUserId)) {
+    throw badRequest('用户身份无效，请刷新页面后重试。');
+  }
+
+  const normalizedTeamCode = recordScope === 'personal' ? getPersonalTeamCode(localUserId) : teamCode;
+  const normalizedNickname = recordScope === 'personal' ? '个人用户' : nickname;
+
+  if (!isValidTeamCode(normalizedTeamCode) || !isValidNickname(normalizedNickname)) {
     throw badRequest('团队身份信息无效，请重新加入团队。');
   }
 
@@ -344,9 +359,9 @@ function validateTrainingRecordPayload(body) {
   }
 
   return {
-    team_code: teamCode,
+    team_code: normalizedTeamCode,
     local_user_id: localUserId,
-    nickname,
+    nickname: normalizedNickname,
     topic,
     user_side: userSide,
     ai_side: aiSide,
@@ -471,6 +486,26 @@ function isValidLocalUserId(localUserId) {
   return /^user_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(localUserId);
 }
 
+function normalizeLegacyOrLocalUserId(userId) {
+  const normalizedUserId = normalizeText(userId);
+  if (isValidLocalUserId(normalizedUserId)) return normalizedUserId;
+  if (isValidLegacyUserId(normalizedUserId)) return `user_${normalizedUserId}`;
+  return normalizedUserId;
+}
+
+function normalizeRecordScope(value) {
+  return normalizeText(value) === 'personal' ? 'personal' : 'team';
+}
+
+function getPersonalTeamCode(localUserId) {
+  const match = /^user_([0-9a-f]{8})-/i.exec(localUserId);
+  return `PERSONAL_${(match?.[1] || 'LOCAL').toUpperCase()}`;
+}
+
+function isPersonalTeamCode(teamCode) {
+  return /^PERSONAL_[0-9A-F]{8}$/.test(teamCode);
+}
+
 function isValidTeamCode(teamCode) {
   return /^[A-Z0-9_-]{3,32}$/.test(teamCode);
 }
@@ -580,10 +615,44 @@ async function getSingleByQuery(tableName, query) {
   return rows[0] || null;
 }
 
-async function fetchLegacyTrainingRecords(userId, limit) {
+async function fetchLegacyTrainingRecords(localUserId, limit) {
   const query = new URLSearchParams({
     select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
-    local_user_id: `eq.user_${userId}`,
+    local_user_id: `eq.${localUserId}`,
+    order: 'created_at.desc',
+    limit: String(limit)
+  });
+
+  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+}
+
+async function ensurePersonalTeam(teamCode) {
+  const existingTeam = await getSingleByQuery(
+    teamsTable,
+    new URLSearchParams({
+      team_code: `eq.${teamCode}`
+    })
+  );
+
+  if (existingTeam) return existingTeam;
+
+  const createdTeams = await supabaseRequest(teamsTable, {
+    method: 'POST',
+    body: {
+      team_code: teamCode,
+      team_name: '个人模式'
+    },
+    prefer: 'return=representation'
+  });
+
+  return createdTeams[0] || null;
+}
+
+async function fetchPersonalTrainingRecords(localUserId, limit) {
+  const query = new URLSearchParams({
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    team_code: `eq.${getPersonalTeamCode(localUserId)}`,
+    local_user_id: `eq.${localUserId}`,
     order: 'created_at.desc',
     limit: String(limit)
   });

@@ -132,12 +132,16 @@ const initialConfig = {
 const teamCodeStorageKey = 'ai-debate-coach-team-code';
 const nicknameStorageKey = 'ai-debate-coach-nickname';
 const localUserIdStorageKey = 'ai-debate-coach-local-user-id';
+const appModeStorageKey = 'ai-debate-coach-app-mode';
 const trainingRecordLimit = 20;
+const personalNickname = '个人用户';
 
 function App() {
   const [config, setConfig] = useState(initialConfig);
   const [history, setHistory] = useState([]);
   const [localUserId, setLocalUserId] = useState('');
+  const [appMode, setAppMode] = useState('');
+  const [entryMode, setEntryMode] = useState('');
   const [teamIdentity, setTeamIdentity] = useState({ teamCode: '', nickname: '' });
   const [joinForm, setJoinForm] = useState({ teamCode: '', nickname: '' });
   const [joinError, setJoinError] = useState('');
@@ -202,23 +206,41 @@ function App() {
   const isBusy = isLoading || isPolishing || isTranscribing;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
   const hasJoinedTeam = Boolean(teamIdentity.teamCode && teamIdentity.nickname && localUserId);
+  const hasPersonalMode = appMode === 'personal' && Boolean(localUserId);
+  const hasAppAccess = hasPersonalMode || (appMode === 'team' && hasJoinedTeam);
+  const currentNickname = appMode === 'personal' ? personalNickname : teamIdentity.nickname;
   const maxRecordingSeconds = isSingleSpeechMode ? 180 : 60;
 
   useEffect(() => {
     const storedLocalUserId = getOrCreateLocalUserId();
     const storedTeamCode = normalizeTeamCode(localStorage.getItem(teamCodeStorageKey));
     const storedNickname = String(localStorage.getItem(nicknameStorageKey) || '').trim();
+    const storedAppMode = normalizeAppMode(localStorage.getItem(appModeStorageKey));
+    const nextAppMode = storedAppMode || (storedTeamCode && storedNickname ? 'team' : '');
 
     setLocalUserId(storedLocalUserId);
+    setAppMode(nextAppMode);
     setTeamIdentity({ teamCode: storedTeamCode, nickname: storedNickname });
     setJoinForm({ teamCode: storedTeamCode, nickname: storedNickname });
   }, []);
 
   useEffect(() => {
-    if (!hasJoinedTeam) return;
+    if (appMode === 'personal' && localUserId) {
+      loadPersonalTrainingRecords(localUserId);
+      return;
+    }
+
+    if (appMode !== 'team' || !hasJoinedTeam) return;
 
     loadTeamDashboard(teamIdentity.teamCode, localUserId);
-  }, [hasJoinedTeam, teamIdentity.teamCode, localUserId]);
+  }, [appMode, hasJoinedTeam, teamIdentity.teamCode, localUserId]);
+
+  useEffect(() => {
+    if (appMode === 'personal' && activeTab === 'team') {
+      setActiveTab('training');
+      setSelectedRecord(null);
+    }
+  }, [appMode, activeTab]);
 
   useEffect(() => {
     return () => {
@@ -253,7 +275,10 @@ function App() {
       localStorage.setItem(teamCodeStorageKey, nextTeamCode);
       localStorage.setItem(nicknameStorageKey, nextNickname);
       localStorage.setItem(localUserIdStorageKey, nextLocalUserId);
+      localStorage.setItem(appModeStorageKey, 'team');
       setLocalUserId(nextLocalUserId);
+      setAppMode('team');
+      setEntryMode('');
       setTeamIdentity({ teamCode: nextTeamCode, nickname: nextNickname });
       setJoinForm({ teamCode: nextTeamCode, nickname: nextNickname });
       setActiveTab('training');
@@ -264,13 +289,36 @@ function App() {
     }
   }
 
-  function switchTeam() {
+  function enterPersonalMode() {
     if (isBusy || isRecording) return;
 
-    localStorage.removeItem(teamCodeStorageKey);
-    localStorage.removeItem(nicknameStorageKey);
-    setTeamIdentity({ teamCode: '', nickname: '' });
-    setJoinForm({ teamCode: '', nickname: '' });
+    const nextLocalUserId = localUserId || getOrCreateLocalUserId();
+    localStorage.setItem(localUserIdStorageKey, nextLocalUserId);
+    localStorage.setItem(appModeStorageKey, 'personal');
+    setLocalUserId(nextLocalUserId);
+    setAppMode('personal');
+    setEntryMode('');
+    setActiveTab('training');
+    setSelectedRecord(null);
+    setTeamRecords([]);
+    setTeamStats(null);
+    setTeamDataError('');
+    loadPersonalTrainingRecords(nextLocalUserId);
+  }
+
+  function switchEntryMode() {
+    if (isBusy || isRecording) return;
+
+    localStorage.removeItem(appModeStorageKey);
+    if (appMode === 'team') {
+      localStorage.removeItem(teamCodeStorageKey);
+      localStorage.removeItem(nicknameStorageKey);
+      setTeamIdentity({ teamCode: '', nickname: '' });
+      setJoinForm({ teamCode: '', nickname: '' });
+    }
+    setAppMode('');
+    setEntryMode('');
+    setActiveTab('training');
     setTrainingRecords([]);
     setTeamRecords([]);
     setTeamStats(null);
@@ -278,6 +326,22 @@ function App() {
     setSaveStatus('');
     setHistoryError('');
     setTeamDataError('');
+  }
+
+  async function loadPersonalTrainingRecords(userId) {
+    setIsHistoryLoading(true);
+    setHistoryError('');
+
+    try {
+      const data = await getJson(
+        `/api/training-records?scope=personal&localUserId=${encodeURIComponent(userId)}&limit=50`
+      );
+      setTrainingRecords(Array.isArray(data.records) ? data.records : []);
+    } catch (requestError) {
+      setHistoryError(getFriendlyError(requestError));
+    } finally {
+      setIsHistoryLoading(false);
+    }
   }
 
   async function loadTeamDashboard(teamCode, userId) {
@@ -326,9 +390,10 @@ function App() {
 
     try {
       const data = await postJson('/api/training-records', {
-        teamCode: teamIdentity.teamCode,
+        recordScope: appMode === 'personal' ? 'personal' : 'team',
+        teamCode: appMode === 'personal' ? '' : teamIdentity.teamCode,
         localUserId,
-        nickname: teamIdentity.nickname,
+        nickname: currentNickname,
         topic: config.topic,
         userSide: config.userSide,
         aiSide: getOpponentSideValue(config.userSide),
@@ -354,7 +419,9 @@ function App() {
       }
 
       setSaveStatus('本次训练记录已保存。');
-      loadTeamData(teamIdentity.teamCode);
+      if (appMode === 'team') {
+        loadTeamData(teamIdentity.teamCode);
+      }
     } catch (requestError) {
       setSaveStatus('复盘已生成，但记录同步失败，请稍后重试。');
     }
@@ -759,47 +826,66 @@ function App() {
     }
   }
 
-  if (!hasJoinedTeam) {
+  if (!hasAppAccess) {
     return (
       <main className="app-shell team-join-shell">
         <section className="panel team-join-panel">
           <div className="panel-title">
-            <p className="eyebrow">团队空间</p>
-            <h1>加入团队</h1>
-            <p className="team-privacy-note">
-              加入团队后，你的昵称、训练次数、分数、辩题和复盘结果可能被团队成员或队长查看，请勿输入私人敏感内容。
-            </p>
+            <p className="eyebrow">锋辩入口</p>
+            <h1>{entryMode === 'team' ? '加入团队' : '选择使用方式'}</h1>
           </div>
 
-          <form className="team-join-form" onSubmit={joinTeam}>
-            <label className="field">
-              <span>昵称</span>
-              <input
-                value={joinForm.nickname}
-                disabled={isJoiningTeam}
-                onChange={(event) => setJoinForm({ ...joinForm, nickname: event.target.value })}
-                placeholder="例如：党梓豪"
-                maxLength={20}
-              />
-            </label>
+          {entryMode !== 'team' ? (
+            <div className="entry-options">
+              <button type="button" className="entry-option primary" onClick={enterPersonalMode}>
+                <strong>个人模式</strong>
+                <span>不用团队码，训练记录只在当前设备浏览器中关联查看。</span>
+              </button>
+              <button type="button" className="entry-option" onClick={() => setEntryMode('team')}>
+                <strong>团队模式</strong>
+                <span>输入昵称和团队码，训练数据同步到团队空间。</span>
+              </button>
+            </div>
+          ) : (
+            <>
+              <p className="team-privacy-note">
+                加入团队后，你的昵称、训练次数、分数、辩题和复盘结果可能被团队成员或队长查看，请勿输入私人敏感内容。
+              </p>
 
-            <label className="field">
-              <span>团队码</span>
-              <input
-                value={joinForm.teamCode}
-                disabled={isJoiningTeam}
-                onChange={(event) => setJoinForm({ ...joinForm, teamCode: event.target.value })}
-                placeholder="例如：JXCH-DEBATE"
-                maxLength={32}
-              />
-            </label>
+              <form className="team-join-form" onSubmit={joinTeam}>
+                <label className="field">
+                  <span>昵称</span>
+                  <input
+                    value={joinForm.nickname}
+                    disabled={isJoiningTeam}
+                    onChange={(event) => setJoinForm({ ...joinForm, nickname: event.target.value })}
+                    placeholder="例如：党梓豪"
+                    maxLength={20}
+                  />
+                </label>
 
-            {joinError && <div className="error-box">{joinError}</div>}
+                <label className="field">
+                  <span>团队码</span>
+                  <input
+                    value={joinForm.teamCode}
+                    disabled={isJoiningTeam}
+                    onChange={(event) => setJoinForm({ ...joinForm, teamCode: event.target.value })}
+                    placeholder="例如：JXCH-DEBATE"
+                    maxLength={32}
+                  />
+                </label>
 
-            <button className="primary-button" type="submit" disabled={isJoiningTeam}>
-              {isJoiningTeam ? '加入中...' : '加入团队'}
-            </button>
-          </form>
+                {joinError && <div className="error-box">{joinError}</div>}
+
+                <button className="primary-button" type="submit" disabled={isJoiningTeam}>
+                  {isJoiningTeam ? '加入中...' : '加入团队'}
+                </button>
+                <button className="ghost-button" type="button" onClick={() => setEntryMode('')} disabled={isJoiningTeam}>
+                  返回入口选择
+                </button>
+              </form>
+            </>
+          )}
         </section>
       </main>
     );
@@ -809,11 +895,11 @@ function App() {
     <main className={`app-shell ${hasSessionContent ? 'session-active' : ''}`}>
       <section className="team-topbar" aria-label="当前团队信息">
         <div>
-          <span>当前团队：{teamIdentity.teamCode}</span>
-          <strong>当前用户：{teamIdentity.nickname}</strong>
+          <span>{appMode === 'personal' ? '当前模式：个人模式' : `当前团队：${teamIdentity.teamCode}`}</span>
+          <strong>当前用户：{currentNickname}</strong>
         </div>
-        <button type="button" onClick={switchTeam} disabled={isBusy || isRecording}>
-          切换团队
+        <button type="button" onClick={switchEntryMode} disabled={isBusy || isRecording}>
+          切换模式
         </button>
       </section>
 
@@ -821,7 +907,7 @@ function App() {
         {[
           { label: '训练区', value: 'training' },
           { label: '我的记录', value: 'mine' },
-          { label: '团队数据', value: 'team' }
+          ...(appMode === 'team' ? [{ label: '团队数据', value: 'team' }] : [])
         ].map((tab) => (
           <button
             type="button"
@@ -1536,6 +1622,10 @@ function isLocalUserId(value) {
 
 function normalizeTeamCode(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function normalizeAppMode(value) {
+  return value === 'personal' || value === 'team' ? value : '';
 }
 
 function validateTeamJoinInput(teamCode, nickname) {

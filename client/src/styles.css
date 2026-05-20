@@ -73,6 +73,41 @@ textarea:disabled {
   line-height: 1.05;
 }
 
+.entry-options {
+  display: grid;
+  gap: 14px;
+}
+
+.entry-option {
+  display: grid;
+  min-height: 104px;
+  gap: 8px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 18px;
+  color: #263942;
+  background: #fff;
+  text-align: left;
+}
+
+.entry-option.primary {
+  border-color: #2f7375;
+  background: #edf7f6;
+}
+
+.entry-option strong {
+  color: #13232b;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.entry-option span {
+  color: #687982;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
 .team-privacy-note {
   margin: 14px 0 0;
   border-left: 4px solid #c8502d;
@@ -129,7 +164,7 @@ textarea:disabled {
 
 .main-tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 16px;
 }
