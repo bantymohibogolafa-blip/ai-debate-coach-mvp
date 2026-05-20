@@ -531,6 +531,10 @@ function getPublicErrorMessage(error) {
   }
 
   if (error.code === 'SUPABASE_REQUEST_FAILED') {
+    const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
+    if (/space_type|status|joined_at|join_password|schema cache|column/i.test(detailText)) {
+      return '数据库表结构尚未更新，请先在 Supabase 执行 supabase-team-spaces.sql。';
+    }
     return '历史记录保存或读取失败，请稍后重试。';
   }
 
@@ -568,6 +572,15 @@ function normalizeLegacyOrLocalUserId(userId) {
 
 function normalizeSpaceType(value) {
   return normalizeText(value) === 'team' ? 'team' : 'personal';
+}
+
+function getPersonalTeamCode(localUserId) {
+  const match = /^user_([0-9a-f]{8})-/i.exec(localUserId);
+  return `PERSONAL_${(match?.[1] || 'LOCAL').toUpperCase()}`;
+}
+
+function isSupabaseSchemaError(error) {
+  return error?.code === 'SUPABASE_REQUEST_FAILED' && error.status === 400;
 }
 
 function isValidTeamCode(teamCode) {
@@ -689,16 +702,31 @@ async function leaveTeam({ teamCode, localUserId }) {
 }
 
 async function requireActiveMembership(teamCode, localUserId) {
-  const member = await getSingleByQuery(
-    teamMembersTable,
-    new URLSearchParams({
-      select: 'id,team_code,local_user_id,nickname,role,status,joined_at,left_at',
-      team_code: `eq.${teamCode}`,
-      local_user_id: `eq.${localUserId}`,
-      status: 'eq.active',
-      limit: '1'
-    })
-  );
+  let member = null;
+
+  try {
+    member = await getSingleByQuery(
+      teamMembersTable,
+      new URLSearchParams({
+        select: 'id,team_code,local_user_id,nickname,role,status,joined_at,left_at',
+        team_code: `eq.${teamCode}`,
+        local_user_id: `eq.${localUserId}`,
+        status: 'eq.active',
+        limit: '1'
+      })
+    );
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    member = await getSingleByQuery(
+      teamMembersTable,
+      new URLSearchParams({
+        select: 'id,team_code,local_user_id,nickname,created_at,last_seen_at',
+        team_code: `eq.${teamCode}`,
+        local_user_id: `eq.${localUserId}`,
+        limit: '1'
+      })
+    );
+  }
 
   if (!member) {
     throw httpError(403, '你不是该团队的有效成员，不能查看或保存团队数据。');
@@ -708,14 +736,27 @@ async function requireActiveMembership(teamCode, localUserId) {
 }
 
 async function fetchJoinedTeams(localUserId) {
-  const members = await supabaseRequest(
-    `${teamMembersTable}?${new URLSearchParams({
-      select: 'id,team_code,local_user_id,nickname,role,status,joined_at,left_at,created_at,last_seen_at',
-      local_user_id: `eq.${localUserId}`,
-      status: 'eq.active',
-      order: 'joined_at.desc'
-    }).toString()}`
-  );
+  let members = [];
+
+  try {
+    members = await supabaseRequest(
+      `${teamMembersTable}?${new URLSearchParams({
+        select: 'id,team_code,local_user_id,nickname,role,status,joined_at,left_at,created_at,last_seen_at',
+        local_user_id: `eq.${localUserId}`,
+        status: 'eq.active',
+        order: 'joined_at.desc'
+      }).toString()}`
+    );
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    members = await supabaseRequest(
+      `${teamMembersTable}?${new URLSearchParams({
+        select: 'id,team_code,local_user_id,nickname,created_at,last_seen_at',
+        local_user_id: `eq.${localUserId}`,
+        order: 'created_at.desc'
+      }).toString()}`
+    );
+  }
 
   const teams = await Promise.all(
     members.map(async (member) => {
@@ -775,7 +816,12 @@ async function fetchLegacyTrainingRecords(localUserId, limit) {
     limit: String(limit)
   });
 
-  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+  try {
+    return await supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    return fetchLegacyTrainingRecordsWithoutSpaceType(localUserId, limit);
+  }
 }
 
 async function fetchPersonalTrainingRecords(localUserId, limit) {
@@ -787,7 +833,12 @@ async function fetchPersonalTrainingRecords(localUserId, limit) {
     limit: String(limit)
   });
 
-  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+  try {
+    return await supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    return fetchLegacyPersonalTrainingRecords(localUserId, limit);
+  }
 }
 
 async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
@@ -800,7 +851,12 @@ async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
     limit: String(limit)
   });
 
-  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+  try {
+    return await supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    return fetchLegacyTeamMemberTrainingRecords(teamCode, localUserId, limit);
+  }
 }
 
 async function fetchTeamTrainingRecords(teamCode, limit) {
@@ -812,7 +868,12 @@ async function fetchTeamTrainingRecords(teamCode, limit) {
     limit: String(limit)
   });
 
-  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+  try {
+    return await supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    return fetchLegacyTeamTrainingRecords(teamCode, limit);
+  }
 }
 
 async function fetchTeamStats(teamCode) {
@@ -877,15 +938,107 @@ async function fetchAllTeamRecordsForStats(teamCode) {
     limit: '1000'
   });
 
+  try {
+    return await supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    return fetchLegacyTeamTrainingRecords(teamCode, 1000);
+  }
+}
+
+async function fetchLegacyTrainingRecordsWithoutSpaceType(localUserId, limit) {
+  const query = new URLSearchParams({
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    local_user_id: `eq.${localUserId}`,
+    order: 'created_at.desc',
+    limit: String(limit)
+  });
+
+  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+}
+
+async function fetchLegacyPersonalTrainingRecords(localUserId, limit) {
+  const query = new URLSearchParams({
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    team_code: `eq.${getPersonalTeamCode(localUserId)}`,
+    local_user_id: `eq.${localUserId}`,
+    order: 'created_at.desc',
+    limit: String(limit)
+  });
+
+  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+}
+
+async function fetchLegacyTeamMemberTrainingRecords(teamCode, localUserId, limit) {
+  const query = new URLSearchParams({
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    team_code: `eq.${teamCode}`,
+    local_user_id: `eq.${localUserId}`,
+    order: 'created_at.desc',
+    limit: String(limit)
+  });
+
+  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+}
+
+async function fetchLegacyTeamTrainingRecords(teamCode, limit) {
+  const query = new URLSearchParams({
+    select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    team_code: `eq.${teamCode}`,
+    order: 'created_at.desc',
+    limit: String(limit)
+  });
+
   return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
 }
 
 async function insertTrainingRecord(record) {
-  return supabaseRequest(trainingRecordsTable, {
+  try {
+    return await supabaseRequest(trainingRecordsTable, {
+      method: 'POST',
+      body: record,
+      prefer: 'return=representation'
+    });
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+
+    const legacyRecord = { ...record };
+    delete legacyRecord.space_type;
+    if (record.space_type === 'personal') {
+      legacyRecord.team_code = getPersonalTeamCode(record.local_user_id);
+      await ensureLegacyPersonalTeam(legacyRecord.team_code);
+    }
+
+    return supabaseRequest(trainingRecordsTable, {
+      method: 'POST',
+      body: legacyRecord,
+      prefer: 'return=representation'
+    });
+  }
+}
+
+async function ensureLegacyPersonalTeam(teamCode) {
+  const existingTeam = await getSingleByQuery(
+    teamsTable,
+    new URLSearchParams({
+      select: 'team_code',
+      team_code: `eq.${teamCode}`,
+      limit: '1'
+    })
+  );
+
+  if (existingTeam) return existingTeam;
+
+  const createdTeams = await supabaseRequest(teamsTable, {
     method: 'POST',
-    body: record,
+    body: {
+      team_code: teamCode,
+      team_name: '个人模式'
+    },
     prefer: 'return=representation'
   });
+
+  return createdTeams[0] || null;
 }
 
 async function supabaseRequest(pathname, options = {}) {
@@ -912,6 +1065,8 @@ async function supabaseRequest(pathname, options = {}) {
     const error = new Error('Supabase request failed.');
     error.code = 'SUPABASE_REQUEST_FAILED';
     error.status = response.status;
+    error.supabaseMessage = data?.message || '';
+    error.supabaseDetails = data?.details || '';
     throw error;
   }
 
