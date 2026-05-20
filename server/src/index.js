@@ -300,6 +300,7 @@ function validateSessionPayload(body) {
   const trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode));
   const difficulty = celebrityDebater === 'none' ? normalizeDifficulty(normalizeText(body.difficulty)) : 'city';
   const rounds = Number(body.rounds);
+  const defensePrep = normalizeText(body.defensePrep || body.defense_prep || '');
   const history = Array.isArray(body.history) ? body.history : [];
 
   if (!topic) {
@@ -326,6 +327,10 @@ function validateSessionPayload(body) {
     throw badRequest('请选择有效训练轮数。');
   }
 
+  if (trainingMode === 'defense' && !defensePrep) {
+    throw badRequest('请先填写己方分论点和论据。');
+  }
+
   return {
     topic,
     userSide,
@@ -333,6 +338,7 @@ function validateSessionPayload(body) {
     celebrityDebater,
     trainingMode,
     rounds,
+    defensePrep,
     history: history
       .filter((item) => ['ai', 'user'].includes(item.role) && normalizeText(item.content))
       .map((item) => ({

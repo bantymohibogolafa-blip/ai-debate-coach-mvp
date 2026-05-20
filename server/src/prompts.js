@@ -60,6 +60,8 @@ const trainingModeProfiles = {
     label: '防守训练',
     startRole: 'question',
     reviewFocus: '被质询时的正面回应、概念切割、陷阱识别和防守反压',
+    opening: '请根据用户提供的己方分论点和论据，站在对立方立场进行质询。质询必须具体打到用户给出的分论点、论据可靠性、因果链、边界条件或现实可行性。不要泛泛而问，不要改写成立论。控制在80-160字。',
+    response: '继续站在对立方立场质询。先抓住用户刚才防守中的一个薄弱点，再结合用户预设分论点继续追问。你只能进攻，不能替用户防守，不能给建议。控制在80-160字。',
     userTask: '用户正在进行防守训练，用户只能防守，不能反问或质询。评价重点是正面回应、守住立场、识别预设和避免致命承认。'
   },
   closing: {
@@ -327,11 +329,40 @@ export function getOpponentSide(userSide) {
   return userSide === 'affirmative' ? 'negative' : 'affirmative';
 }
 
-export function buildStartMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode }) {
+export function buildStartMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, defensePrep }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
   const modeInstruction = getOpeningModeInstruction(difficulty, celebrityDebater);
   const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
+
+  if (trainingMode === 'defense') {
+    return [
+      {
+        role: 'system',
+        content: [
+          '你是高中生辩论赛中的二辩质询陪练。',
+          `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
+          sideJudgementInstruction,
+          modeInstruction,
+          '当前是防守训练：AI 只攻，用户只防守。',
+          '你必须根据用户提前输入的己方分论点和论据进行质询，问题要具体打到分论点、事实依据、因果链、边界条件或现实可行性。',
+          '不要泛泛要求用户“说明你的观点”，不要替用户总结，不要给用户建议，不要输出防守示范。',
+          '可以在同一轮提出一个或多个短问题，但必须围绕同一个压力点，控制在80-160字。',
+          '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。'
+        ].join('\n')
+      },
+      {
+        role: 'user',
+        content: [
+          `辩题：${topic}`,
+          `用户立场：${userSideLabel}`,
+          `AI 立场：${opponentSideLabel}`,
+          `用户己方分论点和论据：\n${defensePrep}`,
+          `请站在${opponentSideLabel}，围绕上述分论点发起第一轮具体质询。`
+        ].join('\n\n')
+      }
+    ];
+  }
 
   if (trainingMode !== 'free_debate' && trainingMode !== 'defense') {
     return [
@@ -387,12 +418,41 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
   ];
 }
 
-export function buildRespondMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, history, answer }) {
+export function buildRespondMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, history, answer, defensePrep }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
   const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
   const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
   const transcript = formatHistory(history);
+
+  if (trainingMode === 'defense') {
+    return [
+      {
+        role: 'system',
+        content: [
+          '你是高中生辩论赛中的二辩质询陪练。',
+          `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
+          sideJudgementInstruction,
+          modeInstruction,
+          '当前是防守训练：AI 只攻，用户只防守。',
+          '你必须继续根据用户提前输入的己方分论点和论据质询，并结合用户上一轮防守回答追问。',
+          '只输出 AI 本轮质询。不能替用户防守，不能给建议，不能评价用户表现，不能切换为自由辩论。',
+          '质询要具体打到分论点、事实依据、因果链、边界条件或现实可行性，控制在80-160字。',
+          '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。'
+        ].join('\n')
+      },
+      {
+        role: 'user',
+        content: [
+          `辩题：${topic}`,
+          `用户己方分论点和论据：\n${defensePrep || '未提供'}`,
+          `此前对话：\n${transcript || '暂无'}`,
+          `用户最新防守回答：${answer}`,
+          `请站在${opponentSideLabel}继续追问。`
+        ].join('\n\n')
+      }
+    ];
+  }
 
   if (trainingMode && trainingMode !== 'free_debate' && trainingMode !== 'defense') {
     return [

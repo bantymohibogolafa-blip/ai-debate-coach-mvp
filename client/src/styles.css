@@ -741,6 +741,41 @@ textarea:focus {
   font-weight: 700;
 }
 
+.defense-prep-card {
+  display: grid;
+  gap: 14px;
+  margin: 4px 0 18px;
+}
+
+.prep-context-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.prep-context-grid div {
+  min-height: 72px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 11px 12px;
+  background: #f7fbfb;
+}
+
+.prep-context-grid span {
+  display: block;
+  color: #687982;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.prep-context-grid strong {
+  display: block;
+  margin-top: 7px;
+  color: #20313a;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
 .round-progress {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -1547,6 +1582,7 @@ textarea:focus {
   .match-strip,
   .main-tabs,
   .mode-selector-panel,
+  .prep-context-grid,
   .team-stat-grid,
   .team-rank-grid {
     grid-template-columns: 1fr;

@@ -34,7 +34,22 @@ const topicPools = {
     '学校是否应该限制学生使用智能手机',
     '中学生参加竞赛是否利大于弊',
     '班级管理中严格纪律比自主空间更重要',
-    '高中生是否应该被允许自主选择作业量'
+    '高中生是否应该被允许自主选择作业量',
+    '学校是否应该允许学生把智能手机带入校园',
+    '中学生更需要竞争教育还是合作教育',
+    '学校教育更应该重视知识传授还是人格塑造',
+    '中学生社团活动应不应该占用晚自习时间',
+    '高中生职业规划教育应该提前开展',
+    '课堂上使用平板电脑利大于弊',
+    '老师应不应该公开表扬和批评学生',
+    '中学生寒暑假补课利大于弊',
+    '校园管理应以规则约束为主还是信任引导为主',
+    '学生评价老师是否利大于弊',
+    '中学生是否应该拥有更多自主安排时间',
+    '家校群让教育沟通更高效还是更焦虑',
+    '高中阶段分层教学利大于弊',
+    '成绩排名能否真实反映学生成长',
+    '学校是否应该设置无手机日'
   ],
   technology: [
     '短视频平台对中学生成长利大于弊',
@@ -42,7 +57,22 @@ const topicPools = {
     '线上娱乐是否正在削弱青少年的现实社交能力',
     '算法推荐让人更自由还是更不自由',
     '电子阅读比纸质阅读更适合当代学生',
-    '科技便利是否降低了人的独立思考能力'
+    '科技便利是否降低了人的独立思考能力',
+    '生成式 AI 会增强还是削弱学生的学习能力',
+    '社交媒体让人更接近真相还是更远离真相',
+    '网络实名制利大于弊',
+    '大数据时代人们更自由还是更不自由',
+    '技术进步能否解决大多数社会问题',
+    '智能设备让生活更高效还是更碎片化',
+    '信息爆炸让人更博学还是更浅薄',
+    '虚拟社交能否替代现实社交',
+    '无人驾驶汽车应该优先保护乘客还是行人',
+    'AI 写作工具应不应该进入校园',
+    '人类应该更担心 AI 取代工作还是改变工作',
+    '线上娱乐让年轻人的精神生活更丰富还是更贫乏',
+    '互联网让公共讨论更理性还是更情绪化',
+    '科技公司应该为用户沉迷承担更多责任',
+    '数字遗产应不应该被继承'
   ],
   growth: [
     '得而复失比从未得到更遗憾',
@@ -50,7 +80,22 @@ const topicPools = {
     '成长中挫折教育比鼓励教育更重要',
     '面对失败，接受现实比坚持到底更重要',
     '中学生应该更早接触社会竞争',
-    '被误解是成长中必须付出的代价'
+    '被误解是成长中必须付出的代价',
+    '人生应是旷野还是轨道',
+    '过程比结果更重要',
+    '成功路上好伙伴比好对手更重要',
+    '年轻人应该先学会妥协还是先学会坚持',
+    '遗憾是否是青春的必修课',
+    '亲密关系中坦诚比善意隐瞒更重要',
+    '人更应该活成自己期待的样子还是社会需要的样子',
+    '选择大于努力还是努力大于选择',
+    '焦虑能否成为成长的动力',
+    '年轻人更应该追求热爱还是责任',
+    '经历失败会让人更强大还是更谨慎',
+    '独处更能帮助人成长还是群体更能帮助人成长',
+    '被看见比被理解更重要',
+    '少年感是否值得被珍惜',
+    '成大事者是否应该不拘小节'
   ],
   ethics: [
     '善意的谎言是否应该被接受',
@@ -58,7 +103,22 @@ const topicPools = {
     '犯错后弥补比道歉更重要',
     '规则公平比结果公平更重要',
     '评价一个人更应该看动机还是结果',
-    '多数人的安全能否成为限制少数人自由的理由'
+    '多数人的安全能否成为限制少数人自由的理由',
+    '人性本善还是人性本恶',
+    '沉默比愚昧更可怕还是愚昧比沉默更可怕',
+    '法律与人情是否相悖',
+    '相信需不需要证明',
+    '以成败论英雄是否可取',
+    '救猫还是救画',
+    '当代社会更需要宽容还是更需要原则',
+    '牺牲少数人的利益能否换取多数人的幸福',
+    '迟到的正义是否还是正义',
+    '网络舆论能不能提升公共理性',
+    '个人隐私应不应该让位于公共安全',
+    '道德评价应不应该考虑时代背景',
+    '善良是否需要锋芒',
+    '公平和效率何者更应优先',
+    '宽恕是否比惩罚更能解决问题'
   ],
   culture: [
     '中学生不应该玩游戏',
@@ -66,7 +126,22 @@ const topicPools = {
     '网络热梗让表达更丰富还是更贫乏',
     '流行文化比经典文化更能影响年轻人',
     '综艺节目是否降低了大众审美',
-    '校园活动中竞技性比参与感更重要'
+    '校园活动中竞技性比参与感更重要',
+    '经典电影重新上线是电影市场繁荣的体现',
+    '严肃表达在当代更应该被提倡',
+    '流量能否代表作品价值',
+    '短视频让文化传播更大众还是更浅薄',
+    '传统文化年轻化表达利大于弊',
+    '二次元文化对青少年成长利大于弊',
+    '公众人物是否应该承担更高道德责任',
+    '网络文学更应该追求市场还是文学价值',
+    '博物馆文创让传统文化更有生命力',
+    '方言保护应不应该进入校园教育',
+    '偶像塌房后作品是否还值得被观看',
+    '弹幕文化让观看体验更好还是更差',
+    '影视改编应更尊重原著还是更尊重创新',
+    '体育明星偶像化利大于弊',
+    '年轻人更应该拥抱国潮还是保持全球视野'
   ]
 };
 
@@ -138,6 +213,7 @@ const personalNickname = '个人用户';
 const personalSpace = { type: 'personal', teamCode: '' };
 const roundSelectionModes = ['free_debate', 'attack', 'defense'];
 const longOutputModes = ['constructive', 'summary', 'closing'];
+const recordingLimitHint = '单次录音不要超过30秒';
 
 function App() {
   const [config, setConfig] = useState(initialConfig);
@@ -175,6 +251,8 @@ function App() {
   const [longOutputPromptMode, setLongOutputPromptMode] = useState('');
   const [topicDirection, setTopicDirection] = useState('education');
   const [generatedTopics, setGeneratedTopics] = useState([]);
+  const [recentGeneratedTopics, setRecentGeneratedTopics] = useState({});
+  const [defensePrep, setDefensePrep] = useState('');
   const [isPolishing, setIsPolishing] = useState(false);
   const [polishResult, setPolishResult] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -224,7 +302,7 @@ function App() {
   const currentSpaceLabel = isTeamSpace ? (currentTeam.teamName || currentTeam.teamCode) : '个人模式';
   const currentNickname = isTeamSpace ? currentTeam.nickname : personalNickname;
   const currentSpaceValue = isTeamSpace ? `team:${currentTeam.teamCode}` : 'personal';
-  const maxRecordingSeconds = isSingleSpeechMode ? 180 : 60;
+  const maxRecordingSeconds = 30;
 
   useEffect(() => {
     const storedLocalUserId = getOrCreateLocalUserId();
@@ -500,7 +578,16 @@ function App() {
     if (isTraining || isBusy) return;
 
     const pool = topicPools[topicDirection] || topicPools.education;
-    setGeneratedTopics(shuffle(pool).slice(0, 4));
+    const recent = recentGeneratedTopics[topicDirection] || [];
+    const available = pool.filter((topic) => !recent.includes(topic));
+    const source = available.length >= 4 ? available : pool.filter((topic) => !generatedTopics.includes(topic));
+    const nextTopics = shuffle(source.length >= 4 ? source : pool).slice(0, 4);
+
+    setGeneratedTopics(nextTopics);
+    setRecentGeneratedTopics((current) => ({
+      ...current,
+      [topicDirection]: [...recent, ...nextTopics].slice(-8)
+    }));
   }
 
   function selectGeneratedTopic(topic) {
@@ -529,6 +616,22 @@ function App() {
     if (longOutputModes.includes(value)) {
       setLongOutputPromptMode(value);
     }
+  }
+
+  function goToDefensePrepStep() {
+    if (isTraining || isBusy) return;
+    setSetupStep('defensePrep');
+    setError('');
+  }
+
+  function goBackFromSetupStep() {
+    if (isTraining || isBusy) return;
+    setError('');
+    if (setupStep === 'defensePrep') {
+      setSetupStep('rounds');
+      return;
+    }
+    goToModeStep();
   }
 
   function goToModeStep() {
@@ -566,6 +669,10 @@ function App() {
 
     if (!config.trainingMode) return '请先选择训练模式。';
 
+    if (config.trainingMode === 'defense' && !defensePrep.trim()) {
+      return '请先填写己方分论点和论据，AI 才能根据你的立论进行质询。';
+    }
+
     return '';
   }
 
@@ -596,6 +703,7 @@ function App() {
     try {
       const data = await postJson('/api/debate/start', {
         ...config,
+        defensePrep: defensePrep.trim(),
         history: []
       });
       const content = requireContent(data);
@@ -642,6 +750,7 @@ function App() {
     try {
       const data = await postJson('/api/debate/respond', {
         ...config,
+        defensePrep: defensePrep.trim(),
         history: nextHistory,
         answer: trimmedAnswer
       });
@@ -707,6 +816,8 @@ function App() {
     stopRecordingResources();
     setIsTraining(false);
     setGeneratedTopics([]);
+    setRecentGeneratedTopics({});
+    setDefensePrep('');
     setSetupStep('topic');
     setLongOutputPromptMode('');
   }
@@ -1103,7 +1214,7 @@ function App() {
               <p className="eyebrow">{getOptionLabel(trainingModes, longOutputPromptMode)}</p>
               <h2>准备完整输出</h2>
               <p className="team-privacy-note">
-                该环节须要一个较长时间的完整输出，请您事先做好论点等的准备。
+                该环节须要一个较长时间的完整输出，请您事先做好论点等的准备。受录音技术限制，单次录音尽量不要超过30秒。例如，一篇三分钟的一辩稿请录六次音来完成输入。
               </p>
             </div>
             <div className="modal-actions single">
@@ -1191,7 +1302,7 @@ function App() {
       </section>
       )}
 
-      {!hasSessionContent && (setupStep === 'rounds' || setupStep === 'ready') && (
+      {!hasSessionContent && (setupStep === 'rounds' || setupStep === 'defensePrep' || setupStep === 'ready') && (
         <section className="match-strip" aria-label="对阵信息">
           <div className="side-card user-side">
             <span>你方</span>
@@ -1210,13 +1321,13 @@ function App() {
         <aside className="panel setup-panel">
           <div className="panel-title">
             <p className="eyebrow">赛前设置</p>
-            <h2>{setupStep === 'topic' ? '选择辩题与立场' : setupStep === 'rounds' ? '选择训练轮数' : '确认训练设置'}</h2>
+            <h2>{getSetupTitle(setupStep)}</h2>
           </div>
 
           <div className="setup-progress" aria-label="赛前设置进度">
             <span className={setupStep === 'topic' ? 'active' : 'done'}>1 辩题</span>
             <span className={setupStep === 'mode' ? 'active' : setupStep === 'topic' ? '' : 'done'}>2 模式</span>
-            <span className={setupStep === 'rounds' || setupStep === 'ready' ? 'active' : ''}>3 开赛</span>
+            <span className={setupStep === 'rounds' || setupStep === 'defensePrep' || setupStep === 'ready' ? 'active' : ''}>3 开赛</span>
           </div>
 
           {setupStep === 'topic' ? (
@@ -1344,11 +1455,52 @@ function App() {
                 </>
               )}
 
+              {setupStep === 'defensePrep' && (
+                <div className="defense-prep-card">
+                  <div className="prep-context-grid" aria-label="防守训练上下文">
+                    <div>
+                      <span>你方立场</span>
+                      <strong>{selectedSideLabel}</strong>
+                    </div>
+                    <div>
+                      <span>AI 质询方</span>
+                      <strong>{opponentSideLabel}</strong>
+                    </div>
+                    <div>
+                      <span>训练轮数</span>
+                      <strong>{config.rounds}轮</strong>
+                    </div>
+                  </div>
+                  <label className="field">
+                    <span>己方分论点与论据</span>
+                    <textarea
+                      value={defensePrep}
+                      disabled={isBusy}
+                      onChange={(event) => {
+                        setDefensePrep(event.target.value);
+                        if (error) setError('');
+                      }}
+                      placeholder={'请写下你方准备防守的几个分论点和论据。例如：\n1. 手机可以作为学习工具：查资料、看教学视频、记录作业。\n论据：部分学校已在课堂中使用平板或学习终端辅助教学。\n\n2. 手机能提高安全联络效率：突发情况能及时联系家长或老师。\n论据：校园突发事件中，及时联络能降低沟通成本。'}
+                      rows={8}
+                    />
+                  </label>
+                  <p className="mode-note">开始后，AI 会站在对立面，根据你填写的分论点和论据进行质询；你只需要防守，不要反问。</p>
+                </div>
+              )}
+
               <div className="button-stack">
-                <button className="primary-button" onClick={startTraining} disabled={isBusy}>
-                  {isLoading && !isTraining ? '生成中...' : '开始训练'}
+                <button
+                  className="primary-button"
+                  onClick={setupStep === 'rounds' && config.trainingMode === 'defense' ? goToDefensePrepStep : startTraining}
+                  disabled={isBusy}
+                >
+                  {setupStep === 'rounds' && config.trainingMode === 'defense'
+                    ? '下一步：填写己方观点'
+                    : isLoading && !isTraining
+                      ? '生成中...'
+                      : '开始训练'}
                 </button>
-                <button className="ghost-button" onClick={goToModeStep} disabled={isBusy}>
+                <button className="ghost-button" onClick={goBackFromSetupStep} disabled={isBusy}>
                   上一步
                 </button>
               </div>
@@ -1427,7 +1579,7 @@ function App() {
                       onClick={isRecording ? stopAudioRecording : startAudioRecording}
                       disabled={isBusy}
                     >
-                      {isRecording ? `停止并识别 ${formatDuration(recordingDuration)}` : '录音回答'}
+                      {isRecording ? `停止并识别 ${formatDuration(recordingDuration)}` : `录音回答（${recordingLimitHint}）`}
                     </button>
                     <button
                       type="button"
@@ -1827,10 +1979,18 @@ function getOpponentSideValue(userSide) {
 
 function getRoundPromptLabel(trainingMode) {
   if (trainingMode === 'attack') return '对立方一辩关键点';
+  if (trainingMode === 'defense') return '本轮质询';
   if (trainingMode === 'constructive') return '对立方立论摘要';
   if (trainingMode === 'summary') return '场上已有交锋点';
   if (trainingMode === 'closing') return '对立方结辩素材';
   return '本轮追问';
+}
+
+function getSetupTitle(setupStep) {
+  if (setupStep === 'topic') return '选择辩题与立场';
+  if (setupStep === 'rounds') return '选择训练轮数';
+  if (setupStep === 'defensePrep') return '填写防守立论要点';
+  return '确认训练设置';
 }
 
 function getHeroSubtitle(trainingMode) {
@@ -1848,6 +2008,10 @@ function getHeroSubtitle(trainingMode) {
 
   if (trainingMode === 'closing') {
     return '围绕关键战场完成三分钟以内结辩，系统将在发言后给出复盘评分。';
+  }
+
+  if (trainingMode === 'defense') {
+    return '先输入己方分论点和论据，AI 将围绕你的立论进行质询，你只做防守回应。';
   }
 
   return '输入辩题，选择立场与难度，让 AI 站在你的对立面进行训练。';
