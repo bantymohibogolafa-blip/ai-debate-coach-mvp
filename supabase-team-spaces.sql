@@ -98,7 +98,8 @@ create table if not exists public.training_records (
 alter table public.training_records
   add column if not exists space_type text,
   add column if not exists training_mode text not null default 'free_debate',
-  add column if not exists battlefield text;
+  add column if not exists battlefield text,
+  add column if not exists task_id uuid;
 
 alter table public.training_records
   alter column team_code drop not null;
@@ -136,6 +137,9 @@ create index if not exists training_records_space_team_created_idx
 create index if not exists training_records_team_member_created_idx
   on public.training_records (space_type, team_code, local_user_id, created_at desc);
 
+create index if not exists idx_training_records_task_id
+  on public.training_records (task_id);
+
 create index if not exists team_members_team_idx
   on public.team_members (team_code);
 
@@ -163,6 +167,77 @@ where id in (
 create unique index if not exists team_members_one_active_owner_idx
   on public.team_members (team_code)
   where role = 'owner' and status = 'active';
+
+create table if not exists public.team_tasks (
+  id uuid primary key default gen_random_uuid(),
+  team_code text not null references public.teams(team_code) on delete cascade,
+  title text not null,
+  topic text not null,
+  user_side text,
+  mode text,
+  difficulty text,
+  style_id text,
+  required_count integer not null default 1,
+  deadline timestamptz,
+  description text,
+  created_by text not null,
+  status text not null default 'active',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.team_tasks
+  add column if not exists team_code text,
+  add column if not exists title text,
+  add column if not exists topic text,
+  add column if not exists user_side text,
+  add column if not exists mode text,
+  add column if not exists difficulty text,
+  add column if not exists style_id text,
+  add column if not exists required_count integer default 1,
+  add column if not exists deadline timestamptz,
+  add column if not exists description text,
+  add column if not exists created_by text,
+  add column if not exists status text default 'active',
+  add column if not exists created_at timestamptz default now(),
+  add column if not exists updated_at timestamptz default now();
+
+update public.team_tasks
+set
+  required_count = coalesce(required_count, 1),
+  status = coalesce(nullif(status, ''), 'active'),
+  created_at = coalesce(created_at, now()),
+  updated_at = coalesce(updated_at, created_at, now());
+
+alter table public.team_tasks
+  alter column team_code set not null,
+  alter column title set not null,
+  alter column topic set not null,
+  alter column required_count set not null,
+  alter column created_by set not null,
+  alter column status set not null,
+  alter column created_at set not null,
+  alter column updated_at set not null;
+
+do $$
+begin
+  alter table public.team_tasks
+    add constraint team_tasks_status_check check (status in ('active', 'closed'));
+exception
+  when duplicate_object then null;
+end $$;
+
+create index if not exists team_tasks_team_status_created_idx
+  on public.team_tasks (team_code, status, created_at desc);
+
+do $$
+begin
+  alter table public.training_records
+    add constraint training_records_task_id_fkey foreign key (task_id)
+    references public.team_tasks(id) on delete set null;
+exception
+  when duplicate_object then null;
+end $$;
 
 create or replace function public.transfer_team_owner(
   p_team_code text,

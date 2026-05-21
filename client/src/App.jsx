@@ -204,6 +204,18 @@ const initialConfig = {
   rounds: 3
 };
 
+const defaultTaskForm = {
+  title: '',
+  topic: '',
+  userSide: 'affirmative',
+  mode: 'free_debate',
+  difficulty: 'novice',
+  styleId: 'none',
+  requiredCount: 1,
+  deadline: '',
+  description: ''
+};
+
 const teamCodeStorageKey = 'ai-debate-coach-team-code';
 const localUserIdStorageKey = 'ai-debate-coach-local-user-id';
 const appModeStorageKey = 'ai-debate-coach-app-mode';
@@ -244,6 +256,19 @@ function App() {
   const [trainingRecords, setTrainingRecords] = useState([]);
   const [teamRecords, setTeamRecords] = useState([]);
   const [teamStats, setTeamStats] = useState(null);
+  const [teamTasks, setTeamTasks] = useState([]);
+  const [teamTasksError, setTeamTasksError] = useState('');
+  const [isTeamTasksLoading, setIsTeamTasksLoading] = useState(false);
+  const [activeTeamPanelTab, setActiveTeamPanelTab] = useState('overview');
+  const [isTaskCreateOpen, setIsTaskCreateOpen] = useState(false);
+  const [taskForm, setTaskForm] = useState(defaultTaskForm);
+  const [taskActionError, setTaskActionError] = useState('');
+  const [taskActionStatus, setTaskActionStatus] = useState('');
+  const [isTaskActionLoading, setIsTaskActionLoading] = useState(false);
+  const [selectedTaskDetail, setSelectedTaskDetail] = useState(null);
+  const [isTaskDetailLoading, setIsTaskDetailLoading] = useState(false);
+  const [taskDetailError, setTaskDetailError] = useState('');
+  const [activeTaskSession, setActiveTaskSession] = useState(null);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isTeamDataLoading, setIsTeamDataLoading] = useState(false);
@@ -341,7 +366,12 @@ function App() {
       setActiveTab('training');
       setSelectedRecord(null);
     }
-  }, [currentSpace.type, activeTab]);
+    if (currentSpace.type === 'personal') {
+      setActiveTaskSession(null);
+    } else if (activeTaskSession?.teamCode && activeTaskSession.teamCode !== currentSpace.teamCode) {
+      setActiveTaskSession(null);
+    }
+  }, [currentSpace.type, currentSpace.teamCode, activeTab, activeTaskSession?.teamCode]);
 
   useEffect(() => {
     return () => {
@@ -644,7 +674,8 @@ function App() {
   async function loadTeamDashboard(teamCode, userId) {
     await Promise.all([
       loadMyTrainingRecords({ spaceType: 'team', teamCode, userId }),
-      loadTeamData(teamCode, userId)
+      loadTeamData(teamCode, userId),
+      loadTeamTasks(teamCode, userId)
     ]);
   }
 
@@ -685,6 +716,140 @@ function App() {
     }
   }
 
+  async function loadTeamTasks(teamCode, userId = localUserId) {
+    if (!teamCode || !userId) return;
+    setIsTeamTasksLoading(true);
+    setTeamTasksError('');
+
+    try {
+      const data = await getJson(`/api/team/tasks?teamCode=${encodeURIComponent(teamCode)}&localUserId=${encodeURIComponent(userId)}`);
+      setTeamTasks(Array.isArray(data.tasks) ? data.tasks : []);
+    } catch (requestError) {
+      setTeamTasksError(getFriendlyError(requestError));
+    } finally {
+      setIsTeamTasksLoading(false);
+    }
+  }
+
+  async function createTeamTask(event) {
+    event.preventDefault();
+    if (!currentTeam || isTaskActionLoading) return;
+
+    const title = taskForm.title.trim();
+    const topic = taskForm.topic.trim();
+    if (!title || !topic) {
+      setTaskActionError('请填写任务名称和辩题。');
+      return;
+    }
+
+    setIsTaskActionLoading(true);
+    setTaskActionError('');
+    setTaskActionStatus('');
+
+    try {
+      await postJson('/api/team/tasks/create', {
+        teamCode: currentTeam.teamCode,
+        localUserId,
+        title,
+        topic,
+        userSide: taskForm.userSide,
+        mode: taskForm.mode,
+        difficulty: taskForm.difficulty,
+        styleId: taskForm.styleId,
+        requiredCount: Number(taskForm.requiredCount) || 1,
+        deadline: taskForm.deadline ? new Date(taskForm.deadline).toISOString() : '',
+        description: taskForm.description.trim()
+      });
+      setTaskActionStatus('任务已发布。');
+      setTaskForm(defaultTaskForm);
+      setIsTaskCreateOpen(false);
+      await loadTeamTasks(currentTeam.teamCode);
+    } catch (requestError) {
+      setTaskActionError(getFriendlyError(requestError));
+    } finally {
+      setIsTaskActionLoading(false);
+    }
+  }
+
+  async function openTaskDetail(task) {
+    if (!currentTeam || !task?.id) return;
+    setSelectedTaskDetail({ task, stats: null, completedCount: task.completedCount || 0, memberProgress: [] });
+    setIsTaskDetailLoading(true);
+    setTaskDetailError('');
+
+    try {
+      const [detailData, statsData] = await Promise.all([
+        getJson(`/api/team/tasks/detail?taskId=${encodeURIComponent(task.id)}&teamCode=${encodeURIComponent(currentTeam.teamCode)}&localUserId=${encodeURIComponent(localUserId)}`),
+        getJson(`/api/team/tasks/stats?taskId=${encodeURIComponent(task.id)}&teamCode=${encodeURIComponent(currentTeam.teamCode)}&localUserId=${encodeURIComponent(localUserId)}`)
+      ]);
+      setSelectedTaskDetail({
+        task: detailData.task || task,
+        completedCount: detailData.completedCount || 0,
+        memberProgress: Array.isArray(detailData.memberProgress) ? detailData.memberProgress : [],
+        stats: statsData
+      });
+    } catch (requestError) {
+      setTaskDetailError(getFriendlyError(requestError));
+    } finally {
+      setIsTaskDetailLoading(false);
+    }
+  }
+
+  async function closeTeamTask(task) {
+    if (!currentTeam || !task?.id || isTaskActionLoading) return;
+    const confirmed = window.confirm(`确认关闭任务「${task.title}」吗？关闭后成员将无法继续通过该任务入口提交训练记录，但历史记录会保留。`);
+    if (!confirmed) return;
+
+    setIsTaskActionLoading(true);
+    setTaskActionError('');
+    setTaskActionStatus('');
+
+    try {
+      await postJson('/api/team/tasks/close', {
+        taskId: task.id,
+        teamCode: currentTeam.teamCode,
+        localUserId
+      });
+      setTaskActionStatus('任务已关闭。');
+      setSelectedTaskDetail(null);
+      await loadTeamTasks(currentTeam.teamCode);
+    } catch (requestError) {
+      setTaskActionError(getFriendlyError(requestError));
+    } finally {
+      setIsTaskActionLoading(false);
+    }
+  }
+
+  function startTaskTraining(task) {
+    if (!task || isBusy || isRecording) return;
+    const mode = task.mode || 'free_debate';
+    const selectedMode = trainingModes.find((item) => item.value === mode) || trainingModes[2];
+    const taskConfig = {
+      topic: task.topic || '',
+      userSide: task.userSide || 'affirmative',
+      difficulty: task.difficulty || 'novice',
+      celebrityDebater: task.styleId || 'none',
+      trainingMode: mode,
+      rounds: selectedMode.rounds || 3
+    };
+
+    setCurrentTrainingSpace({ type: 'team', teamCode: task.teamCode || currentTeam?.teamCode });
+    setConfig(taskConfig);
+    setHistory([]);
+    setAnswer('');
+    setReview('');
+    setError('');
+    setSelectedRecord(null);
+    setSaveStatus('');
+    setPolishResult(null);
+    setActiveTaskSession({ taskId: task.id, title: task.title, teamCode: task.teamCode || currentTeam?.teamCode });
+    setSetupStep(roundSelectionModes.includes(mode) ? 'rounds' : mode === 'defense' ? 'rounds' : 'ready');
+    setActiveTab('training');
+    if (longOutputModes.includes(mode)) {
+      setLongOutputPromptMode(mode);
+    }
+  }
+
   async function saveTrainingRecord(reviewContent) {
     setSaveStatus('正在保存本次训练记录...');
 
@@ -700,6 +865,7 @@ function App() {
         difficulty: config.difficulty,
         styleId: config.celebrityDebater,
         trainingMode: config.trainingMode,
+        taskId: activeTaskSession?.taskId || '',
         messages: history,
         review: reviewContent,
         score: extractScoreFromReview(reviewContent),
@@ -721,6 +887,7 @@ function App() {
       setSaveStatus('本次训练记录已保存。');
       if (currentSpace.type === 'team') {
         loadTeamData(currentSpace.teamCode);
+        loadTeamTasks(currentSpace.teamCode);
       }
     } catch (requestError) {
       setSaveStatus('复盘已生成，但记录同步失败，请稍后重试。');
@@ -978,6 +1145,7 @@ function App() {
     setDefensePrep('');
     setSetupStep('topic');
     setLongOutputPromptMode('');
+    setActiveTaskSession(null);
   }
 
   async function startAudioRecording() {
@@ -1501,6 +1669,129 @@ function App() {
         </div>
       )}
 
+      {isTaskCreateOpen && currentTeam && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel task-create-modal" role="dialog" aria-modal="true" aria-label="创建训练任务">
+            <div className="panel-title">
+              <p className="eyebrow">团队训练任务</p>
+              <h2>发布训练任务</h2>
+              <p className="team-privacy-note">
+                成员从任务入口完成训练后，系统会把训练记录归入该任务，并统计完成次数、分数和完成情况。
+              </p>
+            </div>
+
+            <form className="task-form" onSubmit={createTeamTask}>
+              <label className="field">
+                <span>任务名称</span>
+                <input
+                  value={taskForm.title}
+                  disabled={isTaskActionLoading}
+                  onChange={(event) => setTaskForm({ ...taskForm, title: event.target.value })}
+                  placeholder="例如：本周政策辩被质询训练"
+                  maxLength={80}
+                />
+              </label>
+
+              <label className="field">
+                <span>辩题</span>
+                <textarea
+                  value={taskForm.topic}
+                  disabled={isTaskActionLoading}
+                  onChange={(event) => setTaskForm({ ...taskForm, topic: event.target.value })}
+                  placeholder="请输入本次任务指定辩题"
+                  rows={3}
+                />
+              </label>
+
+              <div className="task-form-grid">
+                <OptionGroup
+                  label="用户立场"
+                  options={sides}
+                  value={taskForm.userSide}
+                  disabled={isTaskActionLoading}
+                  onChange={(value) => setTaskForm({ ...taskForm, userSide: value })}
+                />
+                <OptionGroup
+                  label="训练模式"
+                  options={trainingModes.map((mode) => ({ label: mode.label, value: mode.value }))}
+                  value={taskForm.mode}
+                  disabled={isTaskActionLoading}
+                  onChange={(value) => setTaskForm({ ...taskForm, mode: value })}
+                />
+                <OptionGroup
+                  label="难度"
+                  options={difficulties}
+                  value={taskForm.difficulty}
+                  disabled={isTaskActionLoading}
+                  onChange={(value) => setTaskForm({ ...taskForm, difficulty: value })}
+                />
+                <OptionGroup
+                  label="AI 风格"
+                  options={celebrityDebaters}
+                  value={taskForm.styleId}
+                  disabled={isTaskActionLoading}
+                  onChange={(value) => setTaskForm({ ...taskForm, styleId: value })}
+                />
+              </div>
+
+              <div className="task-form-row">
+                <label className="field">
+                  <span>要求完成次数</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={taskForm.requiredCount}
+                    disabled={isTaskActionLoading}
+                    onChange={(event) => setTaskForm({ ...taskForm, requiredCount: event.target.value })}
+                  />
+                </label>
+                <label className="field">
+                  <span>截止时间</span>
+                  <input
+                    type="datetime-local"
+                    value={taskForm.deadline}
+                    disabled={isTaskActionLoading}
+                    onChange={(event) => setTaskForm({ ...taskForm, deadline: event.target.value })}
+                  />
+                </label>
+              </div>
+
+              <label className="field">
+                <span>任务说明</span>
+                <textarea
+                  value={taskForm.description}
+                  disabled={isTaskActionLoading}
+                  onChange={(event) => setTaskForm({ ...taskForm, description: event.target.value })}
+                  placeholder="例如：重点训练政策边界、执行成本和误伤问题。"
+                  rows={4}
+                  maxLength={500}
+                />
+              </label>
+
+              {taskActionError && <div className="error-box">{taskActionError}</div>}
+
+              <div className="modal-actions">
+                <button className="primary-button" type="submit" disabled={isTaskActionLoading}>
+                  {isTaskActionLoading ? '发布中...' : '发布任务'}
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  disabled={isTaskActionLoading}
+                  onClick={() => {
+                    setIsTaskCreateOpen(false);
+                    setTaskActionError('');
+                  }}
+                >
+                  取消
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
       {longOutputPromptMode && (
         <div className="modal-backdrop" role="presentation">
           <section className="modal-panel" role="dialog" aria-modal="true" aria-label="完整输出提示">
@@ -1594,6 +1885,14 @@ function App() {
           </div>
         </div>
       </section>
+      )}
+
+      {activeTaskSession && (
+        <section className="task-session-banner">
+          <span>团队任务</span>
+          <strong>{activeTaskSession.title}</strong>
+          <small>本次复盘保存后会自动计入该任务完成次数。</small>
+        </section>
       )}
 
       {!hasSessionContent && (setupStep === 'rounds' || setupStep === 'defensePrep' || setupStep === 'ready') && (
@@ -2086,11 +2385,41 @@ function App() {
           records={teamRecords}
           stats={teamStats}
           team={currentTeam}
+          tasks={teamTasks}
+          activePanelTab={activeTeamPanelTab}
+          onPanelTabChange={setActiveTeamPanelTab}
+          isTasksLoading={isTeamTasksLoading}
+          tasksError={teamTasksError}
+          taskActionError={taskActionError}
+          taskActionStatus={taskActionStatus}
+          selectedTaskDetail={selectedTaskDetail}
+          isTaskDetailLoading={isTaskDetailLoading}
+          taskDetailError={taskDetailError}
           selectedRecord={selectedRecord}
           isLoading={isTeamDataLoading}
           error={teamDataError}
           onSelectRecord={setSelectedRecord}
           onClearRecord={() => setSelectedRecord(null)}
+          onOpenTaskCreate={() => {
+            setTaskForm({
+              ...defaultTaskForm,
+              topic: config.topic || '',
+              userSide: config.userSide || 'affirmative',
+              mode: config.trainingMode || 'free_debate',
+              difficulty: config.difficulty || 'novice',
+              styleId: config.celebrityDebater || 'none'
+            });
+            setTaskActionError('');
+            setTaskActionStatus('');
+            setIsTaskCreateOpen(true);
+          }}
+          onStartTask={startTaskTraining}
+          onOpenTaskDetail={openTaskDetail}
+          onCloseTask={closeTeamTask}
+          onClearTaskDetail={() => {
+            setSelectedTaskDetail(null);
+            setTaskDetailError('');
+          }}
         />
       )}
     </main>
@@ -2101,15 +2430,31 @@ function TeamDataPanel({
   records,
   stats,
   team,
+  tasks,
+  activePanelTab,
+  onPanelTabChange,
+  isTasksLoading,
+  tasksError,
+  taskActionError,
+  taskActionStatus,
+  selectedTaskDetail,
+  isTaskDetailLoading,
+  taskDetailError,
   selectedRecord,
   isLoading,
   error,
   onSelectRecord,
-  onClearRecord
+  onClearRecord,
+  onOpenTaskCreate,
+  onStartTask,
+  onOpenTaskDetail,
+  onCloseTask,
+  onClearTaskDetail
 }) {
   const memberStats = Array.isArray(stats?.memberStats) ? stats.memberStats : [];
   const countRanking = [...memberStats].sort((a, b) => b.count - a.count);
   const scoreRanking = [...memberStats].sort((a, b) => (b.averageScore || 0) - (a.averageScore || 0));
+  const isOwner = team?.role === 'owner' || team?.role === 'captain';
 
   return (
     <section className="panel team-data-panel">
@@ -2118,11 +2463,33 @@ function TeamDataPanel({
           <p className="eyebrow">团队复盘</p>
           <h2>{team?.teamName || team?.teamCode || '团队数据'}</h2>
         </div>
-        {isLoading && <span className="badge">加载中</span>}
+        {(isLoading || isTasksLoading) && <span className="badge">加载中</span>}
       </div>
 
       {error && <div className="error-box">{error}</div>}
+      {tasksError && <div className="error-box">{tasksError}</div>}
+      {taskActionError && <div className="error-box">{taskActionError}</div>}
+      {taskActionStatus && <div className="history-status">{taskActionStatus}</div>}
 
+      <div className="team-panel-tabs">
+        <button
+          type="button"
+          className={activePanelTab === 'overview' ? 'active' : ''}
+          onClick={() => onPanelTabChange('overview')}
+        >
+          数据概览
+        </button>
+        <button
+          type="button"
+          className={activePanelTab === 'tasks' ? 'active' : ''}
+          onClick={() => onPanelTabChange('tasks')}
+        >
+          训练任务
+        </button>
+      </div>
+
+      {activePanelTab === 'overview' ? (
+      <>
       <div className="team-stat-grid">
         <div className="stat-card">
           <span>团队训练总次数</span>
@@ -2172,7 +2539,180 @@ function TeamDataPanel({
       {selectedRecord && (
         <RecordDetail record={selectedRecord} onClose={onClearRecord} />
       )}
+      </>
+      ) : (
+        <TeamTasksPanel
+          tasks={tasks}
+          isOwner={isOwner}
+          selectedTaskDetail={selectedTaskDetail}
+          isTaskDetailLoading={isTaskDetailLoading}
+          taskDetailError={taskDetailError}
+          onOpenTaskCreate={onOpenTaskCreate}
+          onStartTask={onStartTask}
+          onOpenTaskDetail={onOpenTaskDetail}
+          onCloseTask={onCloseTask}
+          onClearTaskDetail={onClearTaskDetail}
+        />
+      )}
     </section>
+  );
+}
+
+function TeamTasksPanel({
+  tasks = [],
+  isOwner,
+  selectedTaskDetail,
+  isTaskDetailLoading,
+  taskDetailError,
+  onOpenTaskCreate,
+  onStartTask,
+  onOpenTaskDetail,
+  onCloseTask,
+  onClearTaskDetail
+}) {
+  return (
+    <div className="team-tasks-panel">
+      <div className="task-panel-header">
+        <div>
+          <h3>训练任务</h3>
+          <p>从任务入口完成训练后，记录会自动计入对应任务。</p>
+        </div>
+        {isOwner && (
+          <button type="button" className="primary-button" onClick={onOpenTaskCreate}>
+            创建任务
+          </button>
+        )}
+      </div>
+
+      {tasks.length === 0 ? (
+        <div className="history-empty">暂无训练任务</div>
+      ) : (
+        <div className="task-list">
+          {tasks.map((task) => (
+            <article className="task-card" key={task.id}>
+              <div className="task-card-main">
+                <span>{formatTaskDeadline(task.deadline)}</span>
+                <h3>{task.title}</h3>
+                <p>{task.topic}</p>
+              </div>
+              <div className="task-meta-grid">
+                <span>模式：{getOptionLabel(trainingModes, task.mode) || '自由辩论'}</span>
+                <span>难度：{getOptionLabel(difficulties, task.difficulty) || '--'}</span>
+                <span>风格：{getOptionLabel(celebrityDebaters, task.styleId) || '普通 AI'}</span>
+                <span>我的进度：{task.completedCount || 0} / {task.requiredCount || 1}</span>
+              </div>
+              {task.description && <p className="task-description">{task.description}</p>}
+              <div className="task-actions">
+                <button type="button" onClick={() => onStartTask(task)}>
+                  开始训练
+                </button>
+                <button type="button" className="ghost-button" onClick={() => onOpenTaskDetail(task)}>
+                  查看详情
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {selectedTaskDetail && (
+        <TaskDetail
+          detail={selectedTaskDetail}
+          isLoading={isTaskDetailLoading}
+          error={taskDetailError}
+          isOwner={isOwner}
+          onClose={onClearTaskDetail}
+          onStartTask={onStartTask}
+          onCloseTask={onCloseTask}
+        />
+      )}
+    </div>
+  );
+}
+
+function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, onCloseTask }) {
+  const task = detail.task || {};
+  const stats = detail.stats || {};
+  const memberProgress = Array.isArray(stats.memberProgress)
+    ? stats.memberProgress
+    : Array.isArray(detail.memberProgress)
+      ? detail.memberProgress
+      : [];
+  const recentRecords = Array.isArray(stats.recentRecords) ? stats.recentRecords : [];
+
+  return (
+    <div className="task-detail">
+      <div className="history-detail-header">
+        <div>
+          <span>{formatTaskDeadline(task.deadline)}</span>
+          <h3>{task.title}</h3>
+        </div>
+        <button type="button" onClick={onClose}>
+          收起
+        </button>
+      </div>
+
+      {isLoading && <div className="history-status">正在加载任务详情...</div>}
+      {error && <div className="error-box">{error}</div>}
+
+      <p className="task-detail-topic">{task.topic}</p>
+      <div className="history-meta">
+        <span>我的进度：{detail.completedCount || 0} / {task.requiredCount || 1}</span>
+        <span>团队完成率：{formatNullableNumber(stats.completionRate)}%</span>
+        <span>平均分：{formatNullableNumber(stats.averageScore)}</span>
+        <span>最高分：{formatNullableNumber(stats.highestScore)}</span>
+      </div>
+
+      <div className="task-actions">
+        <button type="button" onClick={() => onStartTask(task)}>
+          开始训练
+        </button>
+        {isOwner && task.status === 'active' && (
+          <button type="button" className="danger" onClick={() => onCloseTask(task)}>
+            关闭任务
+          </button>
+        )}
+      </div>
+
+      <div className="member-progress-wrap">
+        <h3>成员完成情况</h3>
+        {memberProgress.length === 0 ? (
+          <div className="history-empty">暂无成员进度</div>
+        ) : (
+          <div className="member-progress-table">
+            {memberProgress.map((member) => (
+              <article className="member-progress-row" key={member.localUserId}>
+                <strong>{member.nickname || '未命名成员'}</strong>
+                <span>{member.completedCount} / {member.requiredCount}</span>
+                <span>均分：{formatNullableNumber(member.averageScore)}</span>
+                <span>最高：{formatNullableNumber(member.highestScore)}</span>
+                <em>{member.status === 'completed' ? '已完成' : '未完成'}</em>
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="team-recent-section">
+        <h3>最近任务记录</h3>
+        {recentRecords.length === 0 ? (
+          <div className="history-empty">暂无任务记录</div>
+        ) : (
+          <div className="history-list">
+            {recentRecords.map((record) => (
+              <div className="history-item static" key={record.id || record.createdAt}>
+                <span>{formatRecordDate(record.createdAt)} · {record.nickname || '未命名成员'}</span>
+                <strong>{record.topic}</strong>
+                <small>
+                  {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'}
+                  {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
+                </small>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -2485,6 +3025,22 @@ function formatRecordDate(value) {
     hour: '2-digit',
     minute: '2-digit'
   });
+}
+
+function formatTaskDeadline(value) {
+  if (!value) return '未设置截止时间';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '截止时间未知';
+  }
+
+  return `截止：${date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })}`;
 }
 
 function shuffle(items) {

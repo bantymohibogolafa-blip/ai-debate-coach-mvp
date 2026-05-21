@@ -1304,6 +1304,57 @@ textarea:focus {
   margin-top: 0;
 }
 
+.team-panel-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.team-panel-tabs button {
+  min-height: 44px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  color: #476168;
+  background: #f7fafb;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.team-panel-tabs button.active {
+  color: #fff9ef;
+  border-color: #2d7f7a;
+  background: #2d7f7a;
+}
+
+.task-session-banner {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d8e3e8;
+  border-left: 5px solid #2d7f7a;
+  border-radius: 8px;
+  margin: 14px 0;
+  padding: 14px 16px;
+  background: #f2faf8;
+}
+
+.task-session-banner span {
+  color: #2d7f7a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.task-session-banner strong {
+  color: #13232b;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.task-session-banner small {
+  color: #687982;
+  font-weight: 800;
+}
+
 .team-list {
   display: grid;
   gap: 12px;
@@ -1538,6 +1589,179 @@ textarea:focus {
   color: #c8502d;
 }
 
+.task-create-modal {
+  max-width: 820px;
+}
+
+.task-form,
+.team-tasks-panel,
+.task-list,
+.task-detail {
+  display: grid;
+  gap: 14px;
+}
+
+.task-form-grid,
+.task-form-row {
+  display: grid;
+  gap: 12px;
+}
+
+.task-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.task-form-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.task-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.task-panel-header h3,
+.task-panel-header p {
+  margin: 0;
+}
+
+.task-panel-header h3 {
+  color: #13232b;
+  font-size: 20px;
+}
+
+.task-panel-header p {
+  margin-top: 4px;
+  color: #687982;
+  font-weight: 800;
+}
+
+.task-card,
+.task-detail {
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcfd;
+}
+
+.task-card-main {
+  display: grid;
+  gap: 6px;
+}
+
+.task-card-main span,
+.task-detail .history-detail-header span {
+  color: #687982;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.task-card-main h3 {
+  margin: 0;
+  color: #13232b;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.task-card-main p,
+.task-detail-topic,
+.task-description {
+  margin: 0;
+  color: #263942;
+  font-weight: 850;
+  line-height: 1.65;
+}
+
+.task-description {
+  color: #5e6e76;
+  font-size: 14px;
+}
+
+.task-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.task-meta-grid span {
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: #476168;
+  background: #edf6f5;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.task-actions button {
+  min-height: 44px;
+  border-radius: 8px;
+  padding: 0 14px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-weight: 900;
+}
+
+.task-actions .danger {
+  color: #9c2f1d;
+  background: #fff0eb;
+}
+
+.member-progress-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.member-progress-wrap h3 {
+  margin: 0;
+  color: #13232b;
+  font-size: 18px;
+}
+
+.member-progress-table {
+  display: grid;
+  gap: 8px;
+}
+
+.member-progress-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) repeat(4, minmax(80px, 1fr));
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #edf2f4;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+
+.member-progress-row strong {
+  color: #13232b;
+}
+
+.member-progress-row span,
+.member-progress-row em {
+  color: #5e6e76;
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.member-progress-row em {
+  color: #c8502d;
+}
+
+.history-item.static {
+  cursor: default;
+  text-align: left;
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -1679,6 +1903,9 @@ textarea:focus {
   .main-tabs,
   .mode-selector-panel,
   .prep-context-grid,
+  .task-form-grid,
+  .task-form-row,
+  .task-meta-grid,
   .team-stat-grid,
   .team-rank-grid {
     grid-template-columns: 1fr;
@@ -1703,6 +1930,7 @@ textarea:focus {
   .modal-actions,
   .team-list-actions,
   .member-actions,
+  .task-actions,
   .team-settings-row,
   .team-settings-row.password-row,
   .form-mode-switch {
@@ -1711,11 +1939,18 @@ textarea:focus {
   }
 
   .team-list-item,
-  .member-list-item {
+  .member-list-item,
+  .task-panel-header,
+  .member-progress-row {
     display: grid;
   }
 
   .member-actions button {
+    width: 100%;
+  }
+
+  .task-actions button,
+  .task-panel-header button {
     width: 100%;
   }
 

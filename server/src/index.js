@@ -30,6 +30,7 @@ const clientDistPath = path.resolve(__dirname, '../../client/dist');
 const trainingRecordsTable = process.env.SUPABASE_TRAINING_TABLE || 'training_records';
 const teamsTable = process.env.SUPABASE_TEAMS_TABLE || 'teams';
 const teamMembersTable = process.env.SUPABASE_TEAM_MEMBERS_TABLE || 'team_members';
+const teamTasksTable = process.env.SUPABASE_TEAM_TASKS_TABLE || 'team_tasks';
 const aliyunTokenCache = {
   token: '',
   expireTime: 0
@@ -224,6 +225,65 @@ app.post('/api/team/update-password', async (req, res, next) => {
     const payload = validateTeamUpdatePasswordPayload(req.body);
     await updateTeamPassword(payload);
     res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team/tasks/create', async (req, res, next) => {
+  try {
+    const payload = validateTeamTaskPayload(req.body);
+    const task = await createTeamTask(payload);
+    res.status(201).json({ task: mapTeamTaskFromDb(task) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/team/tasks', async (req, res, next) => {
+  try {
+    const { teamCode, localUserId } = validateTeamTaskQuery(req.query);
+    await requireActiveMembership(teamCode, localUserId);
+    const tasks = await fetchTeamTasksWithProgress(teamCode, localUserId);
+    res.json({ tasks });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/team/tasks/detail', async (req, res, next) => {
+  try {
+    const { taskId, teamCode, localUserId } = validateTeamTaskDetailQuery(req.query);
+    await requireActiveMembership(teamCode, localUserId);
+    const task = await requireTeamTask(taskId, teamCode);
+    const stats = await fetchTeamTaskStats(task, localUserId);
+    res.json({
+      task: mapTeamTaskFromDb(task),
+      completedCount: stats.currentUserCompletedCount,
+      memberProgress: stats.memberProgress
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/team/tasks/stats', async (req, res, next) => {
+  try {
+    const { taskId, teamCode, localUserId } = validateTeamTaskDetailQuery(req.query);
+    await requireActiveMembership(teamCode, localUserId);
+    const task = await requireTeamTask(taskId, teamCode);
+    const stats = await fetchTeamTaskStats(task, localUserId);
+    res.json(stats);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team/tasks/close', async (req, res, next) => {
+  try {
+    const payload = validateTeamTaskClosePayload(req.body);
+    const task = await closeTeamTask(payload);
+    res.json({ task: mapTeamTaskFromDb(task) });
   } catch (error) {
     next(error);
   }
@@ -429,6 +489,7 @@ async function validateTrainingRecordPayload(body) {
   const difficulty = normalizeDifficulty(normalizeText(body.difficulty));
   const styleId = normalizeCelebrityDebater(normalizeText(body.styleId || body.style_id || 'none'));
   const trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode));
+  const taskId = normalizeText(body.taskId || body.task_id);
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const review = normalizeText(body.review);
   const score = parseNullableScore(body.score);
@@ -450,6 +511,18 @@ async function validateTrainingRecordPayload(body) {
 
     const activeMember = await requireActiveMembership(normalizedTeamCode, localUserId);
     normalizedNickname = normalizeNickname(activeMember.nickname || nickname);
+
+    if (taskId) {
+      if (!isUuid(taskId)) {
+        throw badRequest('任务信息无效，请从任务入口重新开始训练。');
+      }
+      const task = await requireTeamTask(taskId, normalizedTeamCode);
+      if (task.status !== 'active') {
+        throw httpError(403, '该训练任务已关闭，不能继续提交任务记录。');
+      }
+    }
+  } else if (taskId) {
+    throw badRequest('个人模式记录不能绑定团队任务。');
   }
 
   if (!isValidNickname(normalizedNickname)) {
@@ -494,7 +567,7 @@ async function validateTrainingRecordPayload(body) {
     throw badRequest('训练记录缺少复盘报告。');
   }
 
-  return {
+  const record = {
     space_type: spaceType,
     team_code: normalizedTeamCode,
     local_user_id: localUserId,
@@ -517,6 +590,12 @@ async function validateTrainingRecordPayload(body) {
     battlefield,
     created_at: new Date().toISOString()
   };
+
+  if (taskId) {
+    record.task_id = taskId;
+  }
+
+  return record;
 }
 
 function validateTeamMemberPayload(body) {
@@ -658,6 +737,104 @@ function validateTeamUpdatePasswordPayload(body) {
   return { teamCode, localUserId, currentPassword, nextPassword };
 }
 
+function validateTeamTaskPayload(body) {
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const title = normalizeText(body.title);
+  const topic = normalizeText(body.topic);
+  const userSide = normalizeOptionalSide(body.userSide || body.user_side);
+  const mode = normalizeTrainingMode(normalizeText(body.mode || body.trainingMode || body.training_mode));
+  const difficulty = normalizeDifficulty(normalizeText(body.difficulty));
+  const styleId = normalizeCelebrityDebater(normalizeText(body.styleId || body.style_id || 'none'));
+  const requiredCount = clampNumber(Number(body.requiredCount || body.required_count || 1), 1, 20);
+  const deadline = normalizeOptionalDate(body.deadline);
+  const description = limitLength(normalizeText(body.description), 500);
+
+  if (!isValidTeamCode(teamCode)) {
+    throw badRequest('团队码无效，请重新选择团队。');
+  }
+
+  if (!isValidLocalUserId(localUserId)) {
+    throw badRequest('用户身份无效，请刷新页面后重试。');
+  }
+
+  if (!title || title.length > 80 || /[<>]/.test(title)) {
+    throw badRequest('请输入 1-80 个字符的任务名称。');
+  }
+
+  if (!topic || topic.length > 300 || /[<>]/.test(topic)) {
+    throw badRequest('请输入 1-300 个字符的辩题。');
+  }
+
+  if (userSide && !isValidSide(userSide)) {
+    throw badRequest('请选择有效的用户立场。');
+  }
+
+  if (!isValidTrainingMode(mode)) {
+    throw badRequest('请选择有效的训练模式。');
+  }
+
+  if (!isValidDifficulty(difficulty)) {
+    throw badRequest('请选择有效难度。');
+  }
+
+  if (!isValidCelebrityDebater(styleId)) {
+    throw badRequest('请选择有效 AI 风格。');
+  }
+
+  return {
+    teamCode,
+    localUserId,
+    title,
+    topic,
+    userSide: userSide || null,
+    mode,
+    difficulty,
+    styleId,
+    requiredCount,
+    deadline,
+    description
+  };
+}
+
+function validateTeamTaskQuery(query) {
+  const teamCode = normalizeTeamCode(query.teamCode || query.team_code);
+  const localUserId = normalizeText(query.localUserId || query.local_user_id);
+
+  if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId)) {
+    throw badRequest('团队或用户身份无效，请刷新后重试。');
+  }
+
+  return { teamCode, localUserId };
+}
+
+function validateTeamTaskDetailQuery(query) {
+  const taskId = normalizeText(query.taskId || query.task_id);
+  const base = validateTeamTaskQuery(query);
+
+  if (!isUuid(taskId)) {
+    throw badRequest('任务信息无效，请刷新任务列表后重试。');
+  }
+
+  return { ...base, taskId };
+}
+
+function validateTeamTaskClosePayload(body) {
+  const taskId = normalizeText(body.taskId || body.task_id);
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+
+  if (!isUuid(taskId)) {
+    throw badRequest('任务信息无效，请刷新任务列表后重试。');
+  }
+
+  if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId)) {
+    throw badRequest('团队或用户身份无效，请刷新后重试。');
+  }
+
+  return { taskId, teamCode, localUserId };
+}
+
 function normalizeText(value) {
   return String(value || '').trim();
 }
@@ -672,6 +849,22 @@ function normalizeNickname(value) {
 
 function normalizeTeamName(value) {
   return normalizeText(value).replace(/\s+/g, ' ');
+}
+
+function normalizeOptionalSide(value) {
+  const text = normalizeText(value);
+  if (!text) return '';
+  return normalizeSide(text);
+}
+
+function normalizeOptionalDate(value) {
+  const text = normalizeText(value);
+  if (!text) return null;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    throw badRequest('截止时间格式无效。');
+  }
+  return date.toISOString();
 }
 
 function badRequest(message) {
@@ -723,7 +916,7 @@ function getPublicErrorMessage(error) {
 
   if (error.code === 'SUPABASE_REQUEST_FAILED') {
     const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
-    if (/space_type|status|joined_at|join_password|schema cache|column/i.test(detailText)) {
+    if (/space_type|status|joined_at|join_password|team_tasks|task_id|schema cache|column/i.test(detailText)) {
       return '数据库表结构尚未更新，请先在 Supabase 执行 supabase-team-spaces.sql。';
     }
     return '历史记录保存或读取失败，请稍后重试。';
@@ -748,6 +941,10 @@ function limitLength(text, maxLength) {
 
 function isValidLegacyUserId(userId) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId);
+}
+
+function isUuid(value) {
+  return isValidLegacyUserId(value);
 }
 
 function isValidLocalUserId(localUserId) {
@@ -976,11 +1173,15 @@ async function fetchTeamMembers(teamCode) {
 async function requireTeamOwner(teamCode, localUserId) {
   const member = await requireActiveMembership(teamCode, localUserId);
 
-  if ((member.role || 'member') !== 'owner') {
+  if (!isTeamOwnerRole(member.role)) {
     throw httpError(403, '只有队长可以管理团队成员。');
   }
 
   return member;
+}
+
+function isTeamOwnerRole(role) {
+  return ['owner', 'captain'].includes(role || 'member');
 }
 
 async function removeTeamMember({ teamCode, localUserId, targetLocalUserId }) {
@@ -1115,6 +1316,149 @@ async function updateTeamPassword({ teamCode, localUserId, currentPassword, next
       prefer: 'return=representation'
     }
   );
+}
+
+async function createTeamTask(payload) {
+  await requireTeamOwner(payload.teamCode, payload.localUserId);
+  const createdTasks = await supabaseRequest(teamTasksTable, {
+    method: 'POST',
+    body: {
+      team_code: payload.teamCode,
+      title: payload.title,
+      topic: payload.topic,
+      user_side: payload.userSide,
+      mode: payload.mode,
+      difficulty: payload.difficulty,
+      style_id: payload.styleId,
+      required_count: payload.requiredCount,
+      deadline: payload.deadline,
+      description: payload.description,
+      created_by: payload.localUserId,
+      status: 'active',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    },
+    prefer: 'return=representation'
+  });
+
+  return createdTasks[0];
+}
+
+async function fetchTeamTasksWithProgress(teamCode, localUserId) {
+  const tasks = await supabaseRequest(
+    `${teamTasksTable}?${new URLSearchParams({
+      select: 'id,team_code,title,topic,user_side,mode,difficulty,style_id,required_count,deadline,description,created_by,status,created_at,updated_at',
+      team_code: `eq.${teamCode}`,
+      status: 'eq.active',
+      order: 'created_at.desc'
+    }).toString()}`
+  );
+
+  return Promise.all(tasks.map(async (task) => {
+    const completedCount = await fetchTaskCompletedCount(task.id, teamCode, localUserId);
+    return {
+      ...mapTeamTaskFromDb(task),
+      completedCount,
+      requiredCount: task.required_count || 1
+    };
+  }));
+}
+
+async function requireTeamTask(taskId, teamCode) {
+  const task = await getSingleByQuery(
+    teamTasksTable,
+    new URLSearchParams({
+      select: 'id,team_code,title,topic,user_side,mode,difficulty,style_id,required_count,deadline,description,created_by,status,created_at,updated_at',
+      id: `eq.${taskId}`,
+      team_code: `eq.${teamCode}`,
+      limit: '1'
+    })
+  );
+
+  if (!task) {
+    throw httpError(404, '任务不存在或不属于当前团队。');
+  }
+
+  return task;
+}
+
+async function closeTeamTask({ taskId, teamCode, localUserId }) {
+  await requireTeamOwner(teamCode, localUserId);
+  await requireTeamTask(taskId, teamCode);
+  const updatedTasks = await supabaseRequest(
+    `${teamTasksTable}?id=eq.${encodeURIComponent(taskId)}&team_code=eq.${encodeURIComponent(teamCode)}`,
+    {
+      method: 'PATCH',
+      body: {
+        status: 'closed',
+        updated_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    }
+  );
+
+  return updatedTasks[0];
+}
+
+async function fetchTaskCompletedCount(taskId, teamCode, localUserId) {
+  const records = await fetchTaskRecords(taskId, teamCode, {
+    localUserId,
+    limit: 1000
+  });
+  return records.length;
+}
+
+async function fetchTeamTaskStats(task, currentLocalUserId) {
+  const [members, records] = await Promise.all([
+    fetchTeamMembers(task.team_code),
+    fetchTaskRecords(task.id, task.team_code, { limit: 1000 })
+  ]);
+  const requiredCount = task.required_count || 1;
+  const recordsByMember = new Map();
+
+  records.forEach((record) => {
+    const key = record.local_user_id;
+    if (!key) return;
+    const current = recordsByMember.get(key) || [];
+    current.push(record);
+    recordsByMember.set(key, current);
+  });
+
+  const memberProgress = members.map((member) => {
+    const memberRecords = recordsByMember.get(member.local_user_id) || [];
+    const scoredRecords = memberRecords.filter((record) => Number.isFinite(Number(record.score)));
+    const completedCount = memberRecords.length;
+    return {
+      nickname: member.nickname || '未命名成员',
+      localUserId: member.local_user_id,
+      completedCount,
+      requiredCount,
+      averageScore: scoredRecords.length
+        ? roundToOne(scoredRecords.reduce((sum, record) => sum + Number(record.score), 0) / scoredRecords.length)
+        : null,
+      highestScore: scoredRecords.length
+        ? Math.max(...scoredRecords.map((record) => Number(record.score)))
+        : null,
+      status: completedCount >= requiredCount ? 'completed' : 'incomplete'
+    };
+  });
+  const scoredRecords = records.filter((record) => Number.isFinite(Number(record.score)));
+  const completedMembers = memberProgress.filter((member) => member.status === 'completed').length;
+
+  return {
+    totalMembers: members.length,
+    completedMembers,
+    completionRate: members.length ? roundToOne((completedMembers / members.length) * 100) : 0,
+    averageScore: scoredRecords.length
+      ? roundToOne(scoredRecords.reduce((sum, record) => sum + Number(record.score), 0) / scoredRecords.length)
+      : null,
+    highestScore: scoredRecords.length
+      ? Math.max(...scoredRecords.map((record) => Number(record.score)))
+      : null,
+    currentUserCompletedCount: (recordsByMember.get(currentLocalUserId) || []).length,
+    memberProgress,
+    recentRecords: records.slice(0, 10).map(mapTrainingRecordFromDb)
+  };
 }
 
 async function requireActiveMembership(teamCode, localUserId) {
@@ -1368,6 +1712,23 @@ async function fetchAllTeamRecordsForStats(teamCode) {
   }
 }
 
+async function fetchTaskRecords(taskId, teamCode, { localUserId = '', limit = 1000 } = {}) {
+  const query = new URLSearchParams({
+    select: 'id,space_type,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,created_at',
+    space_type: 'eq.team',
+    team_code: `eq.${teamCode}`,
+    task_id: `eq.${taskId}`,
+    order: 'created_at.desc',
+    limit: String(limit)
+  });
+
+  if (localUserId) {
+    query.set('local_user_id', `eq.${localUserId}`);
+  }
+
+  return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
+}
+
 async function fetchLegacyTrainingRecordsWithoutSpaceType(localUserId, limit) {
   const query = new URLSearchParams({
     select: 'id,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
@@ -1423,6 +1784,7 @@ async function insertTrainingRecord(record) {
     });
   } catch (error) {
     if (!isSupabaseSchemaError(error)) throw error;
+    if (record.task_id) throw error;
 
     const legacyRecord = { ...record };
     delete legacyRecord.space_type;
@@ -1508,6 +1870,7 @@ function mapTrainingRecordFromDb(record = {}) {
     difficulty: record.difficulty,
     styleId: record.style_id,
     trainingMode: record.training_mode || 'free_debate',
+    taskId: record.task_id || null,
     messages: Array.isArray(record.messages) ? record.messages : [],
     review: record.review || '',
     score: record.score ?? null,
@@ -1523,6 +1886,26 @@ function mapTeamFromDb(team = {}) {
     teamCode: team.team_code,
     teamName: team.team_name,
     createdAt: team.created_at
+  };
+}
+
+function mapTeamTaskFromDb(task = {}) {
+  return {
+    id: task.id,
+    teamCode: task.team_code,
+    title: task.title,
+    topic: task.topic,
+    userSide: task.user_side,
+    mode: task.mode || 'free_debate',
+    difficulty: task.difficulty || 'novice',
+    styleId: task.style_id || 'none',
+    requiredCount: task.required_count || 1,
+    deadline: task.deadline,
+    description: task.description || '',
+    createdBy: task.created_by,
+    status: task.status || 'active',
+    createdAt: task.created_at,
+    updatedAt: task.updated_at
   };
 }
 
