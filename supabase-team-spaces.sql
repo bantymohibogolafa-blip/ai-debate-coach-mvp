@@ -69,10 +69,15 @@ alter table public.team_members
 
 do $$
 begin
-  alter table public.team_members
-    add constraint team_members_team_user_unique unique (team_code, local_user_id);
-exception
-  when duplicate_object then null;
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'team_members_team_user_unique'
+      and conrelid = 'public.team_members'::regclass
+  ) then
+    alter table public.team_members
+      add constraint team_members_team_user_unique unique (team_code, local_user_id);
+  end if;
 end $$;
 
 create table if not exists public.training_records (
