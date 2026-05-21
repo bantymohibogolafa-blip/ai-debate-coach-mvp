@@ -1362,6 +1362,40 @@ textarea:focus {
   max-width: 720px;
 }
 
+.team-settings-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  padding: 14px;
+  background: #fff9f5;
+}
+
+.team-settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.team-settings-row.password-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.team-settings-row .field {
+  margin-bottom: 0;
+}
+
+.team-settings-row button {
+  min-height: 48px;
+  border-radius: 8px;
+  padding: 0 14px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-weight: 900;
+}
+
 .member-list {
   display: grid;
   gap: 10px;
@@ -1669,6 +1703,8 @@ textarea:focus {
   .modal-actions,
   .team-list-actions,
   .member-actions,
+  .team-settings-row,
+  .team-settings-row.password-row,
   .form-mode-switch {
     grid-template-columns: 1fr;
     display: grid;
@@ -1680,6 +1716,10 @@ textarea:focus {
   }
 
   .member-actions button {
+    width: 100%;
+  }
+
+  .team-settings-row button {
     width: 100%;
   }
 

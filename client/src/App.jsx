@@ -239,6 +239,7 @@ function App() {
   const [memberActionError, setMemberActionError] = useState('');
   const [memberActionStatus, setMemberActionStatus] = useState('');
   const [activeMemberActionId, setActiveMemberActionId] = useState('');
+  const [teamSettingsForm, setTeamSettingsForm] = useState({ teamName: '', currentPassword: '', nextPassword: '' });
   const [activeTab, setActiveTab] = useState('training');
   const [trainingRecords, setTrainingRecords] = useState([]);
   const [teamRecords, setTeamRecords] = useState([]);
@@ -488,6 +489,7 @@ function App() {
   async function openTeamMembers(team) {
     if (isBusy || isRecording) return;
     setMemberModalTeam(team);
+    setTeamSettingsForm({ teamName: team.teamName || team.teamCode, currentPassword: '', nextPassword: '' });
     setMemberActionError('');
     setMemberActionStatus('');
     await loadTeamMembers(team.teamCode);
@@ -557,6 +559,76 @@ function App() {
       const updatedTeam = nextTeams.find((team) => team.teamCode === memberModalTeam.teamCode);
       if (updatedTeam) setMemberModalTeam(updatedTeam);
       setMemberActionStatus(`已将队长权限转让给「${member.nickname || '该成员'}」。`);
+    } catch (requestError) {
+      setMemberActionError(getFriendlyError(requestError));
+    } finally {
+      setActiveMemberActionId('');
+    }
+  }
+
+  async function updateTeamName() {
+    if (!memberModalTeam || activeMemberActionId) return;
+    const nextTeamName = teamSettingsForm.teamName.trim();
+    if (!nextTeamName || nextTeamName.length > 32 || /[<>]/.test(nextTeamName)) {
+      setMemberActionError('请输入 1-32 个字符的团队名称。');
+      return;
+    }
+
+    setActiveMemberActionId('update-name');
+    setMemberActionError('');
+    setMemberActionStatus('');
+
+    try {
+      const data = await postJson('/api/team/update-name', {
+        teamCode: memberModalTeam.teamCode,
+        localUserId,
+        teamName: nextTeamName
+      });
+      const nextTeams = Array.isArray(data.teams) ? data.teams : joinedTeams;
+      setJoinedTeams(nextTeams);
+      const updatedTeam = nextTeams.find((team) => team.teamCode === memberModalTeam.teamCode);
+      if (updatedTeam) {
+        setMemberModalTeam(updatedTeam);
+        setTeamSettingsForm((current) => ({ ...current, teamName: updatedTeam.teamName || updatedTeam.teamCode }));
+      }
+      setMemberActionStatus('团队名称已更新。');
+    } catch (requestError) {
+      setMemberActionError(getFriendlyError(requestError));
+    } finally {
+      setActiveMemberActionId('');
+    }
+  }
+
+  async function updateTeamPassword() {
+    if (!memberModalTeam || activeMemberActionId) return;
+    const currentPassword = teamSettingsForm.currentPassword.trim();
+    const nextPassword = teamSettingsForm.nextPassword.trim();
+    if (!currentPassword) {
+      setMemberActionError('请输入当前团队密码。');
+      return;
+    }
+    if (!nextPassword || nextPassword.length < 4 || nextPassword.length > 64) {
+      setMemberActionError('请输入 4-64 位新团队密码。');
+      return;
+    }
+    if (currentPassword === nextPassword) {
+      setMemberActionError('新密码不能与当前密码相同。');
+      return;
+    }
+
+    setActiveMemberActionId('update-password');
+    setMemberActionError('');
+    setMemberActionStatus('');
+
+    try {
+      await postJson('/api/team/update-password', {
+        teamCode: memberModalTeam.teamCode,
+        localUserId,
+        currentPassword,
+        nextPassword
+      });
+      setTeamSettingsForm((current) => ({ ...current, currentPassword: '', nextPassword: '' }));
+      setMemberActionStatus('团队密码已更新，旧密码已失效。');
     } catch (requestError) {
       setMemberActionError(getFriendlyError(requestError));
     } finally {
@@ -1307,6 +1379,58 @@ function App() {
             {memberActionError && <div className="error-box">{memberActionError}</div>}
             {memberActionStatus && <div className="history-status">{memberActionStatus}</div>}
 
+            {teamMembersRequester?.role === 'owner' && (
+              <div className="team-settings-card">
+                <div className="team-settings-row">
+                  <label className="field">
+                    <span>团队名称</span>
+                    <input
+                      value={teamSettingsForm.teamName}
+                      disabled={Boolean(activeMemberActionId)}
+                      onChange={(event) => setTeamSettingsForm({ ...teamSettingsForm, teamName: event.target.value })}
+                      maxLength={32}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={updateTeamName}
+                    disabled={Boolean(activeMemberActionId)}
+                  >
+                    {activeMemberActionId === 'update-name' ? '保存中...' : '保存名称'}
+                  </button>
+                </div>
+                <div className="team-settings-row password-row">
+                  <label className="field">
+                    <span>当前密码</span>
+                    <input
+                      type="password"
+                      value={teamSettingsForm.currentPassword}
+                      disabled={Boolean(activeMemberActionId)}
+                      onChange={(event) => setTeamSettingsForm({ ...teamSettingsForm, currentPassword: event.target.value })}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>新密码</span>
+                    <input
+                      type="password"
+                      value={teamSettingsForm.nextPassword}
+                      disabled={Boolean(activeMemberActionId)}
+                      onChange={(event) => setTeamSettingsForm({ ...teamSettingsForm, nextPassword: event.target.value })}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={updateTeamPassword}
+                    disabled={Boolean(activeMemberActionId)}
+                  >
+                    {activeMemberActionId === 'update-password' ? '更新中...' : '更新密码'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {isMembersLoading ? (
               <div className="history-status">正在加载成员列表...</div>
             ) : teamMembers.length === 0 ? (
@@ -1366,6 +1490,7 @@ function App() {
                   setTeamMembersRequester(null);
                   setMemberActionError('');
                   setMemberActionStatus('');
+                  setTeamSettingsForm({ teamName: '', currentPassword: '', nextPassword: '' });
                 }}
                 disabled={Boolean(activeMemberActionId)}
               >

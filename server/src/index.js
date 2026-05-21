@@ -208,6 +208,27 @@ app.post('/api/team/transfer-owner', async (req, res, next) => {
   }
 });
 
+app.post('/api/team/update-name', async (req, res, next) => {
+  try {
+    const payload = validateTeamUpdateNamePayload(req.body);
+    await updateTeamName(payload);
+    const teams = await fetchJoinedTeams(payload.localUserId);
+    res.json({ teams });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team/update-password', async (req, res, next) => {
+  try {
+    const payload = validateTeamUpdatePasswordPayload(req.body);
+    await updateTeamPassword(payload);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/training-records', async (req, res, next) => {
   try {
     const userId = normalizeText(req.query.userId || req.query.localUserId);
@@ -588,6 +609,55 @@ function validateTeamMemberActionPayload(body) {
   return { teamCode, localUserId, targetLocalUserId };
 }
 
+function validateTeamUpdateNamePayload(body) {
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const teamName = normalizeTeamName(body.teamName || body.team_name);
+
+  if (!isValidTeamCode(teamCode)) {
+    throw badRequest('团队码无效，请重新选择团队。');
+  }
+
+  if (!isValidLocalUserId(localUserId)) {
+    throw badRequest('用户身份无效，请刷新页面后重试。');
+  }
+
+  if (!teamName || teamName.length > 32 || /[<>]/.test(teamName)) {
+    throw badRequest('请输入 1-32 个字符的团队名称。');
+  }
+
+  return { teamCode, localUserId, teamName };
+}
+
+function validateTeamUpdatePasswordPayload(body) {
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const currentPassword = normalizeText(body.currentPassword || body.current_password);
+  const nextPassword = normalizeText(body.nextPassword || body.next_password || body.teamPassword || body.team_password);
+
+  if (!isValidTeamCode(teamCode)) {
+    throw badRequest('团队码无效，请重新选择团队。');
+  }
+
+  if (!isValidLocalUserId(localUserId)) {
+    throw badRequest('用户身份无效，请刷新页面后重试。');
+  }
+
+  if (!currentPassword) {
+    throw badRequest('请输入当前团队密码。');
+  }
+
+  if (!nextPassword || nextPassword.length < 4 || nextPassword.length > 64) {
+    throw badRequest('请输入 4-64 位新团队密码。');
+  }
+
+  if (currentPassword === nextPassword) {
+    throw badRequest('新密码不能与当前密码相同。');
+  }
+
+  return { teamCode, localUserId, currentPassword, nextPassword };
+}
+
 function normalizeText(value) {
   return String(value || '').trim();
 }
@@ -702,6 +772,13 @@ function getPersonalTeamCode(localUserId) {
 
 function isSupabaseSchemaError(error) {
   return error?.code === 'SUPABASE_REQUEST_FAILED' && error.status === 400;
+}
+
+function isMissingRpcError(error) {
+  const detailText = `${error?.supabaseMessage || ''} ${error?.supabaseDetails || ''}`;
+  return error?.code === 'SUPABASE_REQUEST_FAILED'
+    && [400, 404].includes(error.status)
+    && /transfer_team_owner|function|schema cache|rpc/i.test(detailText);
 }
 
 function isValidTeamCode(teamCode) {
@@ -826,7 +903,8 @@ async function createTeam({ teamCode, teamName, teamPassword, nickname, localUse
     body: {
       team_code: teamCode,
       team_name: teamName,
-      join_password: teamPassword,
+      join_password_hash: hashTeamPassword(teamPassword),
+      join_password: null,
       created_at: new Date().toISOString()
     },
     prefer: 'return=representation'
@@ -848,7 +926,14 @@ async function createTeam({ teamCode, teamName, teamPassword, nickname, localUse
 }
 
 async function leaveTeam({ teamCode, localUserId }) {
-  await requireActiveMembership(teamCode, localUserId);
+  const member = await requireActiveMembership(teamCode, localUserId);
+  if ((member.role || 'member') === 'owner') {
+    const activeMembers = await fetchTeamMembers(teamCode);
+    if (activeMembers.some((item) => item.local_user_id !== localUserId)) {
+      throw badRequest('队长退出团队前，请先把队长权限转让给其他成员。');
+    }
+  }
+
   await supabaseRequest(
     `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(localUserId)}`,
     {
@@ -931,18 +1016,19 @@ async function transferTeamOwner({ teamCode, localUserId, targetLocalUserId }) {
     return;
   }
 
-  await supabaseRequest(
-    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(targetLocalUserId)}`,
-    {
-      method: 'PATCH',
+  try {
+    await supabaseRequest('rpc/transfer_team_owner', {
+      method: 'POST',
       body: {
-        role: 'owner',
-        status: 'active',
-        left_at: null
-      },
-      prefer: 'return=representation'
-    }
-  );
+        p_team_code: teamCode,
+        p_current_owner_id: localUserId,
+        p_new_owner_id: targetLocalUserId
+      }
+    });
+    return;
+  } catch (error) {
+    if (!isMissingRpcError(error)) throw error;
+  }
 
   await supabaseRequest(
     `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(localUserId)}`,
@@ -951,6 +1037,80 @@ async function transferTeamOwner({ teamCode, localUserId, targetLocalUserId }) {
       body: {
         role: 'member',
         status: 'active'
+      },
+      prefer: 'return=representation'
+    }
+  );
+
+  try {
+    await supabaseRequest(
+      `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(targetLocalUserId)}`,
+      {
+        method: 'PATCH',
+        body: {
+          role: 'owner',
+          status: 'active',
+          left_at: null
+        },
+        prefer: 'return=representation'
+      }
+    );
+  } catch (error) {
+    await supabaseRequest(
+      `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(localUserId)}`,
+      {
+        method: 'PATCH',
+        body: {
+          role: 'owner',
+          status: 'active'
+        },
+        prefer: 'return=representation'
+      }
+    );
+    throw error;
+  }
+}
+
+async function updateTeamName({ teamCode, localUserId, teamName }) {
+  await requireTeamOwner(teamCode, localUserId);
+  await supabaseRequest(
+    `${teamsTable}?team_code=eq.${encodeURIComponent(teamCode)}`,
+    {
+      method: 'PATCH',
+      body: {
+        team_name: teamName
+      },
+      prefer: 'return=representation'
+    }
+  );
+}
+
+async function updateTeamPassword({ teamCode, localUserId, currentPassword, nextPassword }) {
+  await requireTeamOwner(teamCode, localUserId);
+  const team = await getSingleByQuery(
+    teamsTable,
+    new URLSearchParams({
+      select: 'id,team_code,join_password_hash,join_password',
+      team_code: `eq.${teamCode}`,
+      limit: '1'
+    })
+  );
+
+  if (!team) {
+    throw httpError(404, '团队不存在，请刷新后重试。');
+  }
+
+  if (!verifyTeamPassword(team, currentPassword)) {
+    throw httpError(401, '当前团队密码错误。');
+  }
+
+  await supabaseRequest(
+    `${teamsTable}?team_code=eq.${encodeURIComponent(teamCode)}`,
+    {
+      method: 'PATCH',
+      body: {
+        join_password_hash: hashTeamPassword(nextPassword),
+        join_password: null
       },
       prefer: 'return=representation'
     }
@@ -1057,6 +1217,12 @@ function safeTextEqual(left, right) {
   const rightBuffer = Buffer.from(String(right));
   if (leftBuffer.length !== rightBuffer.length) return false;
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function hashTeamPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `scrypt$${salt}$${hash}`;
 }
 
 async function getSingleByQuery(tableName, query) {

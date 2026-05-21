@@ -1,6 +1,7 @@
 -- Multi-team + personal training spaces migration.
 -- Run in Supabase SQL Editor before deploying the matching backend.
--- MVP note: join_password is plaintext for quick setup. Prefer storing join_password_hash later.
+-- Password note: new backend writes join_password_hash and clears join_password.
+-- Existing plaintext join_password values remain readable for migration compatibility.
 
 create table if not exists public.teams (
   team_code text primary key,
@@ -141,5 +142,77 @@ create index if not exists team_members_team_idx
 create index if not exists team_members_user_status_idx
   on public.team_members (local_user_id, status);
 
--- Create or update a team password for MVP plaintext mode:
--- update public.teams set join_password = '123456' where team_code = 'JXCH-DEBATE';
+with ranked_owners as (
+  select
+    id,
+    row_number() over (
+      partition by team_code
+      order by joined_at asc, created_at asc, id asc
+    ) as owner_rank
+  from public.team_members
+  where role = 'owner' and status = 'active'
+)
+update public.team_members
+set role = 'member'
+where id in (
+  select id
+  from ranked_owners
+  where owner_rank > 1
+);
+
+create unique index if not exists team_members_one_active_owner_idx
+  on public.team_members (team_code)
+  where role = 'owner' and status = 'active';
+
+create or replace function public.transfer_team_owner(
+  p_team_code text,
+  p_current_owner_id text,
+  p_new_owner_id text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not exists (
+    select 1
+    from public.team_members
+    where team_code = p_team_code
+      and local_user_id = p_current_owner_id
+      and role = 'owner'
+      and status = 'active'
+  ) then
+    raise exception 'current user is not active owner' using errcode = '42501';
+  end if;
+
+  if not exists (
+    select 1
+    from public.team_members
+    where team_code = p_team_code
+      and local_user_id = p_new_owner_id
+      and status = 'active'
+  ) then
+    raise exception 'target user is not active member' using errcode = '42501';
+  end if;
+
+  if p_current_owner_id = p_new_owner_id then
+    return;
+  end if;
+
+  update public.team_members
+  set role = 'member'
+  where team_code = p_team_code
+    and local_user_id = p_current_owner_id
+    and status = 'active';
+
+  update public.team_members
+  set role = 'owner'
+  where team_code = p_team_code
+    and local_user_id = p_new_owner_id
+    and status = 'active';
+end;
+$$;
+
+-- Optional one-time plaintext password cleanup after all teams use hashes:
+-- update public.teams set join_password = null where join_password_hash is not null;
