@@ -381,6 +381,24 @@ app.get('/api/team/stats', async (req, res, next) => {
   }
 });
 
+app.get('/api/ability/estimate', async (req, res, next) => {
+  try {
+    const { spaceType, teamCode, localUserId } = validateAbilityEstimateQuery(req.query);
+    let records = [];
+
+    if (spaceType === 'team') {
+      await requireActiveMembership(teamCode, localUserId);
+      records = await fetchMyTrainingRecords(teamCode, localUserId, 120);
+    } else {
+      records = await fetchPersonalTrainingRecords(localUserId, 120);
+    }
+
+    res.json(buildAbilityEstimate(records));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post(
   '/api/speech/transcribe',
   express.raw({
@@ -833,6 +851,22 @@ function validateTeamTaskClosePayload(body) {
   }
 
   return { taskId, teamCode, localUserId };
+}
+
+function validateAbilityEstimateQuery(query) {
+  const spaceType = normalizeSpaceType(query.spaceType || query.space_type || query.scope);
+  const teamCode = normalizeTeamCode(query.teamCode || query.team_code);
+  const localUserId = normalizeText(query.localUserId || query.local_user_id || query.userId || query.user_id);
+
+  if (!isValidLocalUserId(localUserId)) {
+    throw badRequest('用户身份无效，请刷新页面后重试。');
+  }
+
+  if (spaceType === 'team' && !isValidTeamCode(teamCode)) {
+    throw badRequest('团队信息无效，请重新选择团队。');
+  }
+
+  return { spaceType, teamCode, localUserId };
 }
 
 function normalizeText(value) {
@@ -1710,6 +1744,154 @@ async function fetchAllTeamRecordsForStats(teamCode) {
     if (!isSupabaseSchemaError(error)) throw error;
     return fetchLegacyTeamTrainingRecords(teamCode, 1000);
   }
+}
+
+const abilityDimensions = [
+  { key: 'caseBuilding', label: '立论建构', weight: 0.18 },
+  { key: 'clash', label: '交锋识别', weight: 0.18 },
+  { key: 'attack', label: '质询压迫', weight: 0.16 },
+  { key: 'defense', label: '防守回应', weight: 0.16 },
+  { key: 'closing', label: '结辩收束', weight: 0.16 },
+  { key: 'expression', label: '表达稳定', weight: 0.16 }
+];
+
+const abilityModeWeights = {
+  constructive: { caseBuilding: 0.75, expression: 0.25 },
+  summary: { clash: 0.65, expression: 0.2, caseBuilding: 0.15 },
+  free_debate: { clash: 0.35, attack: 0.25, defense: 0.2, expression: 0.2 },
+  attack: { attack: 0.7, clash: 0.3 },
+  defense: { defense: 0.75, clash: 0.25 },
+  closing: { closing: 0.7, expression: 0.3 }
+};
+
+const abilityDifficultyBonus = {
+  novice: -4,
+  campus: 2,
+  city: 7
+};
+
+function buildAbilityEstimate(records = []) {
+  const scoredRecords = records
+    .filter((record) => Number.isFinite(Number(record.score)))
+    .sort((left, right) => new Date(left.created_at) - new Date(right.created_at));
+  const history = scoredRecords.map((_, index) => {
+    const snapshot = calculateAbilitySnapshot(scoredRecords.slice(0, index + 1));
+    return {
+      index: index + 1,
+      date: scoredRecords[index].created_at,
+      overall: snapshot.overall,
+      overallEstimate: snapshot.overallEstimate,
+      dimensions: snapshot.dimensionScores
+    };
+  });
+  const current = calculateAbilitySnapshot(scoredRecords);
+  const previous = history.length > 1 ? history[Math.max(0, history.length - 6)] : null;
+  const dimensions = abilityDimensions.map((dimension) => {
+    const score = current.dimensionScores[dimension.key];
+    const previousScore = previous?.dimensions?.[dimension.key] ?? null;
+    return {
+      key: dimension.key,
+      label: dimension.label,
+      score,
+      estimate: score === null ? null : toAbilityEstimate(score),
+      confidence: current.dimensionConfidence[dimension.key] || 0,
+      trend: score === null || previousScore === null ? 0 : roundToOne(score - previousScore),
+      records: current.dimensionCounts[dimension.key] || 0
+    };
+  });
+
+  return {
+    model: 'Fengbian Ability Estimate v1',
+    recordCount: records.length,
+    scoredRecordCount: scoredRecords.length,
+    confidence: current.confidence,
+    overall: current.overall,
+    overallEstimate: current.overallEstimate,
+    level: getAbilityLevel(current.overallEstimate),
+    trend: previous ? current.overallEstimate - previous.overallEstimate : 0,
+    dimensions,
+    history,
+    note: '能力估测基于 AI 复盘分、训练模式、难度和近期权重实时计算；训练次数越多，置信度越高。'
+  };
+}
+
+function calculateAbilitySnapshot(scoredRecords) {
+  if (!scoredRecords.length) {
+    return {
+      overall: null,
+      overallEstimate: null,
+      confidence: 0,
+      dimensionScores: Object.fromEntries(abilityDimensions.map((dimension) => [dimension.key, null])),
+      dimensionConfidence: Object.fromEntries(abilityDimensions.map((dimension) => [dimension.key, 0])),
+      dimensionCounts: Object.fromEntries(abilityDimensions.map((dimension) => [dimension.key, 0]))
+    };
+  }
+
+  const buckets = Object.fromEntries(
+    abilityDimensions.map((dimension) => [dimension.key, { weightedTotal: 0, weightTotal: 0, count: 0 }])
+  );
+  const total = scoredRecords.length;
+
+  scoredRecords.forEach((record, index) => {
+    const modeWeights = abilityModeWeights[record.training_mode || 'free_debate'] || abilityModeWeights.free_debate;
+    const recencyWeight = Math.pow(0.9, total - index - 1);
+    const adjustedScore = clampNumber(Number(record.score) + (abilityDifficultyBonus[record.difficulty] || 0), 0, 100);
+
+    Object.entries(modeWeights).forEach(([dimensionKey, dimensionWeight]) => {
+      const bucket = buckets[dimensionKey];
+      if (!bucket) return;
+      const weight = recencyWeight * dimensionWeight;
+      bucket.weightedTotal += adjustedScore * weight;
+      bucket.weightTotal += weight;
+      bucket.count += 1;
+    });
+  });
+
+  const globalAverage = roundToOne(
+    scoredRecords.reduce((sum, record) => {
+      return sum + clampNumber(Number(record.score) + (abilityDifficultyBonus[record.difficulty] || 0), 0, 100);
+    }, 0) / scoredRecords.length
+  );
+  const dimensionScores = {};
+  const dimensionConfidence = {};
+  const dimensionCounts = {};
+
+  abilityDimensions.forEach((dimension) => {
+    const bucket = buckets[dimension.key];
+    dimensionCounts[dimension.key] = bucket.count;
+    dimensionConfidence[dimension.key] = Math.min(100, Math.round((bucket.count / 5) * 100));
+    dimensionScores[dimension.key] = bucket.weightTotal
+      ? roundToOne(bucket.weightedTotal / bucket.weightTotal)
+      : roundToOne(globalAverage * 0.86);
+  });
+
+  const overall = roundToOne(abilityDimensions.reduce((sum, dimension) => {
+    return sum + dimensionScores[dimension.key] * dimension.weight;
+  }, 0));
+
+  return {
+    overall,
+    overallEstimate: toAbilityEstimate(overall),
+    confidence: Math.min(100, Math.round((scoredRecords.length / 10) * 100)),
+    dimensionScores,
+    dimensionConfidence,
+    dimensionCounts
+  };
+}
+
+function toAbilityEstimate(score) {
+  if (score === null || score === undefined) return null;
+  return Math.round(300 + clampNumber(Number(score), 0, 100) * 6);
+}
+
+function getAbilityLevel(estimate) {
+  if (!estimate) return '暂无估测';
+  if (estimate >= 820) return '强校队核心';
+  if (estimate >= 760) return '市赛强手';
+  if (estimate >= 700) return '校赛上游';
+  if (estimate >= 640) return '稳定参赛';
+  if (estimate >= 580) return '基础成型';
+  return '起步积累';
 }
 
 async function fetchTaskRecords(taskId, teamCode, { localUserId = '', limit = 1000 } = {}) {

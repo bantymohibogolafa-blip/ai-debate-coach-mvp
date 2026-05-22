@@ -216,6 +216,16 @@ const defaultTaskForm = {
   description: ''
 };
 
+const abilityDimensionMeta = [
+  { key: 'overall', label: '综合锋力', color: '#c8502d' },
+  { key: 'caseBuilding', label: '立论建构', color: '#2d7f7a' },
+  { key: 'clash', label: '交锋识别', color: '#415f9d' },
+  { key: 'attack', label: '质询压迫', color: '#9c4f24' },
+  { key: 'defense', label: '防守回应', color: '#6e5aa8' },
+  { key: 'closing', label: '结辩收束', color: '#9b3f58' },
+  { key: 'expression', label: '表达稳定', color: '#4b7280' }
+];
+
 const teamCodeStorageKey = 'ai-debate-coach-team-code';
 const localUserIdStorageKey = 'ai-debate-coach-local-user-id';
 const appModeStorageKey = 'ai-debate-coach-app-mode';
@@ -260,6 +270,9 @@ function App() {
   const [teamTasksError, setTeamTasksError] = useState('');
   const [isTeamTasksLoading, setIsTeamTasksLoading] = useState(false);
   const [activeTeamPanelTab, setActiveTeamPanelTab] = useState('overview');
+  const [abilityEstimate, setAbilityEstimate] = useState(null);
+  const [isAbilityLoading, setIsAbilityLoading] = useState(false);
+  const [abilityError, setAbilityError] = useState('');
   const [isTaskCreateOpen, setIsTaskCreateOpen] = useState(false);
   const [taskForm, setTaskForm] = useState(defaultTaskForm);
   const [taskActionError, setTaskActionError] = useState('');
@@ -350,6 +363,7 @@ function App() {
 
     if (currentSpace.type === 'personal') {
       loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
+      loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
       return;
     }
 
@@ -675,7 +689,8 @@ function App() {
     await Promise.all([
       loadMyTrainingRecords({ spaceType: 'team', teamCode, userId }),
       loadTeamData(teamCode, userId),
-      loadTeamTasks(teamCode, userId)
+      loadTeamTasks(teamCode, userId),
+      loadAbilityEstimate({ spaceType: 'team', teamCode, userId })
     ]);
   }
 
@@ -728,6 +743,27 @@ function App() {
       setTeamTasksError(getFriendlyError(requestError));
     } finally {
       setIsTeamTasksLoading(false);
+    }
+  }
+
+  async function loadAbilityEstimate({ spaceType, teamCode = '', userId }) {
+    if (!userId) return;
+    setIsAbilityLoading(true);
+    setAbilityError('');
+
+    try {
+      const query = new URLSearchParams({
+        spaceType,
+        localUserId: userId
+      });
+      if (spaceType === 'team') query.set('teamCode', teamCode);
+      const data = await getJson(`/api/ability/estimate?${query.toString()}`);
+      setAbilityEstimate(data);
+    } catch (requestError) {
+      setAbilityEstimate(null);
+      setAbilityError(getFriendlyError(requestError));
+    } finally {
+      setIsAbilityLoading(false);
     }
   }
 
@@ -888,6 +924,9 @@ function App() {
       if (currentSpace.type === 'team') {
         loadTeamData(currentSpace.teamCode);
         loadTeamTasks(currentSpace.teamCode);
+        loadAbilityEstimate({ spaceType: 'team', teamCode: currentSpace.teamCode, userId: localUserId });
+      } else {
+        loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
       }
     } catch (requestError) {
       setSaveStatus('复盘已生成，但记录同步失败，请稍后重试。');
@@ -1815,6 +1854,7 @@ function App() {
         {[
           { label: '训练区', value: 'training' },
           { label: '我的记录', value: 'mine' },
+          { label: '能力估测', value: 'ability' },
           { label: '我的团队', value: 'teams' },
           ...(isTeamSpace ? [{ label: '团队数据', value: 'team' }] : [])
         ].map((tab) => (
@@ -2328,6 +2368,15 @@ function App() {
       </section>
       )}
 
+      {activeTab === 'ability' && (
+        <AbilityPanel
+          estimate={abilityEstimate}
+          isLoading={isAbilityLoading}
+          error={abilityError}
+          spaceLabel={currentSpaceLabel}
+        />
+      )}
+
       {activeTab === 'teams' && (
         <section className="panel my-teams-panel">
           <div className="panel-header">
@@ -2555,6 +2604,129 @@ function TeamDataPanel({
         />
       )}
     </section>
+  );
+}
+
+function AbilityPanel({ estimate, isLoading, error, spaceLabel }) {
+  const dimensions = Array.isArray(estimate?.dimensions) ? estimate.dimensions : [];
+  const history = Array.isArray(estimate?.history) ? estimate.history : [];
+
+  return (
+    <section className="panel ability-panel">
+      <div className="panel-header">
+        <div>
+          <p className="eyebrow">{spaceLabel}</p>
+          <h2>辩论能力估测</h2>
+        </div>
+        {isLoading && <span className="badge">估测中</span>}
+      </div>
+
+      {error && <div className="error-box">{error}</div>}
+
+      {!estimate || !estimate.scoredRecordCount ? (
+        <div className="history-empty">暂无可估测记录。完成一次带评分的复盘后，这里会生成锋力值和能力曲线。</div>
+      ) : (
+        <>
+          <div className="ability-hero">
+            <div>
+              <span>当前锋力值</span>
+              <strong>{estimate.overallEstimate || '--'}</strong>
+              <small>{estimate.level} · 置信度 {estimate.confidence || 0}%</small>
+            </div>
+            <p>{estimate.note}</p>
+          </div>
+
+          <div className="ability-grid">
+            {dimensions.map((dimension) => (
+              <article className="ability-card" key={dimension.key}>
+                <div>
+                  <span>{dimension.label}</span>
+                  <strong>{dimension.estimate || '--'}</strong>
+                </div>
+                <div className="ability-bar" aria-hidden="true">
+                  <i style={{ width: `${Math.max(4, Math.min(100, dimension.score || 0))}%` }} />
+                </div>
+                <small>
+                  维度分 {formatNullableNumber(dimension.score)} · 样本 {dimension.records} · 趋势 {formatTrend(dimension.trend)}
+                </small>
+              </article>
+            ))}
+          </div>
+
+          <AbilityTrendChart history={history} />
+        </>
+      )}
+    </section>
+  );
+}
+
+function AbilityTrendChart({ history }) {
+  const points = history.slice(-18);
+  const series = abilityDimensionMeta
+    .map((meta) => ({
+      ...meta,
+      values: points.map((item) => meta.key === 'overall'
+        ? item.overallEstimate
+        : toAbilityEstimate(item.dimensions?.[meta.key]))
+    }))
+    .filter((serie) => serie.values.some((value) => Number.isFinite(value)));
+  const minValue = 300;
+  const maxValue = 900;
+  const width = 720;
+  const height = 280;
+  const padding = 34;
+
+  function toX(index) {
+    if (points.length <= 1) return width / 2;
+    return padding + (index / (points.length - 1)) * (width - padding * 2);
+  }
+
+  function toY(value) {
+    return height - padding - ((value - minValue) / (maxValue - minValue)) * (height - padding * 2);
+  }
+
+  return (
+    <div className="ability-chart-card">
+      <div className="history-detail-header">
+        <div>
+          <span>历史能力曲线</span>
+          <h3>最近 {points.length} 次评分变化</h3>
+        </div>
+      </div>
+
+      {points.length < 2 ? (
+        <div className="history-empty">再完成一次训练后即可形成趋势曲线。</div>
+      ) : (
+        <>
+          <svg className="ability-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="能力变化趋势图">
+            {[300, 450, 600, 750, 900].map((tick) => (
+              <g key={tick}>
+                <line x1={padding} x2={width - padding} y1={toY(tick)} y2={toY(tick)} />
+                <text x={6} y={toY(tick) + 4}>{tick}</text>
+              </g>
+            ))}
+            {series.map((serie) => (
+              <polyline
+                key={serie.key}
+                points={serie.values.map((value, index) => `${toX(index)},${toY(value)}`).join(' ')}
+                stroke={serie.color}
+              />
+            ))}
+            {series[0]?.values.map((_, index) => (
+              <circle key={index} cx={toX(index)} cy={toY(series[0].values[index])} r="3.5" />
+            ))}
+          </svg>
+          <div className="ability-legend">
+            {series.map((serie) => (
+              <span key={serie.key}>
+                <i style={{ background: serie.color }} />
+                {serie.label}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -3009,6 +3181,19 @@ function extractBattlefieldFromReview(reviewText) {
 
 function formatNullableNumber(value) {
   return value === null || value === undefined ? '--' : value;
+}
+
+function toAbilityEstimate(score) {
+  const number = Number(score);
+  if (!Number.isFinite(number)) return null;
+  const safeScore = Math.max(0, Math.min(100, number));
+  return Math.round(300 + safeScore * 6);
+}
+
+function formatTrend(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number) || Math.abs(number) < 0.1) return '持平';
+  return `${number > 0 ? '+' : ''}${number.toFixed(1)}`;
 }
 
 function formatRecordDate(value) {

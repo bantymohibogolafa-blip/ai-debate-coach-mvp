@@ -1300,6 +1300,160 @@ textarea:focus {
   font-family: inherit;
 }
 
+.ability-panel {
+  margin-top: 0;
+}
+
+.ability-hero {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.72fr) 1fr;
+  gap: 16px;
+  border: 1px solid rgba(45, 127, 122, 0.24);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  padding: 18px;
+  color: #fff9ef;
+  background:
+    linear-gradient(135deg, rgba(19, 35, 43, 0.96), rgba(35, 87, 93, 0.94)),
+    #13232b;
+}
+
+.ability-hero span {
+  color: #f4b254;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.ability-hero strong {
+  display: block;
+  margin: 6px 0;
+  font-size: 54px;
+  line-height: 1;
+}
+
+.ability-hero small,
+.ability-hero p {
+  margin: 0;
+  color: #d7e6e5;
+  font-weight: 850;
+  line-height: 1.65;
+}
+
+.ability-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ability-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcfd;
+}
+
+.ability-card div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ability-card span {
+  color: #687982;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.ability-card strong {
+  color: #13232b;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.ability-card small {
+  color: #5e6e76;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.ability-bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf2f4;
+}
+
+.ability-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2d7f7a;
+}
+
+.ability-chart-card {
+  overflow: hidden;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcfd;
+}
+
+.ability-chart {
+  width: 100%;
+  min-height: 260px;
+}
+
+.ability-chart line {
+  stroke: #dce7ea;
+  stroke-width: 1;
+}
+
+.ability-chart text {
+  fill: #687982;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ability-chart polyline {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ability-chart circle {
+  fill: #c8502d;
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+.ability-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 10px;
+}
+
+.ability-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #476168;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.ability-legend i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+}
+
 .team-data-panel {
   margin-top: 0;
 }
@@ -1906,9 +2060,19 @@ textarea:focus {
   .task-form-grid,
   .task-form-row,
   .task-meta-grid,
+  .ability-hero,
+  .ability-grid,
   .team-stat-grid,
   .team-rank-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ability-hero strong {
+    font-size: 44px;
+  }
+
+  .ability-chart-card {
+    padding: 12px;
   }
 
   .team-topbar {
