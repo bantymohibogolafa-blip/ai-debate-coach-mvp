@@ -21,6 +21,12 @@ import {
   normalizeSide,
   normalizeTrainingMode
 } from './prompts.js';
+import {
+  createFallbackStructuredReview,
+  getScoreLevel,
+  getScoringRubric,
+  normalizeScoringMode
+} from './scoringRubrics.js';
 
 dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 
@@ -194,8 +200,10 @@ app.post('/api/debate/review', async (req, res, next) => {
 
     const messages = buildReviewMessages(payload);
     const content = await callDeepSeek(messages, { maxTokens: 2200, temperature: 0.5 });
+    const structuredReview = parseReviewContent(content, payload.trainingMode);
+    const formattedContent = formatStructuredReview(structuredReview, content);
 
-    res.json({ content });
+    res.json({ content: formattedContent, structuredReview });
   } catch (error) {
     next(error);
   }
@@ -635,6 +643,9 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   const score = parseNullableScore(body.score);
   const result = normalizeText(body.result);
   const battlefield = normalizeText(body.battlefield);
+  const modeDisplayName = normalizeText(body.modeDisplayName || body.mode_display_name);
+  const scoreLevel = normalizeText(body.scoreLevel || body.score_level);
+  const dimensionScores = normalizeDimensionScores(body.dimensionScores || body.dimension_scores);
 
   if (!isValidLocalUserId(localUserId)) {
     throw badRequest('用户身份无效，请刷新页面后重试。');
@@ -733,6 +744,9 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     score,
     result,
     battlefield,
+    mode_display_name: modeDisplayName || getScoringRubric(trainingMode).rubric.displayName,
+    score_level: scoreLevel || getScoreLevel(score) || '',
+    dimension_scores: dimensionScores,
     created_at: new Date().toISOString()
   };
 
@@ -1094,7 +1108,7 @@ function getPublicErrorMessage(error) {
     if (/app_users|app_user_id|created_by_app_user_id/i.test(detailText)) {
       return '账号系统数据库表结构尚未更新，请先在 Supabase 执行 supabase-auth-1.sql。';
     }
-    if (/space_type|status|joined_at|join_password|team_tasks|task_id|schema cache|column/i.test(detailText)) {
+    if (/space_type|status|joined_at|join_password|team_tasks|task_id|mode_display_name|score_level|dimension_scores|schema cache|column/i.test(detailText)) {
       return '数据库表结构尚未更新，请先在 Supabase 执行 supabase-team-spaces.sql。';
     }
     return '历史记录保存或读取失败，请稍后重试。';
@@ -1188,6 +1202,32 @@ function parseNullableScore(value) {
   }
 
   return clampNumber(Math.round(score), 0, 100);
+}
+
+function normalizeDimensionScores(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      const name = limitLength(normalizeText(item?.name), 60);
+      const maxScore = clampNumber(Number(item?.maxScore ?? item?.max_score ?? 20), 1, 100);
+      const rawScore = item?.score;
+      const score = rawScore === null || rawScore === undefined || rawScore === ''
+        ? null
+        : clampNumber(Math.round(Number(rawScore)), 0, maxScore);
+      const comment = limitLength(normalizeText(item?.comment), 240);
+
+      if (!name) return null;
+
+      return {
+        name,
+        score: Number.isFinite(score) ? score : null,
+        maxScore,
+        comment
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 8);
 }
 
 function extractBearerToken(req) {
@@ -1849,7 +1889,7 @@ async function fetchLegacyTrainingRecords(localUserId, limit) {
 async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '') {
   const identityFilter = appUserId ? { app_user_id: `eq.${appUserId}` } : { local_user_id: `eq.${localUserId}` };
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.personal',
     ...identityFilter,
     order: 'created_at.desc',
@@ -1867,7 +1907,7 @@ async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '') 
 async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
   const identityFilter = isUuid(localUserId) ? { app_user_id: `eq.${localUserId}` } : { local_user_id: `eq.${localUserId}` };
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
     ...identityFilter,
@@ -1885,7 +1925,7 @@ async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
 
 async function fetchTeamTrainingRecords(teamCode, limit) {
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
     order: 'created_at.desc',
@@ -1955,7 +1995,7 @@ async function fetchTeamStats(teamCode) {
 
 async function fetchAllTeamRecordsForStats(teamCode) {
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
     order: 'created_at.desc',
@@ -2190,12 +2230,19 @@ async function insertTrainingRecord(record) {
     });
   } catch (error) {
     if (!isSupabaseSchemaError(error)) throw error;
-    if (record.task_id) throw error;
+    const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
+    const isScoringSchemaOnly = /mode_display_name|score_level|dimension_scores/i.test(detailText);
+    if (record.task_id && !isScoringSchemaOnly) throw error;
 
     const legacyRecord = { ...record };
-    delete legacyRecord.space_type;
-    delete legacyRecord.app_user_id;
-    if (record.space_type === 'personal') {
+    delete legacyRecord.mode_display_name;
+    delete legacyRecord.score_level;
+    delete legacyRecord.dimension_scores;
+    if (!isScoringSchemaOnly) {
+      delete legacyRecord.space_type;
+      delete legacyRecord.app_user_id;
+    }
+    if (!isScoringSchemaOnly && record.space_type === 'personal') {
       legacyRecord.team_code = getPersonalTeamCode(record.local_user_id);
       await ensureLegacyPersonalTeam(legacyRecord.team_code);
     }
@@ -2284,6 +2331,9 @@ function mapTrainingRecordFromDb(record = {}) {
     score: record.score ?? null,
     result: record.result || '',
     battlefield: record.battlefield || '',
+    modeDisplayName: record.mode_display_name || '',
+    scoreLevel: record.score_level || '',
+    dimensionScores: Array.isArray(record.dimension_scores) ? record.dimension_scores : [],
     createdAt: record.created_at
   };
 }
@@ -2382,6 +2432,102 @@ function cleanOpeningQuestion(text) {
     .trim();
 }
 
+function parseReviewContent(content, trainingMode) {
+  const clean = normalizeText(content);
+  const jsonText = extractJsonObject(clean);
+
+  if (jsonText) {
+    try {
+      const parsed = JSON.parse(jsonText);
+      return normalizeStructuredReview(parsed, trainingMode, clean);
+    } catch {
+      // Fall through to the conservative fallback below.
+    }
+  }
+
+  return createFallbackStructuredReview(trainingMode, clean);
+}
+
+function normalizeStructuredReview(parsed, trainingMode, fallbackText) {
+  const { rubric, isFallback } = getScoringRubric(trainingMode);
+  const score = clampNumber(Math.round(Number(parsed?.score)), 30, 100);
+  const dimensionScores = rubric.dimensions.map((dimension, index) => {
+    const provided = Array.isArray(parsed?.dimensionScores)
+      ? parsed.dimensionScores.find((item) => normalizeText(item?.name) === dimension.name) || parsed.dimensionScores[index]
+      : null;
+    const providedScore = provided?.score;
+
+    return {
+      name: dimension.name,
+      score: providedScore === null || providedScore === undefined || providedScore === ''
+        ? null
+        : clampNumber(Math.round(Number(providedScore)), 0, dimension.maxScore),
+      maxScore: dimension.maxScore,
+      comment: limitLength(normalizeText(provided?.comment), 240)
+    };
+  });
+  const reviewText = normalizeText(parsed?.reviewText) || fallbackText;
+
+  return {
+    score,
+    scoreLevel: getScoreLevel(score),
+    mode: rubric.appMode,
+    modeDisplayName: rubric.displayName,
+    dimensionScores,
+    battlefield: limitLength(normalizeText(parsed?.battlefield), 200),
+    mainWeakness: limitLength(normalizeText(parsed?.mainWeakness), 240),
+    strengths: normalizeStringList(parsed?.strengths, 5, 120),
+    weaknesses: normalizeStringList(parsed?.weaknesses, 5, 120),
+    reviewText: limitLength(`${isFallback ? '当前训练模式未识别，已使用通用评分。\n' : ''}${reviewText}`, 1800),
+    nextStepAdvice: normalizeStringList(parsed?.nextStepAdvice, 5, 160),
+    template: limitLength(normalizeText(parsed?.template), 500)
+  };
+}
+
+function normalizeStringList(value, limit, maxLength) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => limitLength(normalizeText(item), maxLength))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function formatStructuredReview(structuredReview, fallbackContent = '') {
+  if (!structuredReview?.reviewText) {
+    return normalizeText(fallbackContent);
+  }
+
+  const dimensionLines = structuredReview.dimensionScores
+    .map((dimension, index) => {
+      const scoreText = dimension.score === null || dimension.score === undefined ? '未解析' : `${dimension.score}`;
+      return `${index + 1}. ${dimension.name}：${scoreText} / ${dimension.maxScore}${dimension.comment ? `\n   ${dimension.comment}` : ''}`;
+    })
+    .join('\n');
+  const strengths = structuredReview.strengths.length
+    ? structuredReview.strengths.map((item) => `- ${item}`).join('\n')
+    : '- 暂无明确优势。';
+  const weaknesses = structuredReview.weaknesses.length
+    ? structuredReview.weaknesses.map((item) => `- ${item}`).join('\n')
+    : '- 暂无明确短板。';
+  const advice = structuredReview.nextStepAdvice.length
+    ? structuredReview.nextStepAdvice.map((item) => `- ${item}`).join('\n')
+    : '- 下次训练继续围绕本环节核心目标做针对性练习。';
+
+  return [
+    `一、总分：${structuredReview.score} / 100`,
+    `二、评分区间：${structuredReview.scoreLevel}`,
+    `三、训练环节：${structuredReview.modeDisplayName}`,
+    `四、分项评分：\n${dimensionLines}`,
+    `五、核心战场：\n${structuredReview.battlefield || '暂无明确战场。'}`,
+    `六、最大漏洞：\n${structuredReview.mainWeakness || '暂无明确漏洞。'}`,
+    `七、主要优势：\n${strengths}`,
+    `八、主要问题：\n${weaknesses}`,
+    `九、复盘说明：\n${structuredReview.reviewText}`,
+    `十、下一步建议：\n${advice}`,
+    `十一、可复用模板：\n${structuredReview.template || '暂无模板。'}`
+  ].join('\n\n');
+}
+
 function parsePolishContent(content, fallbackAnswer) {
   const clean = normalizeText(content);
   const jsonText = extractJsonObject(clean);
@@ -2409,14 +2555,15 @@ function parsePolishContent(content, fallbackAnswer) {
 }
 
 function extractJsonObject(text) {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
+  const clean = normalizeText(text).replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+  const start = clean.indexOf('{');
+  const end = clean.lastIndexOf('}');
 
   if (start === -1 || end === -1 || end <= start) {
     return '';
   }
 
-  return text.slice(start, end + 1);
+  return clean.slice(start, end + 1);
 }
 
 async function transcribeAudio(audioBuffer, mimeType) {

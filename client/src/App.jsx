@@ -326,6 +326,7 @@ function App() {
   const [saveStatus, setSaveStatus] = useState('');
   const [answer, setAnswer] = useState('');
   const [review, setReview] = useState('');
+  const [structuredReview, setStructuredReview] = useState(null);
   const [isTraining, setIsTraining] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1069,6 +1070,7 @@ function App() {
     setHistory([]);
     setAnswer('');
     setReview('');
+    setStructuredReview(null);
     setError('');
     setSelectedRecord(null);
     setSaveStatus('');
@@ -1081,7 +1083,7 @@ function App() {
     }
   }
 
-  async function saveTrainingRecord(reviewContent) {
+  async function saveTrainingRecord(reviewContent, reviewData = null) {
     if (currentSpace.type === 'team' && !isLoggedIn) {
       setSaveStatus('复盘已生成，但团队记录需要登录后才能同步。');
       return;
@@ -1104,9 +1106,12 @@ function App() {
         taskId: activeTaskSession?.taskId || '',
         messages: history,
         review: reviewContent,
-        score: extractScoreFromReview(reviewContent),
+        score: reviewData?.score ?? extractScoreFromReview(reviewContent),
         result: extractResultFromReview(reviewContent),
-        battlefield: extractBattlefieldFromReview(reviewContent)
+        battlefield: reviewData?.battlefield || extractBattlefieldFromReview(reviewContent),
+        modeDisplayName: reviewData?.modeDisplayName || getOptionLabel(trainingModes, config.trainingMode),
+        scoreLevel: reviewData?.scoreLevel || '',
+        dimensionScores: Array.isArray(reviewData?.dimensionScores) ? reviewData.dimensionScores : []
       });
 
       if (data.record) {
@@ -1252,6 +1257,7 @@ function App() {
     setIsLoading(true);
     setError('');
     setReview('');
+    setStructuredReview(null);
     setHistory([]);
     setPolishResult(null);
     setSelectedRecord(null);
@@ -1348,10 +1354,12 @@ function App() {
         history
       });
       const content = requireContent(data);
+      const nextStructuredReview = normalizeStructuredReview(data.structuredReview);
 
       setReview(content);
+      setStructuredReview(nextStructuredReview);
       setIsTraining(false);
-      await saveTrainingRecord(content);
+      await saveTrainingRecord(content, nextStructuredReview);
     } catch (requestError) {
       setError(getFriendlyError(requestError));
     } finally {
@@ -2523,7 +2531,11 @@ function App() {
               <h2>复盘报告</h2>
             </div>
           </div>
-          <pre>{review}</pre>
+          <ReviewReport
+            reviewText={review}
+            structuredReview={structuredReview}
+            fallbackMode={config.trainingMode}
+          />
         </section>
       )}
       </>
@@ -2599,7 +2611,11 @@ function App() {
 
             <div className="history-review">
               <h3>复盘报告</h3>
-              <pre>{selectedRecord.review}</pre>
+              <ReviewReport
+                reviewText={selectedRecord.review}
+                structuredReview={selectedRecord}
+                fallbackMode={selectedRecord.trainingMode}
+              />
             </div>
           </div>
         )}
@@ -3235,6 +3251,100 @@ function RankingList({ title, items, metric }) {
   );
 }
 
+function ReviewReport({ reviewText, structuredReview, fallbackMode }) {
+  const reviewData = normalizeStructuredReview(structuredReview);
+
+  if (!reviewData?.dimensionScores?.length) {
+    return <pre>{reviewText}</pre>;
+  }
+
+  const modeDisplayName = reviewData.modeDisplayName || getOptionLabel(trainingModes, fallbackMode) || '训练复盘';
+  const score = reviewData.score ?? extractScoreFromReview(reviewText);
+  const scoreLevel = reviewData.scoreLevel || '';
+
+  return (
+    <div className="structured-review">
+      <div className="review-score-card">
+        <div>
+          <span>训练环节</span>
+          <strong>{modeDisplayName}</strong>
+        </div>
+        <div>
+          <span>总分</span>
+          <strong>{score !== null && score !== undefined ? `${score} / 100` : '未解析'}</strong>
+        </div>
+        {scoreLevel && (
+          <div>
+            <span>评分区间</span>
+            <strong>{scoreLevel}</strong>
+          </div>
+        )}
+      </div>
+
+      <div className="dimension-score-list">
+        {reviewData.dimensionScores.map((dimension) => (
+          <div className="dimension-score-item" key={dimension.name}>
+            <div>
+              <strong>{dimension.name}</strong>
+              <span>
+                {dimension.score !== null && dimension.score !== undefined ? dimension.score : '未解析'} / {dimension.maxScore}
+              </span>
+            </div>
+            {dimension.comment && <p>{dimension.comment}</p>}
+          </div>
+        ))}
+      </div>
+
+      {(reviewData.battlefield || reviewData.mainWeakness) && (
+        <div className="review-summary-grid">
+          {reviewData.battlefield && (
+            <article>
+              <span>核心战场</span>
+              <p>{reviewData.battlefield}</p>
+            </article>
+          )}
+          {reviewData.mainWeakness && (
+            <article>
+              <span>最大漏洞</span>
+              <p>{reviewData.mainWeakness}</p>
+            </article>
+          )}
+        </div>
+      )}
+
+      {reviewData.reviewText && (
+        <div className="review-text-block">
+          <h3>复盘说明</h3>
+          <p>{reviewData.reviewText}</p>
+        </div>
+      )}
+
+      {reviewData.nextStepAdvice.length > 0 && (
+        <div className="review-text-block">
+          <h3>下一步建议</h3>
+          <ul>
+            {reviewData.nextStepAdvice.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {reviewData.template && (
+        <div className="review-text-block">
+          <h3>可复用模板</h3>
+          <p>{reviewData.template}</p>
+        </div>
+      )}
+
+      <details className="raw-review-details">
+        <summary>查看原始复盘文本</summary>
+        <pre>{reviewText}</pre>
+      </details>
+    </div>
+  );
+}
+
 function RecordDetail({ record, onClose }) {
   return (
     <div className="history-detail">
@@ -3268,7 +3378,11 @@ function RecordDetail({ record, onClose }) {
 
       <div className="history-review">
         <h3>复盘报告</h3>
-        <pre>{record.review}</pre>
+        <ReviewReport
+          reviewText={record.review}
+          structuredReview={record}
+          fallbackMode={record.trainingMode}
+        />
       </div>
     </div>
   );
@@ -3533,6 +3647,41 @@ function extractResultFromReview(reviewText) {
 function extractBattlefieldFromReview(reviewText) {
   const match = String(reviewText || '').match(/核心战场归属[：:]\s*(?:\n|\r\n)?\s*(用户小优|AI小优|势均力敌)/);
   return match?.[1] || '';
+}
+
+function normalizeStructuredReview(value) {
+  if (!value || typeof value !== 'object') return null;
+  const dimensionScores = Array.isArray(value.dimensionScores)
+    ? value.dimensionScores
+    : Array.isArray(value.dimension_scores)
+      ? value.dimension_scores
+      : [];
+
+  return {
+    score: value.score ?? null,
+    scoreLevel: value.scoreLevel || value.score_level || '',
+    mode: value.mode || value.trainingMode || value.training_mode || '',
+    modeDisplayName: value.modeDisplayName || value.mode_display_name || '',
+    dimensionScores: dimensionScores
+      .map((item) => ({
+        name: String(item?.name || '').trim(),
+        score: item?.score ?? null,
+        maxScore: item?.maxScore ?? item?.max_score ?? 20,
+        comment: String(item?.comment || '').trim()
+      }))
+      .filter((item) => item.name),
+    battlefield: value.battlefield || '',
+    mainWeakness: value.mainWeakness || value.main_weakness || '',
+    strengths: Array.isArray(value.strengths) ? value.strengths.filter(Boolean) : [],
+    weaknesses: Array.isArray(value.weaknesses) ? value.weaknesses.filter(Boolean) : [],
+    reviewText: value.reviewText || value.review_text || '',
+    nextStepAdvice: Array.isArray(value.nextStepAdvice)
+      ? value.nextStepAdvice.filter(Boolean)
+      : Array.isArray(value.next_step_advice)
+        ? value.next_step_advice.filter(Boolean)
+        : [],
+    template: value.template || ''
+  };
 }
 
 function formatNullableNumber(value) {

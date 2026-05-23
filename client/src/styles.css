@@ -1179,6 +1179,92 @@ textarea:focus {
   font-family: inherit;
 }
 
+.structured-review {
+  display: grid;
+  gap: 14px;
+}
+
+.review-score-card {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.review-score-card div,
+.dimension-score-item,
+.review-summary-grid article,
+.review-text-block {
+  border: 1px solid #dbe8ea;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbfc;
+}
+
+.review-score-card span,
+.review-summary-grid span {
+  display: block;
+  margin-bottom: 4px;
+  color: #6b7b84;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.review-score-card strong {
+  color: #10282f;
+  font-size: 18px;
+}
+
+.dimension-score-list {
+  display: grid;
+  gap: 10px;
+}
+
+.dimension-score-item > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #10282f;
+  font-weight: 900;
+}
+
+.dimension-score-item p,
+.review-summary-grid p,
+.review-text-block p,
+.review-text-block li {
+  margin: 8px 0 0;
+  color: #34464d;
+  line-height: 1.7;
+}
+
+.review-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.review-text-block h3 {
+  margin: 0;
+  color: #10282f;
+  font-size: 16px;
+}
+
+.review-text-block ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.raw-review-details summary {
+  min-height: 44px;
+  cursor: pointer;
+  color: #2f7375;
+  font-weight: 900;
+}
+
+.raw-review-details pre {
+  margin-top: 10px;
+}
+
 .history-panel {
   margin-top: 22px;
 }
@@ -2094,6 +2180,8 @@ textarea:focus {
   .main-tabs,
   .mode-selector-panel,
   .prep-context-grid,
+  .review-score-card,
+  .review-summary-grid,
   .task-form-grid,
   .task-form-row,
   .task-meta-grid,

@@ -1,3 +1,5 @@
+import { buildReviewRubricInstruction } from './scoringRubrics.js';
+
 const difficultyProfiles = {
   novice: {
     label: '新手',
@@ -731,9 +733,9 @@ export function buildReviewMessages({ topic, userSide, difficulty, celebrityDeba
         sideJudgementInstruction,
         modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
-        reviewScoringInstruction,
+        buildReviewRubricInstruction(trainingMode),
         `请根据完整训练过程生成复盘报告。额外关注：${modeProfile.reviewFocus}。`,
-        '请用简洁中文输出，适合高中学生阅读。'
+        '请用简洁中文输出，适合高中学生阅读。必须严格输出 JSON。'
       ].join('\n')
     },
     {
