@@ -546,7 +546,7 @@ function validateRegisterPayload(body) {
   const displayName = normalizeNickname(body.displayName || body.display_name);
 
   if (!isValidUsername(username)) {
-    throw badRequest('用户名仅支持 4-20 位字母、数字和下划线。');
+    throw badRequest('用户名仅支持 4-20 位英文字母、数字或下划线。');
   }
 
   if (!password || password.length < 6) {
@@ -579,6 +579,7 @@ function validateSessionPayload(body) {
   const difficulty = celebrityDebater === 'none' ? normalizeDifficulty(normalizeText(body.difficulty)) : 'city';
   const rounds = Number(body.rounds);
   const defensePrep = normalizeText(body.defensePrep || body.defense_prep || '');
+  const freeDebatePrep = normalizeText(body.freeDebatePrep || body.free_debate_prep || '');
   const history = Array.isArray(body.history) ? body.history : [];
 
   if (!topic) {
@@ -609,6 +610,10 @@ function validateSessionPayload(body) {
     throw badRequest('请先填写己方分论点和论据。');
   }
 
+  if (trainingMode === 'free_debate' && !freeDebatePrep) {
+    throw badRequest('请至少填写一个主要论点，方便 AI 基于你的真实观点进行交锋。');
+  }
+
   return {
     topic,
     userSide,
@@ -617,6 +622,7 @@ function validateSessionPayload(body) {
     trainingMode,
     rounds,
     defensePrep,
+    freeDebatePrep,
     history: history
       .filter((item) => ['ai', 'user'].includes(item.role) && normalizeText(item.content))
       .map((item) => ({
@@ -2011,21 +2017,21 @@ async function fetchAllTeamRecordsForStats(teamCode) {
 }
 
 const abilityDimensions = [
-  { key: 'caseBuilding', label: '立论建构', weight: 0.18 },
-  { key: 'clash', label: '交锋识别', weight: 0.18 },
-  { key: 'attack', label: '质询压迫', weight: 0.16 },
-  { key: 'defense', label: '防守回应', weight: 0.16 },
-  { key: 'closing', label: '结辩收束', weight: 0.16 },
-  { key: 'expression', label: '表达稳定', weight: 0.16 }
+  { key: 'logic', label: '逻辑推进', weight: 0.18 },
+  { key: 'evidence', label: '例证支撑', weight: 0.16 },
+  { key: 'defenseStability', label: '防守稳定', weight: 0.16 },
+  { key: 'counterPressure', label: '反压能力', weight: 0.16 },
+  { key: 'battlefieldControl', label: '战场控制', weight: 0.18 },
+  { key: 'expression', label: '表达效率', weight: 0.16 }
 ];
 
 const abilityModeWeights = {
-  constructive: { caseBuilding: 0.75, expression: 0.25 },
-  summary: { clash: 0.65, expression: 0.2, caseBuilding: 0.15 },
-  free_debate: { clash: 0.35, attack: 0.25, defense: 0.2, expression: 0.2 },
-  attack: { attack: 0.7, clash: 0.3 },
-  defense: { defense: 0.75, clash: 0.25 },
-  closing: { closing: 0.7, expression: 0.3 }
+  constructive: { logic: 0.45, evidence: 0.3, expression: 0.25 },
+  summary: { battlefieldControl: 0.45, logic: 0.25, evidence: 0.15, expression: 0.15 },
+  free_debate: { battlefieldControl: 0.35, counterPressure: 0.25, defenseStability: 0.2, expression: 0.2 },
+  attack: { counterPressure: 0.55, battlefieldControl: 0.25, logic: 0.2 },
+  defense: { defenseStability: 0.55, counterPressure: 0.25, logic: 0.2 },
+  closing: { battlefieldControl: 0.35, logic: 0.25, evidence: 0.15, expression: 0.25 }
 };
 
 const abilityDifficultyBonus = {
@@ -2075,7 +2081,52 @@ function buildAbilityEstimate(records = []) {
     trend: previous ? current.overallEstimate - previous.overallEstimate : 0,
     dimensions,
     history,
+    roleRecommendation: buildRoleRecommendation(current.dimensionScores, current.overall),
     note: '能力估测基于 AI 复盘分、训练模式、难度和近期权重实时计算；训练次数越多，置信度越高。'
+  };
+}
+
+function buildRoleRecommendation(scores = {}, overall = null) {
+  const safe = (key) => Number.isFinite(Number(scores[key])) ? Number(scores[key]) : Number(overall) || 0;
+  const roleScores = [
+    {
+      role: '一辩',
+      score: safe('logic') * 0.38 + safe('evidence') * 0.32 + safe('expression') * 0.3,
+      reason: '你的逻辑推进、例证支撑和表达清晰度更适合承担开局建构任务。'
+    },
+    {
+      role: '二辩',
+      score: safe('counterPressure') * 0.45 + safe('logic') * 0.25 + safe('battlefieldControl') * 0.3,
+      reason: '你的反压能力和战场判断更适合承担质询与拆解任务。'
+    },
+    {
+      role: '三辩',
+      score: safe('battlefieldControl') * 0.4 + safe('counterPressure') * 0.3 + safe('defenseStability') * 0.3,
+      reason: '你的战场控制、攻守转换和防守稳定更适合自由辩中的临场交锋。'
+    },
+    {
+      role: '四辩 / 结辩',
+      score: safe('battlefieldControl') * 0.35 + safe('logic') * 0.3 + safe('expression') * 0.35,
+      reason: '你的战场整合、逻辑收束和表达效率更适合完成终局总结。'
+    },
+    {
+      role: '自由人 / 攻防核心',
+      score: ['logic', 'evidence', 'defenseStability', 'counterPressure', 'battlefieldControl', 'expression']
+        .reduce((sum, key) => sum + safe(key), 0) / 6,
+      reason: '你的多维能力较均衡，适合在比赛中快速切换攻防任务。'
+    }
+  ].sort((left, right) => right.score - left.score);
+
+  const best = roleScores[0];
+  const secondary = roleScores[1];
+
+  return {
+    bestRole: best?.role || '暂无推荐',
+    reason: best?.reason || '训练记录还不够多，暂时无法稳定判断适合辩位。',
+    secondaryRole: secondary?.role || '',
+    advice: secondary
+      ? `如果继续加强${secondary.role}所需的关键能力，可以进一步拓展你的比赛定位。`
+      : '继续完成不同模式训练后，系统会给出更稳定的辩位建议。'
   };
 }
 
@@ -2450,19 +2501,26 @@ function parseReviewContent(content, trainingMode) {
 
 function normalizeStructuredReview(parsed, trainingMode, fallbackText) {
   const { rubric, isFallback } = getScoringRubric(trainingMode);
-  const score = clampNumber(Math.round(Number(parsed?.score)), 30, 100);
+  const score = clampNumber(roundToOne(Number(parsed?.score)), 30, 100);
   const dimensionScores = rubric.dimensions.map((dimension, index) => {
     const provided = Array.isArray(parsed?.dimensionScores)
       ? parsed.dimensionScores.find((item) => normalizeText(item?.name) === dimension.name) || parsed.dimensionScores[index]
       : null;
     const providedScore = provided?.score;
+    const numericProvidedScore = Number(providedScore);
+    const providedMaxScore = Number(provided?.maxScore ?? provided?.max_score ?? 100);
+    const normalizedScore = Number.isFinite(numericProvidedScore)
+      ? providedMaxScore && providedMaxScore !== 100
+        ? (numericProvidedScore / providedMaxScore) * 100
+        : numericProvidedScore
+      : null;
 
     return {
       name: dimension.name,
-      score: providedScore === null || providedScore === undefined || providedScore === ''
+      score: normalizedScore === null || providedScore === null || providedScore === undefined || providedScore === ''
         ? null
-        : clampNumber(Math.round(Number(providedScore)), 0, dimension.maxScore),
-      maxScore: dimension.maxScore,
+        : clampNumber(roundToOne(normalizedScore), 0, 100),
+      maxScore: 100,
       comment: limitLength(normalizeText(provided?.comment), 240)
     };
   });

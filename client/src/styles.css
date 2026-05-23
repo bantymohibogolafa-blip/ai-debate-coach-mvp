@@ -1469,6 +1469,37 @@ textarea:focus {
   margin-bottom: 16px;
 }
 
+.role-recommendation-card {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+  border: 1px solid #d8e3e8;
+  border-left: 4px solid #c8502d;
+  border-radius: 8px;
+  padding: 15px 16px;
+  background: #fff8f4;
+}
+
+.role-recommendation-card span {
+  color: #c8502d;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.role-recommendation-card strong {
+  color: #13232b;
+  font-size: 21px;
+}
+
+.role-recommendation-card em,
+.role-recommendation-card p {
+  margin: 0;
+  color: #5e6e76;
+  font-style: normal;
+  font-weight: 850;
+  line-height: 1.55;
+}
+
 .ability-card {
   display: grid;
   gap: 10px;
@@ -1493,7 +1524,7 @@ textarea:focus {
 
 .ability-card strong {
   color: #13232b;
-  font-size: 28px;
+  font-size: 22px;
   line-height: 1;
 }
 
@@ -1525,9 +1556,19 @@ textarea:focus {
   background: #fbfcfd;
 }
 
+.ability-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .ability-chart {
   width: 100%;
   min-height: 260px;
+}
+
+.ability-chart.mini {
+  min-height: 132px;
 }
 
 .ability-chart line {
@@ -2187,6 +2228,7 @@ textarea:focus {
   .task-meta-grid,
   .ability-hero,
   .ability-grid,
+  .ability-chart-grid,
   .team-stat-grid,
   .team-rank-grid {
     grid-template-columns: 1fr;

@@ -419,15 +419,16 @@ export function getScoringRubric(mode) {
 export function getScoreLevel(score) {
   const numericScore = Number(score);
   if (!Number.isFinite(numericScore)) return '';
-  const boundedScore = Math.max(30, Math.min(100, Math.round(numericScore)));
+  const boundedScore = Math.max(30, Math.min(100, numericScore));
   return scoreLevels.find((level) => boundedScore >= level.min && boundedScore <= level.max)?.label || '';
 }
 
-export function buildReviewRubricInstruction(mode) {
+export function buildReviewRubricInstruction(mode, difficulty = 'campus') {
   const { rubric, rubricId, isFallback } = getScoringRubric(mode);
   const dimensions = rubric.dimensions
-    .map((dimension, index) => `${index + 1}. ${dimension.name}：${dimension.maxScore}分`)
+    .map((dimension, index) => `${index + 1}. ${dimension.name}：权重 ${dimension.maxScore}%`)
     .join('\n');
+  const difficultyInstruction = buildDifficultyScoringInstruction(difficulty);
   const ranges = Object.entries(rubric.ranges)
     .map(([title, lines]) => `${title}\n${lines.map((line) => `- ${line}`).join('\n')}`)
     .join('\n\n');
@@ -461,6 +462,9 @@ ${penalties}
 高分条件：
 ${highScoreConditions}
 
+难度修正规则：
+${difficultyInstruction}
+
 本环节特别要求：
 ${rubric.outputFocus}
 
@@ -474,7 +478,10 @@ AI评分总规则：
 7. 评分必须说明扣分原因。
 8. 评分必须给出下一步改进建议。
 9. 如果用户表现与当前环节目标严重不匹配，应明显扣分。
-10. ${rubric.templateHint}
+10. 复盘语气要像辩论教练：开头先具体肯定用户本轮一个亮点，再指出主要问题，最后给下一步训练建议；不得嘲讽、打击用户，也不要虚假夸奖。
+11. 分数允许细分，总分和维度分都保留一位小数；不要总是输出58、62等固定整数。
+12. 对明显优秀的表现要敢给高分。市赛难度可以更严格，但优秀结辩、优秀攻防不应被压在80分左右。
+13. ${rubric.templateHint}
 
 复盘必须输出严格 JSON，不要包裹 Markdown 代码块，不要输出 JSON 之外的文字。JSON 结构如下：
 {
@@ -483,7 +490,7 @@ AI评分总规则：
   "mode": "${rubric.appMode}",
   "modeDisplayName": "${rubric.displayName}",
   "dimensionScores": [
-${rubric.dimensions.map((dimension) => `    { "name": "${dimension.name}", "score": 0, "maxScore": ${dimension.maxScore}, "comment": "" }`).join(',\n')}
+${rubric.dimensions.map((dimension) => `    { "name": "${dimension.name}", "score": 0, "maxScore": 100, "comment": "" }`).join(',\n')}
   ],
   "battlefield": "",
   "mainWeakness": "",
@@ -495,11 +502,11 @@ ${rubric.dimensions.map((dimension) => `    { "name": "${dimension.name}", "scor
 }
 
 JSON填写要求：
-1. score 必须是 30-100 的整数。
+1. score 必须是 30-100 的数字，保留一位小数。
 2. scoreLevel 必须从“逻辑崩塌区 / 基础及格区 / 标准竞技区 / 优势压制区 / 大师致胜区”中选择。
-3. dimensionScores 必须使用上方当前环节的五个维度，score 不得超过对应 maxScore。
+3. dimensionScores 必须使用上方当前环节的五个维度，score 为 0-100 的一位小数，maxScore 固定为100。
 4. battlefield 要概括本轮核心战场归属或胜负焦点。
-5. reviewText 用自然语言说明本轮表现。
+5. reviewText 用自然语言说明本轮表现，必须先肯定一个具体亮点，再指出主要问题。
 6. template 给出该环节可直接复用的表达模板。
 `;
 }
@@ -527,3 +534,26 @@ export function createFallbackStructuredReview(mode, text = '') {
   };
 }
 
+function buildDifficultyScoringInstruction(difficulty) {
+  if (difficulty === 'novice') {
+    return [
+      '- 当前为新手模式：标准放宽，整体趋高，更关注敢表达、基本逻辑和是否能形成可理解的观点。',
+      '- 对表达不成熟、术语不规范和结构粗糙更宽容；同样表现应比校赛模式高约10-15分。',
+      '- 复盘要多给鼓励和下一步可执行建议，但不能无原则满分。'
+    ].join('\n');
+  }
+
+  if (difficulty === 'city') {
+    return [
+      '- 当前为市赛模式：标准较严，更关注论证深度、战场控制、例证质量、临场稳定和对抗强度。',
+      '- 同样表现应比校赛模式低约10-15分，但不得极端压分；优秀表现应能进入88-95区间。',
+      '- 不要把高质量、接近成熟比赛水准的发言压到80分左右。'
+    ].join('\n');
+  }
+
+  return [
+    '- 当前为校赛模式：作为基准评分，关注完整论证、基本攻防、战场意识和表达清晰度。',
+    '- 同样表现应低于新手模式约10-15分，高于市赛模式约10-15分。',
+    '- 评分保持客观，但语气仍应有教练感和鼓励性。'
+  ].join('\n');
+}

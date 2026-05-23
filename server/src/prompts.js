@@ -58,6 +58,16 @@ const sideJudgementInstruction = `
 3. 你必须始终站在被分配的立场上，不得跳立场，不得替对方证明核心观点。
 `;
 
+const completeOutputInstruction = `
+完整输出硬性规则：
+1. 任何时候输出论点、分论点、交锋点、摘要、事实依据、质询问题、战场结算或复盘建议，都必须把内容写完整。
+2. 禁止使用省略号或省略表达替代完整观点，包括“……”“...”“等等”“诸如此类”“此处略”“以下省略”。
+3. 不得输出半截标题或半截句子，例如“分论点三：少数服从多数是...”。
+4. 如果内容较长，请压缩表达，而不是省略；宁可少写几个点，也要把每一个点写完整。
+5. 自由辩论可以简明扼要、节奏快，但观点和问题仍必须完整。
+6. 防守训练的质询问题必须完整，不得出现“正在组织追问”或半截问题。
+`;
+
 const trainingModeProfiles = {
   constructive: {
     label: '立论训练',
@@ -531,7 +541,7 @@ export function getOpponentSide(userSide) {
   return userSide === 'affirmative' ? 'negative' : 'affirmative';
 }
 
-export function buildStartMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, defensePrep }) {
+export function buildStartMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, defensePrep, freeDebatePrep }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
   const modeInstruction = getOpeningModeInstruction(difficulty, celebrityDebater);
@@ -545,6 +555,7 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
           '你是高中生辩论赛中的二辩质询陪练。',
           `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
           sideJudgementInstruction,
+          completeOutputInstruction,
           modeInstruction,
           '当前是防守训练：AI 只攻，用户只防守。',
           '难度要求会决定问题的直接程度、复杂度、长度、刁钻程度和论证引用密度；必须优先执行当前难度要求。',
@@ -576,6 +587,7 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
           `当前训练模式：${modeProfile.label}。`,
           `用户立场是${userSideLabel}，AI 立场是${opponentSideLabel}。`,
           sideJudgementInstruction,
+          completeOutputInstruction,
           modeInstruction,
           '难度要求会决定材料的直接程度、复杂度、刁钻程度和论证引用密度；除非模式格式冲突，必须体现当前难度。',
           '正方永远先进行，反方随后进行。',
@@ -607,23 +619,30 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
         '你是高中生辩论赛中的二辩攻辩陪练。',
         `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
         sideJudgementInstruction,
+        completeOutputInstruction,
         modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。',
         '难度要求会决定问题的直接程度、复杂度、长度、刁钻程度和论证引用密度；除非自由辩论短促发言规则冲突，必须体现当前难度。',
         '现在生成第一轮自由辩论发言。自由辩论不是一问一答接质，双方都可以在同一轮中回应、推进并提出一个或多个问题。',
         '如果上面的风格提示要求“每次只提出一个问题”或使用【漏洞判断】格式，在自由辩论模式中不适用，以本段自由辩论规则为准。',
+        '自由辩论必须基于用户提前填写的主要论点进行交锋。不得自行替用户添加新定义、新标准或新论点；不得把用户没有主张过的内容当作用户立场攻击。',
+        '如果用户准备内容不完整，你应要求用户补充，而不是自行脑补。',
         '注意：用户还没有回答，所以不得输出“漏洞判断”、不得评价用户回答、不得使用【漏洞判断】格式。',
         '严格要求：发言要像自由辩论中的短促发言；新手约80-120字，校赛约120-180字，市赛约160-230字；可以提出多个问题或多个推进点，但不要写成长篇立论；语言适合高中学生；句子必须完整，不要为了压缩字数截断。'
       ].join('\n')
     },
     {
       role: 'user',
-      content: `辩题：${topic}\n请站在${opponentSideLabel}，向${userSideLabel}做第一轮自由辩论发言。`
+      content: [
+        `辩题：${topic}`,
+        `用户方提前填写的自由辩论主要论点：\n${freeDebatePrep || '未提供'}`,
+        `请站在${opponentSideLabel}，只基于上述用户方论点向${userSideLabel}做第一轮自由辩论发言。`
+      ].join('\n\n')
     }
   ];
 }
 
-export function buildRespondMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, history, answer, defensePrep }) {
+export function buildRespondMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, history, answer, defensePrep, freeDebatePrep }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
   const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
@@ -638,6 +657,7 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
           '你是高中生辩论赛中的二辩质询陪练。',
           `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
           sideJudgementInstruction,
+          completeOutputInstruction,
           modeInstruction,
           '当前是防守训练：AI 只攻，用户只防守。',
           '难度要求会决定问题的直接程度、复杂度、长度、刁钻程度和论证引用密度；必须优先执行当前难度要求。',
@@ -669,6 +689,7 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
           `当前训练模式：${modeProfile.label}。`,
           `用户立场是${userSideLabel}，AI 立场是${opponentSideLabel}。`,
           sideJudgementInstruction,
+          completeOutputInstruction,
           modeInstruction,
           '难度要求会决定问题的直接程度、复杂度、长度、刁钻程度和论证引用密度；除非模式规则冲突，必须优先执行当前难度要求。',
           '正方永远先进行，反方随后进行。',
@@ -695,11 +716,15 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
         '你是高中生辩论赛中的二辩攻辩陪练。',
         `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
         sideJudgementInstruction,
+        completeOutputInstruction,
         modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。',
         '难度要求会决定问题的直接程度、复杂度、长度、刁钻程度和论证引用密度；除非自由辩论短促发言规则冲突，必须体现当前难度。',
         '当前是自由辩论，不是“一问一答”的接质。你可以在同一轮中回应用户、推进本方论点，并提出一个或多个问题。',
         '如果上面的风格提示要求“每次只提出一个问题”或使用【漏洞判断】格式，在自由辩论模式中不适用，以本段自由辩论规则为准。',
+        '自由辩论必须基于用户提前填写的主要论点和已经在对话中说出的内容进行交锋。',
+        '不得自行替用户添加新定义、新标准或新论点；不得自行假设用户方没有说过的论点；不得把用户没有主张过的内容当作用户立场攻击。',
+        '如果用户表达不完整，你应要求用户补充，而不是自行脑补。',
         '尽量保持比赛中的短促表达；新手约80-120字，校赛约120-180字，市赛约160-230字；可以多点推进，但不要写成长篇攻辩稿。',
         '不要使用【漏洞判断】格式；不要只抛一个问题就结束；句子必须完整，不要为了压缩字数截断。'
       ].join('\n')
@@ -708,6 +733,7 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
       role: 'user',
       content: [
         `辩题：${topic}`,
+        `用户方提前填写的自由辩论主要论点：\n${freeDebatePrep || '未提供'}`,
         `此前对话：\n${transcript || '暂无'}`,
         `用户最新回答：${answer}`,
         `请站在${opponentSideLabel}输出一段自由辩论短发言：先回应，再推进，可提出一个或多个问题。`
@@ -731,9 +757,10 @@ export function buildReviewMessages({ topic, userSide, difficulty, celebrityDeba
         `用户立场是${userSideLabel}，陪练 AI 立场是${opponentSideLabel}。`,
         `当前训练模式：${modeProfile.label}。`,
         sideJudgementInstruction,
+        completeOutputInstruction,
         modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
-        buildReviewRubricInstruction(trainingMode),
+        buildReviewRubricInstruction(trainingMode, difficulty),
         `请根据完整训练过程生成复盘报告。额外关注：${modeProfile.reviewFocus}。`,
         '请用简洁中文输出，适合高中学生阅读。必须严格输出 JSON。'
       ].join('\n')
@@ -758,6 +785,7 @@ export function buildPolishMessages({ topic, userSide, difficulty, celebrityDeba
         '你是高中生二辩攻辩表达教练。',
         `用户立场是${userSideLabel}，对手立场是${opponentSideLabel}。`,
         sideJudgementInstruction,
+        completeOutputInstruction,
         modeInstruction,
         '你的任务是把用户当前的口语化回答整理成更适合被质询时使用的比赛表达。',
         '不要替用户改变核心立场，不要自动帮用户承认对方观点，不要新增虚构事实。',

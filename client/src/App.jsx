@@ -244,12 +244,12 @@ const defaultTaskForm = {
 
 const abilityDimensionMeta = [
   { key: 'overall', label: '综合锋力', color: '#c8502d' },
-  { key: 'caseBuilding', label: '立论建构', color: '#2d7f7a' },
-  { key: 'clash', label: '交锋识别', color: '#415f9d' },
-  { key: 'attack', label: '质询压迫', color: '#9c4f24' },
-  { key: 'defense', label: '防守回应', color: '#6e5aa8' },
-  { key: 'closing', label: '结辩收束', color: '#9b3f58' },
-  { key: 'expression', label: '表达稳定', color: '#4b7280' }
+  { key: 'logic', label: '逻辑推进', color: '#2d7f7a' },
+  { key: 'evidence', label: '例证支撑', color: '#415f9d' },
+  { key: 'defenseStability', label: '防守稳定', color: '#6e5aa8' },
+  { key: 'counterPressure', label: '反压能力', color: '#9c4f24' },
+  { key: 'battlefieldControl', label: '战场控制', color: '#9b3f58' },
+  { key: 'expression', label: '表达效率', color: '#4b7280' }
 ];
 
 const teamCodeStorageKey = 'ai-debate-coach-team-code';
@@ -329,6 +329,7 @@ function App() {
   const [structuredReview, setStructuredReview] = useState(null);
   const [isTraining, setIsTraining] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isReviewing, setIsReviewing] = useState(false);
   const [error, setError] = useState('');
   const [setupStep, setSetupStep] = useState('topic');
   const [longOutputPromptMode, setLongOutputPromptMode] = useState('');
@@ -336,6 +337,7 @@ function App() {
   const [generatedTopics, setGeneratedTopics] = useState([]);
   const [recentGeneratedTopics, setRecentGeneratedTopics] = useState({});
   const [defensePrep, setDefensePrep] = useState('');
+  const [freeDebatePrep, setFreeDebatePrep] = useState('');
   const [isPolishing, setIsPolishing] = useState(false);
   const [polishResult, setPolishResult] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -376,7 +378,7 @@ function App() {
     ? `市赛 · ${selectedDebater?.shortName || '明星辩手'}`
     : getOptionLabel(difficulties, config.difficulty);
   const latestAiMessage = useMemo(() => getLatestMessage(history, 'ai'), [history]);
-  const isBusy = isLoading || isPolishing || isTranscribing;
+  const isBusy = isLoading || isReviewing || isPolishing || isTranscribing;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
   const isLoggedIn = Boolean(authToken && currentUser?.id);
   const currentTeam = currentSpace.type === 'team'
@@ -1193,10 +1195,20 @@ function App() {
     setError('');
   }
 
+  function goToFreeDebatePrepStep() {
+    if (isTraining || isBusy) return;
+    setSetupStep('freeDebatePrep');
+    setError('');
+  }
+
   function goBackFromSetupStep() {
     if (isTraining || isBusy) return;
     setError('');
     if (setupStep === 'defensePrep') {
+      setSetupStep('rounds');
+      return;
+    }
+    if (setupStep === 'freeDebatePrep') {
       setSetupStep('rounds');
       return;
     }
@@ -1242,6 +1254,10 @@ function App() {
       return '请先填写己方分论点和论据，AI 才能根据你的立论进行质询。';
     }
 
+    if (config.trainingMode === 'free_debate' && !freeDebatePrep.trim()) {
+      return '请至少填写一个主要论点，方便 AI 基于你的真实观点进行交锋。';
+    }
+
     return '';
   }
 
@@ -1274,6 +1290,7 @@ function App() {
       const data = await postJson('/api/debate/start', {
         ...config,
         defensePrep: defensePrep.trim(),
+        freeDebatePrep: freeDebatePrep.trim(),
         history: []
       });
       const content = requireContent(data);
@@ -1321,6 +1338,7 @@ function App() {
       const data = await postJson('/api/debate/respond', {
         ...config,
         defensePrep: defensePrep.trim(),
+        freeDebatePrep: freeDebatePrep.trim(),
         history: nextHistory,
         answer: trimmedAnswer
       });
@@ -1345,7 +1363,7 @@ function App() {
       return;
     }
 
-    setIsLoading(true);
+    setIsReviewing(true);
     setError('');
 
     try {
@@ -1363,7 +1381,7 @@ function App() {
     } catch (requestError) {
       setError(getFriendlyError(requestError));
     } finally {
-      setIsLoading(false);
+      setIsReviewing(false);
     }
   }
 
@@ -1390,6 +1408,7 @@ function App() {
     setGeneratedTopics([]);
     setRecentGeneratedTopics({});
     setDefensePrep('');
+    setFreeDebatePrep('');
     setSetupStep('topic');
     setLongOutputPromptMode('');
     setActiveTaskSession(null);
@@ -2181,7 +2200,7 @@ function App() {
         </section>
       )}
 
-      {!hasSessionContent && (setupStep === 'rounds' || setupStep === 'defensePrep' || setupStep === 'ready') && (
+      {!hasSessionContent && (setupStep === 'rounds' || setupStep === 'defensePrep' || setupStep === 'freeDebatePrep' || setupStep === 'ready') && (
         <section className="match-strip" aria-label="对阵信息">
           <div className="side-card user-side">
             <span>你方</span>
@@ -2206,7 +2225,7 @@ function App() {
           <div className="setup-progress" aria-label="赛前设置进度">
             <span className={setupStep === 'topic' ? 'active' : 'done'}>1 辩题</span>
             <span className={setupStep === 'mode' ? 'active' : setupStep === 'topic' ? '' : 'done'}>2 模式</span>
-            <span className={setupStep === 'rounds' || setupStep === 'defensePrep' || setupStep === 'ready' ? 'active' : ''}>3 开赛</span>
+            <span className={setupStep === 'rounds' || setupStep === 'defensePrep' || setupStep === 'freeDebatePrep' || setupStep === 'ready' ? 'active' : ''}>3 开赛</span>
           </div>
 
           {setupStep === 'topic' ? (
@@ -2367,17 +2386,60 @@ function App() {
                 </div>
               )}
 
+              {setupStep === 'freeDebatePrep' && (
+                <div className="defense-prep-card">
+                  <div className="prep-context-grid" aria-label="自由辩论上下文">
+                    <div>
+                      <span>我方立场</span>
+                      <strong>{selectedSideLabel}</strong>
+                    </div>
+                    <div>
+                      <span>AI 对立面</span>
+                      <strong>{opponentSideLabel}</strong>
+                    </div>
+                    <div>
+                      <span>训练轮数</span>
+                      <strong>{config.rounds}轮</strong>
+                    </div>
+                  </div>
+                  <label className="field">
+                    <span>自由辩论主要论点</span>
+                    <textarea
+                      value={freeDebatePrep}
+                      disabled={isBusy}
+                      onChange={(event) => {
+                        setFreeDebatePrep(event.target.value);
+                        if (error) setError('');
+                      }}
+                      placeholder="请写下你方在自由辩论中准备坚持的主要论点和论据。AI 将只基于这些内容进行反问和质询，不会自行添加你的定义。"
+                      rows={8}
+                    />
+                  </label>
+                  <p className="mode-note">开始后，AI 只能基于你在这里写下的定义、论点、论据，以及后续对话中真实说出的内容进行交锋。</p>
+                </div>
+              )}
+
               <div className="button-stack">
                 <button
                   className="primary-button"
-                  onClick={setupStep === 'rounds' && config.trainingMode === 'defense' ? goToDefensePrepStep : startTraining}
+                  onClick={
+                    setupStep === 'rounds' && config.trainingMode === 'defense'
+                      ? goToDefensePrepStep
+                      : setupStep === 'rounds' && config.trainingMode === 'free_debate'
+                        ? goToFreeDebatePrepStep
+                        : startTraining
+                  }
                   disabled={isBusy}
                 >
                   {setupStep === 'rounds' && config.trainingMode === 'defense'
                     ? '下一步：填写己方观点'
+                    : setupStep === 'rounds' && config.trainingMode === 'free_debate'
+                      ? '下一步：填写主要论点'
                     : isLoading && !isTraining
                       ? '生成中...'
-                      : '开始训练'}
+                      : config.trainingMode === 'free_debate'
+                        ? '进入自由辩论'
+                        : '开始训练'}
                 </button>
                 <button className="ghost-button" onClick={goBackFromSetupStep} disabled={isBusy}>
                   上一步
@@ -2426,6 +2488,12 @@ function App() {
               <div className="message ai thinking">
                 <span>AI 攻辩方</span>
                 <p>正在组织追问<span className="dot-loader" /></p>
+              </div>
+            )}
+            {isReviewing && (
+              <div className="message ai thinking">
+                <span>复盘教练</span>
+                <p>正在生成复盘报告<span className="dot-loader" /></p>
               </div>
             )}
           </div>
@@ -2881,7 +2949,7 @@ function AuthModal({ mode, form, error, isLoading, onSubmit, onChange, onModeCha
             <input
               value={form.username}
               onChange={(event) => onChange({ ...form, username: event.target.value })}
-              placeholder="4-20 位字母、数字或下划线"
+              placeholder="请输入英文字母、数字或下划线"
               autoComplete="username"
               disabled={isLoading}
             />
@@ -2973,101 +3041,110 @@ function AbilityPanel({ estimate, isLoading, error, spaceLabel }) {
           <div className="ability-hero">
             <div>
               <span>当前锋力值</span>
-              <strong>{estimate.overallEstimate || '--'}</strong>
+              <strong>{formatNullableNumber(estimate.overall)} / 100</strong>
               <small>{estimate.level} · 置信度 {estimate.confidence || 0}%</small>
             </div>
             <p>{estimate.note}</p>
           </div>
+
+          {estimate.roleRecommendation && (
+            <div className="role-recommendation-card">
+              <span>适合辩位判断</span>
+              <strong>推荐辩位：{estimate.roleRecommendation.bestRole}</strong>
+              {estimate.roleRecommendation.secondaryRole && (
+                <em>备选辩位：{estimate.roleRecommendation.secondaryRole}</em>
+              )}
+              <p>{estimate.roleRecommendation.reason}</p>
+              <p>{estimate.roleRecommendation.advice}</p>
+            </div>
+          )}
 
           <div className="ability-grid">
             {dimensions.map((dimension) => (
               <article className="ability-card" key={dimension.key}>
                 <div>
                   <span>{dimension.label}</span>
-                  <strong>{dimension.estimate || '--'}</strong>
+                  <strong>{formatNullableNumber(dimension.score)} / 100</strong>
                 </div>
                 <div className="ability-bar" aria-hidden="true">
                   <i style={{ width: `${Math.max(4, Math.min(100, dimension.score || 0))}%` }} />
                 </div>
                 <small>
-                  维度分 {formatNullableNumber(dimension.score)} · 样本 {dimension.records} · 趋势 {formatTrend(dimension.trend)}
+                  样本 {dimension.records} · 趋势 {formatTrend(dimension.trend)}
                 </small>
               </article>
             ))}
           </div>
 
-          <AbilityTrendChart history={history} />
+          <AbilityTrendCharts history={history} dimensions={dimensions} />
         </>
       )}
     </section>
   );
 }
 
-function AbilityTrendChart({ history }) {
+function AbilityTrendCharts({ history, dimensions }) {
   const points = history.slice(-18);
-  const series = abilityDimensionMeta
-    .map((meta) => ({
-      ...meta,
-      values: points.map((item) => meta.key === 'overall'
-        ? item.overallEstimate
-        : toAbilityEstimate(item.dimensions?.[meta.key]))
-    }))
-    .filter((serie) => serie.values.some((value) => Number.isFinite(value)));
-  const minValue = 300;
-  const maxValue = 900;
-  const width = 720;
-  const height = 280;
-  const padding = 34;
+  const chartMetas = [
+    { key: 'overall', label: '综合锋力', color: '#c8502d', current: points.at(-1)?.overall },
+    ...dimensions.map((dimension) => {
+      const meta = abilityDimensionMeta.find((item) => item.key === dimension.key) || dimension;
+      return { ...meta, current: dimension.score };
+    })
+  ];
+
+  return (
+    <div className="ability-chart-grid">
+      {chartMetas.map((meta) => (
+        <AbilityTrendCard key={meta.key} meta={meta} points={points} />
+      ))}
+    </div>
+  );
+}
+
+function AbilityTrendCard({ meta, points }) {
+  const values = points.map((item) => meta.key === 'overall' ? item.overall : item.dimensions?.[meta.key]);
+  const hasValues = values.some((value) => Number.isFinite(Number(value)));
+  const width = 320;
+  const height = 132;
+  const padding = 18;
+
+  function toY(value) {
+    return height - padding - (Math.max(0, Math.min(100, Number(value))) / 100) * (height - padding * 2);
+  }
 
   function toX(index) {
     if (points.length <= 1) return width / 2;
     return padding + (index / (points.length - 1)) * (width - padding * 2);
   }
 
-  function toY(value) {
-    return height - padding - ((value - minValue) / (maxValue - minValue)) * (height - padding * 2);
-  }
-
   return (
     <div className="ability-chart-card">
       <div className="history-detail-header">
         <div>
-          <span>历史能力曲线</span>
-          <h3>最近 {points.length} 次评分变化</h3>
+          <span>{meta.label}</span>
+          <h3>{formatNullableNumber(meta.current)} / 100</h3>
         </div>
       </div>
 
-      {points.length < 2 ? (
+      {points.length < 2 || !hasValues ? (
         <div className="history-empty">再完成一次训练后即可形成趋势曲线。</div>
       ) : (
-        <>
-          <svg className="ability-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="能力变化趋势图">
-            {[300, 450, 600, 750, 900].map((tick) => (
-              <g key={tick}>
-                <line x1={padding} x2={width - padding} y1={toY(tick)} y2={toY(tick)} />
-                <text x={6} y={toY(tick) + 4}>{tick}</text>
-              </g>
-            ))}
-            {series.map((serie) => (
-              <polyline
-                key={serie.key}
-                points={serie.values.map((value, index) => `${toX(index)},${toY(value)}`).join(' ')}
-                stroke={serie.color}
-              />
-            ))}
-            {series[0]?.values.map((_, index) => (
-              <circle key={index} cx={toX(index)} cy={toY(series[0].values[index])} r="3.5" />
-            ))}
-          </svg>
-          <div className="ability-legend">
-            {series.map((serie) => (
-              <span key={serie.key}>
-                <i style={{ background: serie.color }} />
-                {serie.label}
-              </span>
-            ))}
-          </div>
-        </>
+        <svg className="ability-chart mini" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${meta.label}变化趋势图`}>
+          {[0, 50, 100].map((tick) => (
+            <g key={tick}>
+              <line x1={padding} x2={width - padding} y1={toY(tick)} y2={toY(tick)} />
+              <text x={4} y={toY(tick) + 4}>{tick}</text>
+            </g>
+          ))}
+          <polyline
+            points={values.map((value, index) => `${toX(index)},${toY(value)}`).join(' ')}
+            stroke={meta.color}
+          />
+          {values.map((value, index) => (
+            <circle key={index} cx={toX(index)} cy={toY(value)} r="3" />
+          ))}
+        </svg>
       )}
     </div>
   );
@@ -3445,6 +3522,7 @@ function getSetupTitle(setupStep) {
   if (setupStep === 'topic') return '选择辩题与立场';
   if (setupStep === 'rounds') return '选择训练轮数';
   if (setupStep === 'defensePrep') return '填写防守立论要点';
+  if (setupStep === 'freeDebatePrep') return '填写自由辩论主要论点';
   return '确认训练设置';
 }
 
@@ -3591,7 +3669,7 @@ function stringifySpace(space) {
 
 function validateRegisterInput(username, displayName, password, confirmPassword) {
   if (!/^[a-zA-Z0-9_]{4,20}$/.test(username)) {
-    return '用户名仅支持 4-20 位字母、数字和下划线。';
+    return '用户名仅支持 4-20 位英文字母、数字或下划线。';
   }
 
   if (!displayName || displayName.length > 20) {
@@ -3630,13 +3708,13 @@ function validateTeamJoinInput(teamCode, teamPassword, nickname, teamName = null
 }
 
 function extractScoreFromReview(reviewText) {
-  const match = String(reviewText || '').match(/总分[：:]\s*(\d{1,3})\s*\/\s*100/);
+  const match = String(reviewText || '').match(/总分[：:]\s*(\d{1,3}(?:\.\d)?)\s*\/\s*100/);
 
   if (!match) {
     return null;
   }
 
-  return Math.min(100, Math.max(0, Number(match[1])));
+  return formatScoreValue(match[1]);
 }
 
 function extractResultFromReview(reviewText) {
@@ -3658,17 +3736,12 @@ function normalizeStructuredReview(value) {
       : [];
 
   return {
-    score: value.score ?? null,
+    score: formatScoreValue(value.score),
     scoreLevel: value.scoreLevel || value.score_level || '',
     mode: value.mode || value.trainingMode || value.training_mode || '',
     modeDisplayName: value.modeDisplayName || value.mode_display_name || '',
     dimensionScores: dimensionScores
-      .map((item) => ({
-        name: String(item?.name || '').trim(),
-        score: item?.score ?? null,
-        maxScore: item?.maxScore ?? item?.max_score ?? 20,
-        comment: String(item?.comment || '').trim()
-      }))
+      .map((item) => normalizeDimensionScoreItem(item))
       .filter((item) => item.name),
     battlefield: value.battlefield || '',
     mainWeakness: value.mainWeakness || value.main_weakness || '',
@@ -3684,8 +3757,35 @@ function normalizeStructuredReview(value) {
   };
 }
 
+function normalizeDimensionScoreItem(item) {
+  const name = String(item?.name || '').trim();
+  const rawScore = item?.score;
+  const rawMaxScore = Number(item?.maxScore ?? item?.max_score ?? 100);
+  const numericScore = Number(rawScore);
+  const normalizedScore = Number.isFinite(numericScore)
+    ? rawMaxScore && rawMaxScore !== 100
+      ? (numericScore / rawMaxScore) * 100
+      : numericScore
+    : null;
+
+  return {
+    name,
+    score: normalizedScore === null ? null : formatScoreValue(normalizedScore),
+    maxScore: 100,
+    comment: String(item?.comment || '').trim()
+  };
+}
+
+function formatScoreValue(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return value ?? null;
+  return Math.round(Math.max(0, Math.min(100, number)) * 10) / 10;
+}
+
 function formatNullableNumber(value) {
-  return value === null || value === undefined ? '--' : value;
+  if (value === null || value === undefined) return '--';
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(1) : value;
 }
 
 function toAbilityEstimate(score) {
