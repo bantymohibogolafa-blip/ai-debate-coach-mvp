@@ -2,6 +2,8 @@
 import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 import express from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callDeepSeek } from './deepseek.js';
@@ -31,6 +33,8 @@ const trainingRecordsTable = process.env.SUPABASE_TRAINING_TABLE || 'training_re
 const teamsTable = process.env.SUPABASE_TEAMS_TABLE || 'teams';
 const teamMembersTable = process.env.SUPABASE_TEAM_MEMBERS_TABLE || 'team_members';
 const teamTasksTable = process.env.SUPABASE_TEAM_TASKS_TABLE || 'team_tasks';
+const appUsersTable = process.env.SUPABASE_APP_USERS_TABLE || 'app_users';
+const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '30d';
 const aliyunTokenCache = {
   token: '',
   expireTime: 0
@@ -39,7 +43,96 @@ const aliyunTokenCache = {
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
+async function optionalAuth(req, res, next) {
+  const token = extractBearerToken(req);
+  if (!token) return next();
+
+  try {
+    req.user = await verifyAuthToken(token);
+  } catch {
+    req.authExpired = true;
+  }
+
+  return next();
+}
+
+async function requireAuth(req, res, next) {
+  const token = extractBearerToken(req);
+  if (!token) {
+    return res.status(401).json({ message: '该功能需要登录后使用。登录后可跨设备保存团队身份和任务进度。' });
+  }
+
+  try {
+    req.user = await verifyAuthToken(token);
+    return next();
+  } catch {
+    return res.status(401).json({ message: '登录状态已过期，请重新登录。' });
+  }
+}
+
 app.get('/api/health', (req, res) => {
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/register', async (req, res, next) => {
+  try {
+    const payload = validateRegisterPayload(req.body);
+    const existingUser = await fetchUserByUsername(payload.username);
+
+    if (existingUser) {
+      throw httpError(409, '该用户名已被使用，请更换。');
+    }
+
+    const passwordHash = await bcrypt.hash(payload.password, 10);
+    const createdUsers = await supabaseRequest(appUsersTable, {
+      method: 'POST',
+      body: {
+        username: payload.username,
+        password_hash: passwordHash,
+        display_name: payload.displayName,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    });
+    const user = mapAppUserFromDb(createdUsers[0]);
+
+    res.status(201).json({
+      token: signAuthToken(user),
+      user
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/auth/login', async (req, res, next) => {
+  try {
+    const payload = validateLoginPayload(req.body);
+    const userRow = await fetchUserByUsername(payload.username);
+    const isPasswordValid = userRow
+      ? await bcrypt.compare(payload.password, userRow.password_hash || '')
+      : false;
+
+    if (!userRow || !isPasswordValid) {
+      throw httpError(401, '账号或密码错误。');
+    }
+
+    const user = mapAppUserFromDb(userRow);
+    res.json({
+      token: signAuthToken(user),
+      user
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/auth/me', requireAuth, (req, res) => {
+  res.json({ user: req.user });
+});
+
+app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
@@ -108,11 +201,11 @@ app.post('/api/debate/review', async (req, res, next) => {
   }
 });
 
-app.post('/api/team/join', async (req, res, next) => {
+app.post('/api/team/join', requireAuth, async (req, res, next) => {
   try {
-    const memberPayload = validateTeamMemberPayload(req.body);
+    const memberPayload = validateTeamMemberPayload(req.body, req.user);
     await joinTeam(memberPayload);
-    const teams = await fetchJoinedTeams(memberPayload.localUserId);
+    const teams = await fetchJoinedTeams(memberPayload.appUserId);
 
     res.json({
       teams
@@ -122,11 +215,11 @@ app.post('/api/team/join', async (req, res, next) => {
   }
 });
 
-app.post('/api/team/create', async (req, res, next) => {
+app.post('/api/team/create', requireAuth, async (req, res, next) => {
   try {
-    const teamPayload = validateTeamCreatePayload(req.body);
+    const teamPayload = validateTeamCreatePayload(req.body, req.user);
     await createTeam(teamPayload);
-    const teams = await fetchJoinedTeams(teamPayload.localUserId);
+    const teams = await fetchJoinedTeams(teamPayload.appUserId);
 
     res.status(201).json({ teams });
   } catch (error) {
@@ -134,42 +227,35 @@ app.post('/api/team/create', async (req, res, next) => {
   }
 });
 
-app.get('/api/teams/my', async (req, res, next) => {
+app.get('/api/teams/my', requireAuth, async (req, res, next) => {
   try {
-    const localUserId = normalizeText(req.query.localUserId || req.query.userId);
-
-    if (!isValidLocalUserId(localUserId)) {
-      return res.status(400).json({ message: '用户身份无效，请刷新页面后重试。' });
-    }
-
-    const teams = await fetchJoinedTeams(localUserId);
+    const teams = await fetchJoinedTeams(req.user.id);
     res.json({ teams });
   } catch (error) {
     next(error);
   }
 });
 
-app.post('/api/team/leave', async (req, res, next) => {
+app.post('/api/team/leave', requireAuth, async (req, res, next) => {
   try {
-    const { teamCode, localUserId } = validateLeaveTeamPayload(req.body);
-    await leaveTeam({ teamCode, localUserId });
-    const teams = await fetchJoinedTeams(localUserId);
+    const { teamCode, appUserId } = validateLeaveTeamPayload(req.body, req.user);
+    await leaveTeam({ teamCode, localUserId: appUserId });
+    const teams = await fetchJoinedTeams(appUserId);
     res.json({ teams });
   } catch (error) {
     next(error);
   }
 });
 
-app.get('/api/team/members', async (req, res, next) => {
+app.get('/api/team/members', requireAuth, async (req, res, next) => {
   try {
     const teamCode = normalizeTeamCode(req.query.teamCode);
-    const localUserId = normalizeText(req.query.localUserId);
 
-    if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId)) {
+    if (!isValidTeamCode(teamCode)) {
       return res.status(400).json({ message: '团队或用户身份无效，请刷新后重试。' });
     }
 
-    const requester = await requireActiveMembership(teamCode, localUserId);
+    const requester = await requireActiveMembership(teamCode, req.user.id);
     const members = await fetchTeamMembers(teamCode);
     res.json({
       requester: mapTeamMemberFromDb(requester),
@@ -180,9 +266,9 @@ app.get('/api/team/members', async (req, res, next) => {
   }
 });
 
-app.post('/api/team/member/remove', async (req, res, next) => {
+app.post('/api/team/member/remove', requireAuth, async (req, res, next) => {
   try {
-    const payload = validateTeamMemberActionPayload(req.body);
+    const payload = validateTeamMemberActionPayload(req.body, req.user);
     await removeTeamMember(payload);
     const members = await fetchTeamMembers(payload.teamCode);
     res.json({ members: members.map(mapTeamMemberFromDb) });
@@ -191,9 +277,9 @@ app.post('/api/team/member/remove', async (req, res, next) => {
   }
 });
 
-app.post('/api/team/transfer-owner', async (req, res, next) => {
+app.post('/api/team/transfer-owner', requireAuth, async (req, res, next) => {
   try {
-    const payload = validateTeamMemberActionPayload(req.body);
+    const payload = validateTeamMemberActionPayload(req.body, req.user);
     await transferTeamOwner(payload);
     const [members, teams] = await Promise.all([
       fetchTeamMembers(payload.teamCode),
@@ -209,9 +295,9 @@ app.post('/api/team/transfer-owner', async (req, res, next) => {
   }
 });
 
-app.post('/api/team/update-name', async (req, res, next) => {
+app.post('/api/team/update-name', requireAuth, async (req, res, next) => {
   try {
-    const payload = validateTeamUpdateNamePayload(req.body);
+    const payload = validateTeamUpdateNamePayload(req.body, req.user);
     await updateTeamName(payload);
     const teams = await fetchJoinedTeams(payload.localUserId);
     res.json({ teams });
@@ -220,9 +306,9 @@ app.post('/api/team/update-name', async (req, res, next) => {
   }
 });
 
-app.post('/api/team/update-password', async (req, res, next) => {
+app.post('/api/team/update-password', requireAuth, async (req, res, next) => {
   try {
-    const payload = validateTeamUpdatePasswordPayload(req.body);
+    const payload = validateTeamUpdatePasswordPayload(req.body, req.user);
     await updateTeamPassword(payload);
     res.json({ ok: true });
   } catch (error) {
@@ -230,9 +316,9 @@ app.post('/api/team/update-password', async (req, res, next) => {
   }
 });
 
-app.post('/api/team/tasks/create', async (req, res, next) => {
+app.post('/api/team/tasks/create', requireAuth, async (req, res, next) => {
   try {
-    const payload = validateTeamTaskPayload(req.body);
+    const payload = validateTeamTaskPayload(req.body, req.user);
     const task = await createTeamTask(payload);
     res.status(201).json({ task: mapTeamTaskFromDb(task) });
   } catch (error) {
@@ -240,9 +326,9 @@ app.post('/api/team/tasks/create', async (req, res, next) => {
   }
 });
 
-app.get('/api/team/tasks', async (req, res, next) => {
+app.get('/api/team/tasks', requireAuth, async (req, res, next) => {
   try {
-    const { teamCode, localUserId } = validateTeamTaskQuery(req.query);
+    const { teamCode, localUserId } = validateTeamTaskQuery(req.query, req.user);
     await requireActiveMembership(teamCode, localUserId);
     const tasks = await fetchTeamTasksWithProgress(teamCode, localUserId);
     res.json({ tasks });
@@ -251,9 +337,9 @@ app.get('/api/team/tasks', async (req, res, next) => {
   }
 });
 
-app.get('/api/team/tasks/detail', async (req, res, next) => {
+app.get('/api/team/tasks/detail', requireAuth, async (req, res, next) => {
   try {
-    const { taskId, teamCode, localUserId } = validateTeamTaskDetailQuery(req.query);
+    const { taskId, teamCode, localUserId } = validateTeamTaskDetailQuery(req.query, req.user);
     await requireActiveMembership(teamCode, localUserId);
     const task = await requireTeamTask(taskId, teamCode);
     const stats = await fetchTeamTaskStats(task, localUserId);
@@ -267,9 +353,9 @@ app.get('/api/team/tasks/detail', async (req, res, next) => {
   }
 });
 
-app.get('/api/team/tasks/stats', async (req, res, next) => {
+app.get('/api/team/tasks/stats', requireAuth, async (req, res, next) => {
   try {
-    const { taskId, teamCode, localUserId } = validateTeamTaskDetailQuery(req.query);
+    const { taskId, teamCode, localUserId } = validateTeamTaskDetailQuery(req.query, req.user);
     await requireActiveMembership(teamCode, localUserId);
     const task = await requireTeamTask(taskId, teamCode);
     const stats = await fetchTeamTaskStats(task, localUserId);
@@ -279,9 +365,9 @@ app.get('/api/team/tasks/stats', async (req, res, next) => {
   }
 });
 
-app.post('/api/team/tasks/close', async (req, res, next) => {
+app.post('/api/team/tasks/close', requireAuth, async (req, res, next) => {
   try {
-    const payload = validateTeamTaskClosePayload(req.body);
+    const payload = validateTeamTaskClosePayload(req.body, req.user);
     const task = await closeTeamTask(payload);
     res.json({ task: mapTeamTaskFromDb(task) });
   } catch (error) {
@@ -289,7 +375,7 @@ app.post('/api/team/tasks/close', async (req, res, next) => {
   }
 });
 
-app.get('/api/training-records', async (req, res, next) => {
+app.get('/api/training-records', optionalAuth, async (req, res, next) => {
   try {
     const userId = normalizeText(req.query.userId || req.query.localUserId);
     const spaceType = normalizeSpaceType(req.query.spaceType || req.query.scope);
@@ -301,7 +387,7 @@ app.get('/api/training-records', async (req, res, next) => {
     }
 
     const records = spaceType === 'personal'
-      ? await fetchPersonalTrainingRecords(localUserId, limit)
+      ? await fetchPersonalTrainingRecords(localUserId, limit, req.user?.id)
       : await fetchLegacyTrainingRecords(localUserId, limit);
     res.json({ records: records.map(mapTrainingRecordFromDb) });
   } catch (error) {
@@ -309,9 +395,9 @@ app.get('/api/training-records', async (req, res, next) => {
   }
 });
 
-app.post('/api/training-records', async (req, res, next) => {
+app.post('/api/training-records', optionalAuth, async (req, res, next) => {
   try {
-    const record = await validateTrainingRecordPayload(req.body);
+    const record = await validateTrainingRecordPayload(req.body, req.user);
     const savedRecords = await insertTrainingRecord(record);
 
     res.status(201).json({ record: mapTrainingRecordFromDb(savedRecords[0]) });
@@ -320,7 +406,7 @@ app.post('/api/training-records', async (req, res, next) => {
   }
 });
 
-app.get('/api/training-records/my', async (req, res, next) => {
+app.get('/api/training-records/my', optionalAuth, async (req, res, next) => {
   try {
     const teamCode = normalizeTeamCode(req.query.teamCode);
     const localUserId = normalizeText(req.query.localUserId);
@@ -331,32 +417,35 @@ app.get('/api/training-records/my', async (req, res, next) => {
     }
 
     if (spaceType === 'personal') {
-      const records = await fetchPersonalTrainingRecords(localUserId, 50);
+      const records = await fetchPersonalTrainingRecords(localUserId, 50, req.user?.id);
       return res.json({ records: records.map(mapTrainingRecordFromDb) });
+    }
+
+    if (!req.user) {
+      throw httpError(401, '该功能需要登录后使用。登录后可跨设备保存团队身份和任务进度。');
     }
 
     if (!isValidTeamCode(teamCode)) {
       return res.status(400).json({ message: '团队信息无效，请重新加入团队。' });
     }
 
-    await requireActiveMembership(teamCode, localUserId);
-    const records = await fetchMyTrainingRecords(teamCode, localUserId, 50);
+    await requireActiveMembership(teamCode, req.user.id);
+    const records = await fetchMyTrainingRecords(teamCode, req.user.id, 50);
     res.json({ records: records.map(mapTrainingRecordFromDb) });
   } catch (error) {
     next(error);
   }
 });
 
-app.get('/api/training-records/team', async (req, res, next) => {
+app.get('/api/training-records/team', requireAuth, async (req, res, next) => {
   try {
     const teamCode = normalizeTeamCode(req.query.teamCode);
-    const localUserId = normalizeText(req.query.localUserId);
 
-    if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId)) {
+    if (!isValidTeamCode(teamCode)) {
       return res.status(400).json({ message: '团队码无效，请重新加入团队。' });
     }
 
-    await requireActiveMembership(teamCode, localUserId);
+    await requireActiveMembership(teamCode, req.user.id);
     const records = await fetchTeamTrainingRecords(teamCode, 50);
     res.json({ records: records.map(mapTrainingRecordFromDb) });
   } catch (error) {
@@ -364,16 +453,15 @@ app.get('/api/training-records/team', async (req, res, next) => {
   }
 });
 
-app.get('/api/team/stats', async (req, res, next) => {
+app.get('/api/team/stats', requireAuth, async (req, res, next) => {
   try {
     const teamCode = normalizeTeamCode(req.query.teamCode);
-    const localUserId = normalizeText(req.query.localUserId);
 
-    if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId)) {
+    if (!isValidTeamCode(teamCode)) {
       return res.status(400).json({ message: '团队码无效，请重新加入团队。' });
     }
 
-    await requireActiveMembership(teamCode, localUserId);
+    await requireActiveMembership(teamCode, req.user.id);
     const stats = await fetchTeamStats(teamCode);
     res.json(stats);
   } catch (error) {
@@ -381,16 +469,19 @@ app.get('/api/team/stats', async (req, res, next) => {
   }
 });
 
-app.get('/api/ability/estimate', async (req, res, next) => {
+app.get('/api/ability/estimate', optionalAuth, async (req, res, next) => {
   try {
     const { spaceType, teamCode, localUserId } = validateAbilityEstimateQuery(req.query);
     let records = [];
 
     if (spaceType === 'team') {
-      await requireActiveMembership(teamCode, localUserId);
-      records = await fetchMyTrainingRecords(teamCode, localUserId, 120);
+      if (!req.user) {
+        throw httpError(401, '该功能需要登录后使用。登录后可跨设备保存团队身份和任务进度。');
+      }
+      await requireActiveMembership(teamCode, req.user.id);
+      records = await fetchMyTrainingRecords(teamCode, req.user.id, 120);
     } else {
-      records = await fetchPersonalTrainingRecords(localUserId, 120);
+      records = await fetchPersonalTrainingRecords(localUserId, 120, req.user?.id);
     }
 
     res.json(buildAbilityEstimate(records));
@@ -440,6 +531,37 @@ app.use((error, req, res, next) => {
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
+
+function validateRegisterPayload(body) {
+  const username = normalizeUsername(body.username);
+  const password = String(body.password || '');
+  const displayName = normalizeNickname(body.displayName || body.display_name);
+
+  if (!isValidUsername(username)) {
+    throw badRequest('用户名仅支持 4-20 位字母、数字和下划线。');
+  }
+
+  if (!password || password.length < 6) {
+    throw badRequest('密码至少需要 6 位。');
+  }
+
+  if (!isValidNickname(displayName)) {
+    throw badRequest('昵称不能为空，且不能超过 20 个字符。');
+  }
+
+  return { username, password, displayName };
+}
+
+function validateLoginPayload(body) {
+  const username = normalizeUsername(body.username);
+  const password = String(body.password || '');
+
+  if (!username || !password) {
+    throw httpError(401, '账号或密码错误。');
+  }
+
+  return { username, password };
+}
 
 function validateSessionPayload(body) {
   const topic = normalizeText(body.topic);
@@ -496,7 +618,7 @@ function validateSessionPayload(body) {
   };
 }
 
-async function validateTrainingRecordPayload(body) {
+async function validateTrainingRecordPayload(body, authUser = null) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
   const localUserId = normalizeText(body.localUserId || body.local_user_id || body.userId || body.user_id);
   const nickname = normalizeNickname(body.nickname);
@@ -519,15 +641,19 @@ async function validateTrainingRecordPayload(body) {
   }
 
   let normalizedTeamCode = null;
-  let normalizedNickname = '个人用户';
+  let normalizedNickname = authUser?.displayName || nickname || '个人用户';
 
   if (spaceType === 'team') {
+    if (!authUser?.id) {
+      throw httpError(401, '该功能需要登录后使用。登录后可跨设备保存团队身份和任务进度。');
+    }
+
     normalizedTeamCode = teamCode;
     if (!isValidTeamCode(normalizedTeamCode)) {
       throw badRequest('团队身份信息无效，请重新加入团队。');
     }
 
-    const activeMember = await requireActiveMembership(normalizedTeamCode, localUserId);
+    const activeMember = await requireActiveMembership(normalizedTeamCode, authUser.id);
     normalizedNickname = normalizeNickname(activeMember.nickname || nickname);
 
     if (taskId) {
@@ -589,6 +715,7 @@ async function validateTrainingRecordPayload(body) {
     space_type: spaceType,
     team_code: normalizedTeamCode,
     local_user_id: localUserId,
+    app_user_id: authUser?.id || null,
     nickname: normalizedNickname,
     topic,
     user_side: userSide,
@@ -616,11 +743,12 @@ async function validateTrainingRecordPayload(body) {
   return record;
 }
 
-function validateTeamMemberPayload(body) {
+function validateTeamMemberPayload(body, authUser) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
   const teamPassword = normalizeText(body.teamPassword || body.team_password);
   const nickname = normalizeNickname(body.nickname);
   const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const appUserId = authUser?.id;
 
   if (!isValidTeamCode(teamCode)) {
     throw badRequest('请输入 3-32 位团队码，只能包含字母、数字、短横线或下划线。');
@@ -634,19 +762,20 @@ function validateTeamMemberPayload(body) {
     throw badRequest('请输入 1-20 个字符的昵称。');
   }
 
-  if (!isValidLocalUserId(localUserId)) {
-    throw badRequest('用户身份无效，请刷新页面后重试。');
+  if (!isUuid(appUserId)) {
+    throw httpError(401, '登录状态已过期，请重新登录。');
   }
 
-  return { teamCode, teamPassword, nickname, localUserId };
+  return { teamCode, teamPassword, nickname, localUserId, appUserId };
 }
 
-function validateTeamCreatePayload(body) {
+function validateTeamCreatePayload(body, authUser) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
   const teamName = normalizeTeamName(body.teamName || body.team_name || teamCode);
   const teamPassword = normalizeText(body.teamPassword || body.team_password);
   const nickname = normalizeNickname(body.nickname);
   const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const appUserId = authUser?.id;
 
   if (!isValidTeamCode(teamCode)) {
     throw badRequest('请输入 3-32 位团队码，只能包含字母、数字、短横线或下划线。');
@@ -664,59 +793,59 @@ function validateTeamCreatePayload(body) {
     throw badRequest('请输入 1-20 个字符的昵称。');
   }
 
-  if (!isValidLocalUserId(localUserId)) {
-    throw badRequest('用户身份无效，请刷新页面后重试。');
+  if (!isUuid(appUserId)) {
+    throw httpError(401, '登录状态已过期，请重新登录。');
   }
 
-  return { teamCode, teamName, teamPassword, nickname, localUserId };
+  return { teamCode, teamName, teamPassword, nickname, localUserId, appUserId };
 }
 
-function validateLeaveTeamPayload(body) {
+function validateLeaveTeamPayload(body, authUser) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
-  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const appUserId = authUser?.id;
 
   if (!isValidTeamCode(teamCode)) {
     throw badRequest('团队码无效，请重新选择团队。');
   }
 
-  if (!isValidLocalUserId(localUserId)) {
-    throw badRequest('用户身份无效，请刷新页面后重试。');
+  if (!isUuid(appUserId)) {
+    throw httpError(401, '登录状态已过期，请重新登录。');
   }
 
-  return { teamCode, localUserId };
+  return { teamCode, localUserId: appUserId, appUserId };
 }
 
-function validateTeamMemberActionPayload(body) {
+function validateTeamMemberActionPayload(body, authUser) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
-  const localUserId = normalizeText(body.localUserId || body.local_user_id);
-  const targetLocalUserId = normalizeText(body.targetLocalUserId || body.target_local_user_id);
+  const localUserId = authUser?.id;
+  const targetLocalUserId = normalizeText(body.targetAppUserId || body.target_app_user_id || body.targetLocalUserId || body.target_local_user_id);
 
   if (!isValidTeamCode(teamCode)) {
     throw badRequest('团队码无效，请重新选择团队。');
   }
 
-  if (!isValidLocalUserId(localUserId)) {
-    throw badRequest('用户身份无效，请刷新页面后重试。');
+  if (!isUuid(localUserId)) {
+    throw httpError(401, '登录状态已过期，请重新登录。');
   }
 
-  if (!isValidLocalUserId(targetLocalUserId)) {
+  if (!isValidIdentityId(targetLocalUserId)) {
     throw badRequest('目标成员身份无效，请刷新成员列表后重试。');
   }
 
   return { teamCode, localUserId, targetLocalUserId };
 }
 
-function validateTeamUpdateNamePayload(body) {
+function validateTeamUpdateNamePayload(body, authUser) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
-  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const localUserId = authUser?.id;
   const teamName = normalizeTeamName(body.teamName || body.team_name);
 
   if (!isValidTeamCode(teamCode)) {
     throw badRequest('团队码无效，请重新选择团队。');
   }
 
-  if (!isValidLocalUserId(localUserId)) {
-    throw badRequest('用户身份无效，请刷新页面后重试。');
+  if (!isUuid(localUserId)) {
+    throw httpError(401, '登录状态已过期，请重新登录。');
   }
 
   if (!teamName || teamName.length > 32 || /[<>]/.test(teamName)) {
@@ -726,9 +855,9 @@ function validateTeamUpdateNamePayload(body) {
   return { teamCode, localUserId, teamName };
 }
 
-function validateTeamUpdatePasswordPayload(body) {
+function validateTeamUpdatePasswordPayload(body, authUser) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
-  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const localUserId = authUser?.id;
   const currentPassword = normalizeText(body.currentPassword || body.current_password);
   const nextPassword = normalizeText(body.nextPassword || body.next_password || body.teamPassword || body.team_password);
 
@@ -736,8 +865,8 @@ function validateTeamUpdatePasswordPayload(body) {
     throw badRequest('团队码无效，请重新选择团队。');
   }
 
-  if (!isValidLocalUserId(localUserId)) {
-    throw badRequest('用户身份无效，请刷新页面后重试。');
+  if (!isUuid(localUserId)) {
+    throw httpError(401, '登录状态已过期，请重新登录。');
   }
 
   if (!currentPassword) {
@@ -755,9 +884,9 @@ function validateTeamUpdatePasswordPayload(body) {
   return { teamCode, localUserId, currentPassword, nextPassword };
 }
 
-function validateTeamTaskPayload(body) {
+function validateTeamTaskPayload(body, authUser) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
-  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const localUserId = authUser?.id;
   const title = normalizeText(body.title);
   const topic = normalizeText(body.topic);
   const userSide = normalizeOptionalSide(body.userSide || body.user_side);
@@ -772,8 +901,8 @@ function validateTeamTaskPayload(body) {
     throw badRequest('团队码无效，请重新选择团队。');
   }
 
-  if (!isValidLocalUserId(localUserId)) {
-    throw badRequest('用户身份无效，请刷新页面后重试。');
+  if (!isUuid(localUserId)) {
+    throw httpError(401, '登录状态已过期，请重新登录。');
   }
 
   if (!title || title.length > 80 || /[<>]/.test(title)) {
@@ -815,20 +944,20 @@ function validateTeamTaskPayload(body) {
   };
 }
 
-function validateTeamTaskQuery(query) {
+function validateTeamTaskQuery(query, authUser) {
   const teamCode = normalizeTeamCode(query.teamCode || query.team_code);
-  const localUserId = normalizeText(query.localUserId || query.local_user_id);
+  const localUserId = authUser?.id;
 
-  if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId)) {
+  if (!isValidTeamCode(teamCode) || !isUuid(localUserId)) {
     throw badRequest('团队或用户身份无效，请刷新后重试。');
   }
 
   return { teamCode, localUserId };
 }
 
-function validateTeamTaskDetailQuery(query) {
+function validateTeamTaskDetailQuery(query, authUser) {
   const taskId = normalizeText(query.taskId || query.task_id);
-  const base = validateTeamTaskQuery(query);
+  const base = validateTeamTaskQuery(query, authUser);
 
   if (!isUuid(taskId)) {
     throw badRequest('任务信息无效，请刷新任务列表后重试。');
@@ -837,16 +966,16 @@ function validateTeamTaskDetailQuery(query) {
   return { ...base, taskId };
 }
 
-function validateTeamTaskClosePayload(body) {
+function validateTeamTaskClosePayload(body, authUser) {
   const taskId = normalizeText(body.taskId || body.task_id);
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
-  const localUserId = normalizeText(body.localUserId || body.local_user_id);
+  const localUserId = authUser?.id;
 
   if (!isUuid(taskId)) {
     throw badRequest('任务信息无效，请刷新任务列表后重试。');
   }
 
-  if (!isValidTeamCode(teamCode) || !isValidLocalUserId(localUserId)) {
+  if (!isValidTeamCode(teamCode) || !isUuid(localUserId)) {
     throw badRequest('团队或用户身份无效，请刷新后重试。');
   }
 
@@ -871,6 +1000,10 @@ function validateAbilityEstimateQuery(query) {
 
 function normalizeText(value) {
   return String(value || '').trim();
+}
+
+function normalizeUsername(value) {
+  return normalizeText(value).toLowerCase();
 }
 
 function normalizeTeamCode(value) {
@@ -920,6 +1053,10 @@ function getPublicStatus(error) {
     return 501;
   }
 
+  if (error.code === 'JWT_NOT_CONFIGURED') {
+    return 501;
+  }
+
   if (error.code === 'ASR_NOT_CONFIGURED') {
     return 501;
   }
@@ -948,8 +1085,15 @@ function getPublicErrorMessage(error) {
     return '历史记录服务暂未配置，请检查 Supabase 环境变量。';
   }
 
+  if (error.code === 'JWT_NOT_CONFIGURED') {
+    return '登录服务暂未配置，请检查 JWT_SECRET 环境变量。';
+  }
+
   if (error.code === 'SUPABASE_REQUEST_FAILED') {
     const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
+    if (/app_users|app_user_id|created_by_app_user_id/i.test(detailText)) {
+      return '账号系统数据库表结构尚未更新，请先在 Supabase 执行 supabase-auth-1.sql。';
+    }
     if (/space_type|status|joined_at|join_password|team_tasks|task_id|schema cache|column/i.test(detailText)) {
       return '数据库表结构尚未更新，请先在 Supabase 执行 supabase-team-spaces.sql。';
     }
@@ -981,8 +1125,16 @@ function isUuid(value) {
   return isValidLegacyUserId(value);
 }
 
+function isValidUsername(username) {
+  return /^[a-zA-Z0-9_]{4,20}$/.test(username);
+}
+
 function isValidLocalUserId(localUserId) {
   return /^user_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(localUserId);
+}
+
+function isValidIdentityId(identityId) {
+  return isUuid(identityId) || isValidLocalUserId(identityId);
 }
 
 function normalizeLegacyOrLocalUserId(userId) {
@@ -1038,6 +1190,67 @@ function parseNullableScore(value) {
   return clampNumber(Math.round(score), 0, 100);
 }
 
+function extractBearerToken(req) {
+  const header = String(req.headers.authorization || '');
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1] || '';
+}
+
+function getJwtSecret() {
+  const secret = normalizeText(process.env.JWT_SECRET);
+  if (!secret || secret.length < 24) {
+    const error = new Error('JWT is not configured.');
+    error.code = 'JWT_NOT_CONFIGURED';
+    error.status = 501;
+    throw error;
+  }
+  return secret;
+}
+
+function signAuthToken(user) {
+  return jwt.sign(
+    {
+      sub: user.id,
+      username: user.username,
+      displayName: user.displayName
+    },
+    getJwtSecret(),
+    { expiresIn: jwtExpiresIn }
+  );
+}
+
+async function verifyAuthToken(token) {
+  const payload = jwt.verify(token, getJwtSecret());
+  const user = await fetchUserById(payload.sub);
+  if (!user) {
+    throw httpError(401, '登录状态已过期，请重新登录。');
+  }
+  return mapAppUserFromDb(user);
+}
+
+async function fetchUserByUsername(username) {
+  return getSingleByQuery(
+    appUsersTable,
+    new URLSearchParams({
+      select: 'id,username,password_hash,display_name,created_at,updated_at',
+      username: `eq.${username}`,
+      limit: '1'
+    })
+  );
+}
+
+async function fetchUserById(userId) {
+  if (!isUuid(userId)) return null;
+  return getSingleByQuery(
+    appUsersTable,
+    new URLSearchParams({
+      select: 'id,username,display_name,created_at,updated_at',
+      id: `eq.${userId}`,
+      limit: '1'
+    })
+  );
+}
+
 function getSupabaseConfig() {
   const url = normalizeText(process.env.SUPABASE_URL).replace(/\/$/, '');
   const serviceRoleKey = normalizeText(process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -1052,7 +1265,7 @@ function getSupabaseConfig() {
   return { url, serviceRoleKey };
 }
 
-async function joinTeam({ teamCode, teamPassword, nickname, localUserId }) {
+async function joinTeam({ teamCode, teamPassword, nickname, localUserId, appUserId }) {
   const team = await getSingleByQuery(
     teamsTable,
     new URLSearchParams({
@@ -1073,9 +1286,9 @@ async function joinTeam({ teamCode, teamPassword, nickname, localUserId }) {
   let member = await getSingleByQuery(
     teamMembersTable,
     new URLSearchParams({
-      select: 'id,team_code,local_user_id,nickname,role,status,joined_at,left_at,created_at,last_seen_at',
+      select: 'id,team_code,local_user_id,app_user_id,nickname,role,status,joined_at,left_at,created_at,last_seen_at',
       team_code: `eq.${teamCode}`,
-      local_user_id: `eq.${localUserId}`,
+      app_user_id: `eq.${appUserId}`,
       limit: '1'
     })
   );
@@ -1086,6 +1299,7 @@ async function joinTeam({ teamCode, teamPassword, nickname, localUserId }) {
       body: {
         team_code: teamCode,
         local_user_id: localUserId,
+        app_user_id: appUserId,
         nickname,
         role: 'member',
         status: 'active',
@@ -1097,7 +1311,7 @@ async function joinTeam({ teamCode, teamPassword, nickname, localUserId }) {
     member = createdMembers[0];
   } else {
     const updatedMembers = await supabaseRequest(
-      `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(localUserId)}`,
+      `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&app_user_id=eq.${encodeURIComponent(appUserId)}`,
       {
         method: 'PATCH',
         body: {
@@ -1115,7 +1329,7 @@ async function joinTeam({ teamCode, teamPassword, nickname, localUserId }) {
   return { team, member };
 }
 
-async function createTeam({ teamCode, teamName, teamPassword, nickname, localUserId }) {
+async function createTeam({ teamCode, teamName, teamPassword, nickname, localUserId, appUserId }) {
   const existingTeam = await getSingleByQuery(
     teamsTable,
     new URLSearchParams({
@@ -1146,8 +1360,9 @@ async function createTeam({ teamCode, teamName, teamPassword, nickname, localUse
     body: {
       team_code: teamCode,
       local_user_id: localUserId,
+      app_user_id: appUserId,
       nickname,
-      role: 'owner',
+      role: 'captain',
       status: 'active',
       joined_at: new Date().toISOString(),
       last_seen_at: new Date().toISOString()
@@ -1158,15 +1373,15 @@ async function createTeam({ teamCode, teamName, teamPassword, nickname, localUse
 
 async function leaveTeam({ teamCode, localUserId }) {
   const member = await requireActiveMembership(teamCode, localUserId);
-  if ((member.role || 'member') === 'owner') {
+  if (isTeamOwnerRole(member.role)) {
     const activeMembers = await fetchTeamMembers(teamCode);
-    if (activeMembers.some((item) => item.local_user_id !== localUserId)) {
+    if (activeMembers.some((item) => getMemberIdentityId(item) !== localUserId)) {
       throw badRequest('队长退出团队前，请先把队长权限转让给其他成员。');
     }
   }
 
   await supabaseRequest(
-    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(localUserId)}`,
+    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&app_user_id=eq.${encodeURIComponent(localUserId)}`,
     {
       method: 'PATCH',
       body: {
@@ -1184,7 +1399,7 @@ async function fetchTeamMembers(teamCode) {
   try {
     members = await supabaseRequest(
       `${teamMembersTable}?${new URLSearchParams({
-        select: 'id,team_code,local_user_id,nickname,role,status,joined_at,left_at,created_at,last_seen_at',
+        select: 'id,team_code,local_user_id,app_user_id,nickname,role,status,joined_at,left_at,created_at,last_seen_at',
         team_code: `eq.${teamCode}`,
         status: 'eq.active',
         order: 'joined_at.asc'
@@ -1226,16 +1441,16 @@ async function removeTeamMember({ teamCode, localUserId, targetLocalUserId }) {
   }
 
   const targetMember = await requireActiveMembership(teamCode, targetLocalUserId);
-  if ((targetMember.role || 'member') === 'owner') {
+  if (isTeamOwnerRole(targetMember.role)) {
     throw badRequest('不能移出队长，请先转让队长权限。');
   }
 
   await supabaseRequest(
-    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(targetLocalUserId)}`,
+    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&app_user_id=eq.${encodeURIComponent(targetLocalUserId)}`,
     {
       method: 'PATCH',
       body: {
-        status: 'left',
+        status: 'removed',
         left_at: new Date().toISOString()
       },
       prefer: 'return=representation'
@@ -1247,26 +1462,28 @@ async function transferTeamOwner({ teamCode, localUserId, targetLocalUserId }) {
   await requireTeamOwner(teamCode, localUserId);
   const targetMember = await requireActiveMembership(teamCode, targetLocalUserId);
 
-  if (localUserId === targetLocalUserId || (targetMember.role || 'member') === 'owner') {
+  if (localUserId === targetLocalUserId || isTeamOwnerRole(targetMember.role)) {
     return;
   }
 
-  try {
-    await supabaseRequest('rpc/transfer_team_owner', {
-      method: 'POST',
-      body: {
-        p_team_code: teamCode,
-        p_current_owner_id: localUserId,
-        p_new_owner_id: targetLocalUserId
-      }
-    });
-    return;
-  } catch (error) {
-    if (!isMissingRpcError(error)) throw error;
+  if (!isUuid(localUserId)) {
+    try {
+      await supabaseRequest('rpc/transfer_team_owner', {
+        method: 'POST',
+        body: {
+          p_team_code: teamCode,
+          p_current_owner_id: localUserId,
+          p_new_owner_id: targetLocalUserId
+        }
+      });
+      return;
+    } catch (error) {
+      if (!isMissingRpcError(error)) throw error;
+    }
   }
 
   await supabaseRequest(
-    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(localUserId)}`,
+    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&app_user_id=eq.${encodeURIComponent(localUserId)}`,
     {
       method: 'PATCH',
       body: {
@@ -1279,11 +1496,11 @@ async function transferTeamOwner({ teamCode, localUserId, targetLocalUserId }) {
 
   try {
     await supabaseRequest(
-      `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(targetLocalUserId)}`,
+      `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&app_user_id=eq.${encodeURIComponent(targetLocalUserId)}`,
       {
         method: 'PATCH',
         body: {
-          role: 'owner',
+          role: 'captain',
           status: 'active',
           left_at: null
         },
@@ -1292,11 +1509,11 @@ async function transferTeamOwner({ teamCode, localUserId, targetLocalUserId }) {
     );
   } catch (error) {
     await supabaseRequest(
-      `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&local_user_id=eq.${encodeURIComponent(localUserId)}`,
+      `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&app_user_id=eq.${encodeURIComponent(localUserId)}`,
       {
         method: 'PATCH',
         body: {
-          role: 'owner',
+          role: 'captain',
           status: 'active'
         },
         prefer: 'return=representation'
@@ -1368,6 +1585,7 @@ async function createTeamTask(payload) {
       deadline: payload.deadline,
       description: payload.description,
       created_by: payload.localUserId,
+      created_by_app_user_id: payload.localUserId,
       status: 'active',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -1381,7 +1599,7 @@ async function createTeamTask(payload) {
 async function fetchTeamTasksWithProgress(teamCode, localUserId) {
   const tasks = await supabaseRequest(
     `${teamTasksTable}?${new URLSearchParams({
-      select: 'id,team_code,title,topic,user_side,mode,difficulty,style_id,required_count,deadline,description,created_by,status,created_at,updated_at',
+      select: 'id,team_code,title,topic,user_side,mode,difficulty,style_id,required_count,deadline,description,created_by,created_by_app_user_id,status,created_at,updated_at',
       team_code: `eq.${teamCode}`,
       status: 'eq.active',
       order: 'created_at.desc'
@@ -1402,7 +1620,7 @@ async function requireTeamTask(taskId, teamCode) {
   const task = await getSingleByQuery(
     teamTasksTable,
     new URLSearchParams({
-      select: 'id,team_code,title,topic,user_side,mode,difficulty,style_id,required_count,deadline,description,created_by,status,created_at,updated_at',
+      select: 'id,team_code,title,topic,user_side,mode,difficulty,style_id,required_count,deadline,description,created_by,created_by_app_user_id,status,created_at,updated_at',
       id: `eq.${taskId}`,
       team_code: `eq.${teamCode}`,
       limit: '1'
@@ -1451,7 +1669,7 @@ async function fetchTeamTaskStats(task, currentLocalUserId) {
   const recordsByMember = new Map();
 
   records.forEach((record) => {
-    const key = record.local_user_id;
+    const key = record.app_user_id || record.local_user_id;
     if (!key) return;
     const current = recordsByMember.get(key) || [];
     current.push(record);
@@ -1459,12 +1677,14 @@ async function fetchTeamTaskStats(task, currentLocalUserId) {
   });
 
   const memberProgress = members.map((member) => {
-    const memberRecords = recordsByMember.get(member.local_user_id) || [];
+    const memberIdentityId = getMemberIdentityId(member);
+    const memberRecords = recordsByMember.get(memberIdentityId) || [];
     const scoredRecords = memberRecords.filter((record) => Number.isFinite(Number(record.score)));
     const completedCount = memberRecords.length;
     return {
       nickname: member.nickname || '未命名成员',
-      localUserId: member.local_user_id,
+      localUserId: memberIdentityId,
+      appUserId: member.app_user_id || null,
       completedCount,
       requiredCount,
       averageScore: scoredRecords.length
@@ -1497,14 +1717,15 @@ async function fetchTeamTaskStats(task, currentLocalUserId) {
 
 async function requireActiveMembership(teamCode, localUserId) {
   let member = null;
+  const identityColumn = isUuid(localUserId) ? 'app_user_id' : 'local_user_id';
 
   try {
     member = await getSingleByQuery(
       teamMembersTable,
       new URLSearchParams({
-        select: 'id,team_code,local_user_id,nickname,role,status,joined_at,left_at',
+        select: 'id,team_code,local_user_id,app_user_id,nickname,role,status,joined_at,left_at',
         team_code: `eq.${teamCode}`,
-        local_user_id: `eq.${localUserId}`,
+        [identityColumn]: `eq.${localUserId}`,
         status: 'eq.active',
         limit: '1'
       })
@@ -1531,12 +1752,13 @@ async function requireActiveMembership(teamCode, localUserId) {
 
 async function fetchJoinedTeams(localUserId) {
   let members = [];
+  const identityColumn = isUuid(localUserId) ? 'app_user_id' : 'local_user_id';
 
   try {
     members = await supabaseRequest(
       `${teamMembersTable}?${new URLSearchParams({
-        select: 'id,team_code,local_user_id,nickname,role,status,joined_at,left_at,created_at,last_seen_at',
-        local_user_id: `eq.${localUserId}`,
+        select: 'id,team_code,local_user_id,app_user_id,nickname,role,status,joined_at,left_at,created_at,last_seen_at',
+        [identityColumn]: `eq.${localUserId}`,
         status: 'eq.active',
         order: 'joined_at.desc'
       }).toString()}`
@@ -1624,11 +1846,12 @@ async function fetchLegacyTrainingRecords(localUserId, limit) {
   }
 }
 
-async function fetchPersonalTrainingRecords(localUserId, limit) {
+async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '') {
+  const identityFilter = appUserId ? { app_user_id: `eq.${appUserId}` } : { local_user_id: `eq.${localUserId}` };
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
     space_type: 'eq.personal',
-    local_user_id: `eq.${localUserId}`,
+    ...identityFilter,
     order: 'created_at.desc',
     limit: String(limit)
   });
@@ -1642,11 +1865,12 @@ async function fetchPersonalTrainingRecords(localUserId, limit) {
 }
 
 async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
+  const identityFilter = isUuid(localUserId) ? { app_user_id: `eq.${localUserId}` } : { local_user_id: `eq.${localUserId}` };
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
-    local_user_id: `eq.${localUserId}`,
+    ...identityFilter,
     order: 'created_at.desc',
     limit: String(limit)
   });
@@ -1661,7 +1885,7 @@ async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
 
 async function fetchTeamTrainingRecords(teamCode, limit) {
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
     order: 'created_at.desc',
@@ -1685,7 +1909,7 @@ async function fetchTeamStats(teamCode) {
     .map(mapTrainingRecordFromDb);
 
   records.forEach((record) => {
-    const key = record.local_user_id;
+    const key = record.app_user_id || record.local_user_id;
     if (!key) return;
     const current = memberMap.get(key) || {
       nickname: record.nickname || '未命名成员',
@@ -1731,7 +1955,7 @@ async function fetchTeamStats(teamCode) {
 
 async function fetchAllTeamRecordsForStats(teamCode) {
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
     order: 'created_at.desc',
@@ -1896,7 +2120,7 @@ function getAbilityLevel(estimate) {
 
 async function fetchTaskRecords(taskId, teamCode, { localUserId = '', limit = 1000 } = {}) {
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
     task_id: `eq.${taskId}`,
@@ -1905,7 +2129,7 @@ async function fetchTaskRecords(taskId, teamCode, { localUserId = '', limit = 10
   });
 
   if (localUserId) {
-    query.set('local_user_id', `eq.${localUserId}`);
+    query.set(isUuid(localUserId) ? 'app_user_id' : 'local_user_id', `eq.${localUserId}`);
   }
 
   return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
@@ -1970,6 +2194,7 @@ async function insertTrainingRecord(record) {
 
     const legacyRecord = { ...record };
     delete legacyRecord.space_type;
+    delete legacyRecord.app_user_id;
     if (record.space_type === 'personal') {
       legacyRecord.team_code = getPersonalTeamCode(record.local_user_id);
       await ensureLegacyPersonalTeam(legacyRecord.team_code);
@@ -2045,6 +2270,7 @@ function mapTrainingRecordFromDb(record = {}) {
     spaceType: record.space_type || (record.team_code ? 'team' : 'personal'),
     teamCode: record.team_code,
     localUserId: record.local_user_id,
+    appUserId: record.app_user_id || null,
     nickname: record.nickname,
     topic: record.topic,
     userSide: record.user_side,
@@ -2084,7 +2310,7 @@ function mapTeamTaskFromDb(task = {}) {
     requiredCount: task.required_count || 1,
     deadline: task.deadline,
     description: task.description || '',
-    createdBy: task.created_by,
+    createdBy: task.created_by_app_user_id || task.created_by,
     status: task.status || 'active',
     createdAt: task.created_at,
     updatedAt: task.updated_at
@@ -2095,7 +2321,8 @@ function mapTeamMemberFromDb(member = {}) {
   return {
     id: member.id,
     teamCode: member.team_code,
-    localUserId: member.local_user_id,
+    localUserId: getMemberIdentityId(member),
+    appUserId: member.app_user_id || null,
     nickname: member.nickname,
     role: member.role || 'member',
     status: member.status || 'active',
@@ -2114,8 +2341,22 @@ function mapJoinedTeamFromDb(member = {}, team = {}) {
     teamName: team?.team_name || member.team_code,
     nickname: member.nickname,
     role: member.role || 'member',
+    appUserId: member.app_user_id || null,
     joinedAt: member.joined_at || member.created_at
   };
+}
+
+function mapAppUserFromDb(user = {}) {
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.display_name,
+    createdAt: user.created_at
+  };
+}
+
+function getMemberIdentityId(member = {}) {
+  return member.app_user_id || member.local_user_id;
 }
 
 function roundToOne(value) {

@@ -236,6 +236,8 @@ const teamCodeStorageKey = 'ai-debate-coach-team-code';
 const localUserIdStorageKey = 'ai-debate-coach-local-user-id';
 const appModeStorageKey = 'ai-debate-coach-app-mode';
 const selectedSpaceStorageKey = 'ai-debate-coach-selected-space';
+const authTokenStorageKey = 'fengbian-auth-token';
+const authUserStorageKey = 'fengbian-auth-user';
 const trainingRecordLimit = 20;
 const personalNickname = '个人用户';
 const personalSpace = { type: 'personal', teamCode: '' };
@@ -247,6 +249,14 @@ function App() {
   const [config, setConfig] = useState(initialConfig);
   const [history, setHistory] = useState([]);
   const [localUserId, setLocalUserId] = useState('');
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem(authTokenStorageKey) || '');
+  const [currentUser, setCurrentUser] = useState(() => parseStoredAuthUser());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState('login');
+  const [authForm, setAuthForm] = useState({ username: '', password: '', displayName: '', confirmPassword: '' });
+  const [authError, setAuthError] = useState('');
+  const [authStatus, setAuthStatus] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [currentSpace, setCurrentSpace] = useState(personalSpace);
   const [joinedTeams, setJoinedTeams] = useState([]);
   const [joinForm, setJoinForm] = useState({ teamCode: '', teamName: '', teamPassword: '', nickname: '' });
@@ -347,12 +357,13 @@ function App() {
   const latestAiMessage = useMemo(() => getLatestMessage(history, 'ai'), [history]);
   const isBusy = isLoading || isPolishing || isTranscribing;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
+  const isLoggedIn = Boolean(authToken && currentUser?.id);
   const currentTeam = currentSpace.type === 'team'
     ? joinedTeams.find((team) => team.teamCode === currentSpace.teamCode)
     : null;
   const isTeamSpace = Boolean(currentTeam);
   const currentSpaceLabel = isTeamSpace ? (currentTeam.teamName || currentTeam.teamCode) : '个人模式';
-  const currentNickname = isTeamSpace ? currentTeam.nickname : personalNickname;
+  const currentNickname = isTeamSpace ? currentTeam.nickname : (currentUser?.displayName || personalNickname);
   const currentSpaceValue = isTeamSpace ? `team:${currentTeam.teamCode}` : 'personal';
   const maxRecordingSeconds = 30;
 
@@ -361,7 +372,11 @@ function App() {
     const preferredSpace = parseStoredSpace();
 
     setLocalUserId(storedLocalUserId);
-    loadJoinedTeams(storedLocalUserId, preferredSpace.type === 'team' ? preferredSpace.teamCode : '');
+    if (authToken) {
+      verifyAuthSession(preferredSpace.type === 'team' ? preferredSpace.teamCode : '');
+    } else {
+      setCurrentTrainingSpace(personalSpace);
+    }
   }, []);
 
   useEffect(() => {
@@ -379,7 +394,7 @@ function App() {
     }
 
     loadTeamDashboard(currentTeam.teamCode, localUserId);
-  }, [currentSpace.type, currentSpace.teamCode, isTeamSpace, localUserId]);
+  }, [currentSpace.type, currentSpace.teamCode, isTeamSpace, localUserId, authToken, currentUser?.id]);
 
   useEffect(() => {
     if (currentSpace.type === 'personal' && activeTab === 'team') {
@@ -399,9 +414,100 @@ function App() {
     };
   }, []);
 
+  async function verifyAuthSession(preferredTeamCode = '') {
+    try {
+      const data = await getJson('/api/auth/me');
+      applyAuthSession({ token: localStorage.getItem(authTokenStorageKey) || authToken, user: data.user }, '');
+      await loadJoinedTeams(localUserId || getOrCreateLocalUserId(), preferredTeamCode);
+    } catch {
+      clearAuthSession('登录状态已过期，请重新登录。');
+    }
+  }
+
+  function applyAuthSession({ token, user }, statusMessage) {
+    localStorage.setItem(authTokenStorageKey, token);
+    localStorage.setItem(authUserStorageKey, JSON.stringify(user));
+    setAuthToken(token);
+    setCurrentUser(user);
+    setAuthStatus(statusMessage);
+    setAuthError('');
+  }
+
+  function clearAuthSession(statusMessage = '') {
+    localStorage.removeItem(authTokenStorageKey);
+    localStorage.removeItem(authUserStorageKey);
+    setAuthToken('');
+    setCurrentUser(null);
+    setJoinedTeams([]);
+    setTeamRecords([]);
+    setTeamStats(null);
+    setTeamTasks([]);
+    setCurrentTrainingSpace(personalSpace);
+    setActiveTab('training');
+    setAuthStatus(statusMessage);
+  }
+
+  function requestLogin(message = '该功能需要登录后使用。登录后可跨设备保存团队身份和任务进度。') {
+    setAuthStatus('');
+    setAuthError(message);
+    setAuthMode('login');
+    setIsAuthModalOpen(true);
+  }
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    if (isAuthLoading) return;
+
+    const username = authForm.username.trim();
+    const password = authForm.password;
+    const displayName = authForm.displayName.trim();
+    const confirmPassword = authForm.confirmPassword;
+
+    if (authMode === 'register') {
+      const validationMessage = validateRegisterInput(username, displayName, password, confirmPassword);
+      if (validationMessage) {
+        setAuthError(validationMessage);
+        return;
+      }
+    } else if (!username || !password) {
+      setAuthError('账号或密码错误。');
+      return;
+    }
+
+    setIsAuthLoading(true);
+    setAuthError('');
+
+    try {
+      const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+      const payload = authMode === 'register'
+        ? { username, password, displayName }
+        : { username, password };
+      const data = await postJson(endpoint, payload);
+      applyAuthSession(data, authMode === 'register' ? '注册成功。' : '登录成功。');
+      setAuthForm({ username: '', password: '', displayName: '', confirmPassword: '' });
+      setIsAuthModalOpen(false);
+      await loadJoinedTeams(localUserId || getOrCreateLocalUserId(), '');
+      await loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId || getOrCreateLocalUserId() });
+      await loadAbilityEstimate({ spaceType: 'personal', userId: localUserId || getOrCreateLocalUserId() });
+    } catch (requestError) {
+      setAuthError(getFriendlyError(requestError));
+    } finally {
+      setIsAuthLoading(false);
+    }
+  }
+
+  function logout() {
+    clearAuthSession('已退出登录，当前切换为游客模式。');
+  }
+
   async function joinTeam(event) {
     event.preventDefault();
     if (isJoiningTeam) return;
+
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
 
     const nextTeamCode = normalizeTeamCode(joinForm.teamCode);
     const nextTeamName = joinForm.teamName.trim();
@@ -453,6 +559,12 @@ function App() {
   }
 
   async function loadJoinedTeams(userId, preferredTeamCode = '') {
+    if (!localStorage.getItem(authTokenStorageKey)) {
+      setJoinedTeams([]);
+      setCurrentTrainingSpace(personalSpace);
+      return;
+    }
+
     setIsTeamsLoading(true);
     try {
       const data = await getJson(`/api/teams/my?localUserId=${encodeURIComponent(userId)}`);
@@ -491,6 +603,10 @@ function App() {
     if (isBusy || isRecording) return;
 
     if (value === 'join') {
+      if (!isLoggedIn) {
+        requestLogin();
+        return;
+      }
       setJoinError('');
       setJoinSuccess('');
       setJoinedTeamPrompt(null);
@@ -505,6 +621,10 @@ function App() {
     }
 
     const teamCode = normalizeTeamCode(value.replace(/^team:/, ''));
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
     const team = joinedTeams.find((item) => item.teamCode === teamCode);
     if (team) {
       setCurrentTrainingSpace({ type: 'team', teamCode: team.teamCode });
@@ -513,6 +633,10 @@ function App() {
 
   async function confirmLeaveTeam() {
     if (!leaveTarget || isLeavingTeam) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
 
     setIsLeavingTeam(true);
     setLeaveError('');
@@ -538,6 +662,10 @@ function App() {
 
   async function openTeamMembers(team) {
     if (isBusy || isRecording) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
     setMemberModalTeam(team);
     setTeamSettingsForm({ teamName: team.teamName || team.teamCode, currentPassword: '', nextPassword: '' });
     setMemberActionError('');
@@ -565,6 +693,10 @@ function App() {
 
   async function removeTeamMember(member) {
     if (!memberModalTeam || activeMemberActionId) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
     const confirmed = window.confirm(`确认将「${member.nickname || '该成员'}」移出团队吗？对方过去的训练记录会保留，但不能再查看团队数据或保存新记录。`);
     if (!confirmed) return;
 
@@ -589,6 +721,10 @@ function App() {
 
   async function transferTeamOwner(member) {
     if (!memberModalTeam || activeMemberActionId) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
     const confirmed = window.confirm(`确认把「${memberModalTeam.teamName || memberModalTeam.teamCode}」的队长权限转让给「${member.nickname || '该成员'}」吗？转让后你将变为普通成员。`);
     if (!confirmed) return;
 
@@ -605,7 +741,9 @@ function App() {
       const nextTeams = Array.isArray(data.teams) ? data.teams : joinedTeams;
       setJoinedTeams(nextTeams);
       setTeamMembers(Array.isArray(data.members) ? data.members : []);
-      setTeamMembersRequester((Array.isArray(data.members) ? data.members : []).find((item) => item.localUserId === localUserId) || null);
+      setTeamMembersRequester((Array.isArray(data.members) ? data.members : []).find((item) => {
+        return item.localUserId === (currentUser?.id || localUserId) || item.appUserId === currentUser?.id;
+      }) || null);
       const updatedTeam = nextTeams.find((team) => team.teamCode === memberModalTeam.teamCode);
       if (updatedTeam) setMemberModalTeam(updatedTeam);
       setMemberActionStatus(`已将队长权限转让给「${member.nickname || '该成员'}」。`);
@@ -618,6 +756,10 @@ function App() {
 
   async function updateTeamName() {
     if (!memberModalTeam || activeMemberActionId) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
     const nextTeamName = teamSettingsForm.teamName.trim();
     if (!nextTeamName || nextTeamName.length > 32 || /[<>]/.test(nextTeamName)) {
       setMemberActionError('请输入 1-32 个字符的团队名称。');
@@ -651,6 +793,10 @@ function App() {
 
   async function updateTeamPassword() {
     if (!memberModalTeam || activeMemberActionId) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
     const currentPassword = teamSettingsForm.currentPassword.trim();
     const nextPassword = teamSettingsForm.nextPassword.trim();
     if (!currentPassword) {
@@ -687,11 +833,16 @@ function App() {
   }
 
   function viewTeamData(team) {
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
     setCurrentTrainingSpace({ type: 'team', teamCode: team.teamCode });
     setActiveTab('team');
   }
 
   async function loadTeamDashboard(teamCode, userId) {
+    if (!isLoggedIn) return;
     await Promise.all([
       loadMyTrainingRecords({ spaceType: 'team', teamCode, userId }),
       loadTeamData(teamCode, userId),
@@ -720,6 +871,7 @@ function App() {
   }
 
   async function loadTeamData(teamCode, userId = localUserId) {
+    if (!isLoggedIn) return;
     setIsTeamDataLoading(true);
     setTeamDataError('');
 
@@ -739,6 +891,7 @@ function App() {
 
   async function loadTeamTasks(teamCode, userId = localUserId) {
     if (!teamCode || !userId) return;
+    if (!isLoggedIn) return;
     setIsTeamTasksLoading(true);
     setTeamTasksError('');
 
@@ -776,6 +929,10 @@ function App() {
   async function createTeamTask(event) {
     event.preventDefault();
     if (!currentTeam || isTaskActionLoading) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
 
     const title = taskForm.title.trim();
     const topic = taskForm.topic.trim();
@@ -815,6 +972,10 @@ function App() {
 
   async function openTaskDetail(task) {
     if (!currentTeam || !task?.id) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
     setSelectedTaskDetail({ task, stats: null, completedCount: task.completedCount || 0, memberProgress: [] });
     setIsTaskDetailLoading(true);
     setTaskDetailError('');
@@ -839,6 +1000,10 @@ function App() {
 
   async function closeTeamTask(task) {
     if (!currentTeam || !task?.id || isTaskActionLoading) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
     const confirmed = window.confirm(`确认关闭任务「${task.title}」吗？关闭后成员将无法继续通过该任务入口提交训练记录，但历史记录会保留。`);
     if (!confirmed) return;
 
@@ -864,6 +1029,10 @@ function App() {
 
   function startTaskTraining(task) {
     if (!task || isBusy || isRecording) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
     const mode = task.mode || 'free_debate';
     const selectedMode = trainingModes.find((item) => item.value === mode) || trainingModes[2];
     const taskConfig = {
@@ -893,6 +1062,11 @@ function App() {
   }
 
   async function saveTrainingRecord(reviewContent) {
+    if (currentSpace.type === 'team' && !isLoggedIn) {
+      setSaveStatus('复盘已生成，但团队记录需要登录后才能同步。');
+      return;
+    }
+
     setSaveStatus('正在保存本次训练记录...');
 
     try {
@@ -1398,6 +1572,23 @@ function App() {
           <span>当前训练空间：{currentSpaceLabel}</span>
           <strong>当前用户：{currentNickname}</strong>
         </div>
+        <div className="auth-status-card">
+          {isLoggedIn ? (
+            <>
+              <span>已登录：{currentUser.displayName}</span>
+              <strong>{currentUser.username}</strong>
+              <button type="button" onClick={logout}>退出登录</button>
+            </>
+          ) : (
+            <>
+              <span>当前为游客模式。登录后可跨设备保存训练记录、团队身份和任务进度。</span>
+              <div className="auth-actions">
+                <button type="button" onClick={() => { setAuthMode('login'); setAuthError(''); setIsAuthModalOpen(true); }}>登录</button>
+                <button type="button" onClick={() => { setAuthMode('register'); setAuthError(''); setIsAuthModalOpen(true); }}>注册</button>
+              </div>
+            </>
+          )}
+        </div>
         <label className="space-selector">
           <span>切换空间</span>
           <select
@@ -1416,7 +1607,27 @@ function App() {
         </label>
       </section>
 
+      {authStatus && <div className="history-status">{authStatus}</div>}
       {joinSuccess && <div className="history-status">{joinSuccess}</div>}
+
+      {isAuthModalOpen && (
+        <AuthModal
+          mode={authMode}
+          form={authForm}
+          error={authError}
+          isLoading={isAuthLoading}
+          onSubmit={submitAuth}
+          onChange={setAuthForm}
+          onModeChange={(nextMode) => {
+            setAuthMode(nextMode);
+            setAuthError('');
+          }}
+          onClose={() => {
+            setIsAuthModalOpen(false);
+            setAuthError('');
+          }}
+        />
+      )}
 
       {isJoinModalOpen && (
         <div className="modal-backdrop" role="presentation">
@@ -1592,7 +1803,7 @@ function App() {
             {memberActionError && <div className="error-box">{memberActionError}</div>}
             {memberActionStatus && <div className="history-status">{memberActionStatus}</div>}
 
-            {teamMembersRequester?.role === 'owner' && (
+            {['owner', 'captain'].includes(teamMembersRequester?.role) && (
               <div className="team-settings-card">
                 <div className="team-settings-row">
                   <label className="field">
@@ -1651,9 +1862,10 @@ function App() {
             ) : (
               <div className="member-list">
                 {teamMembers.map((member) => {
-                  const isSelf = member.localUserId === localUserId;
-                  const isOwner = member.role === 'owner';
-                  const canManage = teamMembersRequester?.role === 'owner' && !isSelf && !isOwner;
+                  const selfIdentityId = currentUser?.id || localUserId;
+                  const isSelf = member.localUserId === selfIdentityId || member.appUserId === currentUser?.id;
+                  const isOwner = ['owner', 'captain'].includes(member.role);
+                  const canManage = ['owner', 'captain'].includes(teamMembersRequester?.role) && !isSelf && !isOwner;
                   return (
                     <article className="member-list-item" key={member.localUserId}>
                       <div>
@@ -2613,6 +2825,95 @@ function TeamDataPanel({
   );
 }
 
+function AuthModal({ mode, form, error, isLoading, onSubmit, onChange, onModeChange, onClose }) {
+  const isRegister = mode === 'register';
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel auth-modal" role="dialog" aria-modal="true" aria-label={isRegister ? '注册账号' : '登录账号'}>
+        <div className="panel-title">
+          <p className="eyebrow">锋辩账号</p>
+          <h2>{isRegister ? '注册账号' : '登录账号'}</h2>
+          <p className="team-privacy-note">
+            登录后可跨设备保存训练记录、团队身份和任务进度。游客模式仍可临时训练，但不能使用团队功能。
+          </p>
+        </div>
+
+        <form className="team-join-form auth-form" onSubmit={onSubmit}>
+          <label>
+            用户名
+            <input
+              value={form.username}
+              onChange={(event) => onChange({ ...form, username: event.target.value })}
+              placeholder="4-20 位字母、数字或下划线"
+              autoComplete="username"
+              disabled={isLoading}
+            />
+          </label>
+
+          {isRegister && (
+            <label>
+              昵称
+              <input
+                value={form.displayName}
+                onChange={(event) => onChange({ ...form, displayName: event.target.value })}
+                placeholder="训练中展示的昵称"
+                autoComplete="nickname"
+                disabled={isLoading}
+              />
+            </label>
+          )}
+
+          <label>
+            密码
+            <input
+              type="password"
+              value={form.password}
+              onChange={(event) => onChange({ ...form, password: event.target.value })}
+              placeholder="至少 6 位"
+              autoComplete={isRegister ? 'new-password' : 'current-password'}
+              disabled={isLoading}
+            />
+          </label>
+
+          {isRegister && (
+            <label>
+              确认密码
+              <input
+                type="password"
+                value={form.confirmPassword}
+                onChange={(event) => onChange({ ...form, confirmPassword: event.target.value })}
+                placeholder="再次输入密码"
+                autoComplete="new-password"
+                disabled={isLoading}
+              />
+            </label>
+          )}
+
+          {error && <div className="error-box">{error}</div>}
+
+          <div className="modal-actions">
+            <button className="primary-button" type="submit" disabled={isLoading}>
+              {isLoading ? '处理中...' : isRegister ? '注册' : '登录'}
+            </button>
+            <button className="ghost-button" type="button" onClick={onClose} disabled={isLoading}>
+              取消
+            </button>
+          </div>
+          <button
+            className="link-button"
+            type="button"
+            onClick={() => onModeChange(isRegister ? 'login' : 'register')}
+            disabled={isLoading}
+          >
+            {isRegister ? '已有账号？去登录' : '没有账号？去注册'}
+          </button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function AbilityPanel({ estimate, isLoading, error, spaceLabel }) {
   const dimensions = Array.isArray(estimate?.dimensions) ? estimate.dimensions : [];
   const history = Array.isArray(estimate?.history) ? estimate.history : [];
@@ -2979,7 +3280,7 @@ function getOptionLabel(options, value) {
 }
 
 function getTeamRoleLabel(role) {
-  if (role === 'owner') return '队长';
+  if (role === 'owner' || role === 'captain') return '队长';
   return '成员';
 }
 
@@ -3141,8 +3442,37 @@ function parseStoredSpace() {
   return personalSpace;
 }
 
+function parseStoredAuthUser() {
+  try {
+    const user = JSON.parse(localStorage.getItem(authUserStorageKey) || 'null');
+    return user?.id && user?.username ? user : null;
+  } catch {
+    return null;
+  }
+}
+
 function stringifySpace(space) {
   return space.type === 'team' && space.teamCode ? `team:${space.teamCode}` : 'personal';
+}
+
+function validateRegisterInput(username, displayName, password, confirmPassword) {
+  if (!/^[a-zA-Z0-9_]{4,20}$/.test(username)) {
+    return '用户名仅支持 4-20 位字母、数字和下划线。';
+  }
+
+  if (!displayName || displayName.length > 20) {
+    return '昵称不能为空，且不能超过 20 个字符。';
+  }
+
+  if (!password || password.length < 6) {
+    return '密码至少需要 6 位。';
+  }
+
+  if (password !== confirmPassword) {
+    return '两次输入的密码不一致。';
+  }
+
+  return '';
 }
 
 function validateTeamJoinInput(teamCode, teamPassword, nickname, teamName = null) {
@@ -3356,7 +3686,7 @@ function getServerErrorMessage(status, message) {
     return message;
   }
 
-  if (status === 400 && message) {
+  if ([400, 401, 403, 409].includes(status) && message) {
     return message;
   }
 
@@ -3373,12 +3703,14 @@ function getServerErrorMessage(status, message) {
 
 async function postJson(url, body) {
   let response;
+  const token = localStorage.getItem(authTokenStorageKey);
 
   try {
     response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
       body: JSON.stringify(body)
     });
@@ -3397,9 +3729,14 @@ async function postJson(url, body) {
 
 async function getJson(url) {
   let response;
+  const token = localStorage.getItem(authTokenStorageKey);
 
   try {
-    response = await fetch(url);
+    response = await fetch(url, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      }
+    });
   } catch {
     throw new Error('网络连接异常，请稍后重试。');
   }
