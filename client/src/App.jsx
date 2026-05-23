@@ -16,7 +16,13 @@ const celebrityDebaters = [
   { label: '黄执中式', value: 'huang_zhizhong_style', shortName: '黄执中式' },
   { label: '胡渐彪式', value: 'hu_jianbiao_style', shortName: '胡渐彪式' },
   { label: '马薇薇式', value: 'ma_weiwei_style', shortName: '马薇薇式' },
-  { label: '乔布斯式', value: 'steve_jobs_style', shortName: '乔布斯式' }
+  { label: '乔布斯式', value: 'steve_jobs_style', shortName: '乔布斯式' },
+  {
+    label: '罗淼式：理性拆解与锋利质询',
+    value: 'luo_miao_style',
+    shortName: '罗淼式',
+    description: '理性克制但质询锋利，擅长通过定义、前提、因果链和标准稳定性拆解对方论证，适合政策辩、事实辩和高压被质询训练。'
+  }
 ];
 
 const topicDirections = [
@@ -2032,7 +2038,7 @@ function App() {
 
               {isCelebrityMode && (
                 <p className="mode-note">
-                  已启用市赛难度。该模式仅做公开表达风格的训练模拟，不代表人物本人观点或真实发言。
+                  已启用市赛难度。{selectedDebater?.description || '该模式仅做公开表达风格的训练模拟，不代表人物本人观点或真实发言。'}以上为基于公开表达特征的风格化模拟，仅用于辩论训练，不代表相关人物本人观点或真实发言。
                 </p>
               )}
 
