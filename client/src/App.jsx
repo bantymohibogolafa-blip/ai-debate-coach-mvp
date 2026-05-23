@@ -13,10 +13,30 @@ const difficulties = [
 
 const celebrityDebaters = [
   { label: '普通 AI', value: 'none', shortName: '普通 AI' },
-  { label: '黄执中式', value: 'huang_zhizhong_style', shortName: '黄执中式' },
-  { label: '胡渐彪式', value: 'hu_jianbiao_style', shortName: '胡渐彪式' },
-  { label: '马薇薇式', value: 'ma_weiwei_style', shortName: '马薇薇式' },
-  { label: '乔布斯式', value: 'steve_jobs_style', shortName: '乔布斯式' },
+  {
+    label: '黄执中式：价值拆解与情绪洞察',
+    value: 'huang_zhizhong_style',
+    shortName: '黄执中式',
+    description: '价值拆解与情绪洞察并重，擅长从动机、人性、情感成本和价值排序切入追问，适合价值辩、社会议题和需要训练表达温度的被质询训练。'
+  },
+  {
+    label: '胡渐彪式：结构拆解与战场控制',
+    value: 'hu_jianbiao_style',
+    shortName: '胡渐彪式',
+    description: '结构清晰、战场感强，擅长通过定义、标准、比较对象和逻辑层级控制攻防节奏，适合政策辩、机制辩和框架拆解训练。'
+  },
+  {
+    label: '马薇薇式：强攻反击与语言压迫',
+    value: 'ma_weiwei_style',
+    shortName: '马薇薇式',
+    description: '语言锋利、节奏紧凑、压迫感强，擅长抓回避、偷换概念和前后矛盾进行短促追问，适合临场反应和高压攻防训练。'
+  },
+  {
+    label: '乔布斯式：本质判断与愿景压迫',
+    value: 'steve_jobs_style',
+    shortName: '乔布斯式',
+    description: '极简直接、重视本质判断和长期价值，擅长把问题拉回用户体验、价值创造和愿景取舍，适合价值辩、科技议题和框架澄清训练。'
+  },
   {
     label: '罗淼式：理性拆解与锋利质询',
     value: 'luo_miao_style',
