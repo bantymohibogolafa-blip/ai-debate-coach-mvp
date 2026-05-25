@@ -146,9 +146,9 @@ app.post('/api/debate/start', async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body);
     const messages = buildStartMessages(payload);
-    const content = await callDeepSeek(messages, { maxTokens: 360 });
+    const content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'start'));
 
-    res.json({ content: limitLength(cleanOpeningQuestion(content), 320) });
+    res.json({ content: cleanOpeningQuestion(content) });
   } catch (error) {
     next(error);
   }
@@ -164,9 +164,9 @@ app.post('/api/debate/respond', async (req, res, next) => {
     }
 
     const messages = buildRespondMessages({ ...payload, answer });
-    const content = await callDeepSeek(messages, { maxTokens: 420 });
+    const content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'respond'));
 
-    res.json({ content: limitLength(content, 320) });
+    res.json({ content });
   } catch (error) {
     next(error);
   }
@@ -1134,7 +1134,61 @@ function getPublicErrorMessage(error) {
 function limitLength(text, maxLength) {
   const clean = normalizeText(text);
   if (clean.length <= maxLength) return clean;
-  return `${clean.slice(0, maxLength - 1)}…`;
+  return clean.slice(0, maxLength);
+}
+
+function getDebateGenerationOptions(trainingMode, phase) {
+  if (['constructive', 'summary', 'closing'].includes(trainingMode)) {
+    return {
+      maxTokens: phase === 'start' ? 1400 : 1100,
+      temperature: 0.45
+    };
+  }
+
+  if (trainingMode === 'attack') {
+    return { maxTokens: phase === 'start' ? 1000 : 620, temperature: 0.45 };
+  }
+
+  if (trainingMode === 'defense') {
+    return { maxTokens: 620, temperature: 0.45 };
+  }
+
+  return { maxTokens: 560, temperature: 0.45 };
+}
+
+async function callDeepSeekComplete(messages, options) {
+  let content = await callDeepSeek(messages, options);
+  let attempts = 0;
+
+  while (hasIncompleteOutputMarker(content) && attempts < 2) {
+    attempts += 1;
+    content = await callDeepSeek([
+      ...messages,
+      {
+        role: 'assistant',
+        content
+      },
+      {
+        role: 'user',
+        content: [
+          '你刚才的输出中出现了省略号、省略表达或半截句子。',
+          '请把上一条内容完整重写：删除所有“……”“...”“等等”“诸如此类”“此处略”“以下省略”。',
+          '宁可减少分论点数量，也必须把保留下来的每个分论点、摘要、事实依据、质询问题完整写完。',
+          '只输出重写后的正文，不要解释。'
+        ].join('\n')
+      }
+    ], {
+      ...options,
+      maxTokens: Math.max(options?.maxTokens || 700, 1600),
+      temperature: 0.3
+    });
+  }
+
+  return normalizeText(content);
+}
+
+function hasIncompleteOutputMarker(text) {
+  return /……|…|\.{3,}|等等|诸如此类|此处略|以下省略/.test(String(text || ''));
 }
 
 function isValidLegacyUserId(userId) {
