@@ -221,6 +221,42 @@ const trainingModeVenueNames = {
   closing: '结辩训练场'
 };
 
+const polishOptionsByMode = {
+  constructive: [
+    { id: 'constructive_full', label: '立论稿整理版' },
+    { id: 'constructive_opening', label: '简洁开篇版' },
+    { id: 'constructive_structure', label: '结构化论点版' }
+  ],
+  summary: [
+    { id: 'cx_summary_full', label: '攻辩小结版' },
+    { id: 'cx_battlefield', label: '战场结算版' },
+    { id: 'cx_summary_15s', label: '15秒压缩版' }
+  ],
+  free_debate: [
+    { id: 'free_debate_quick', label: '自由辩快攻版' },
+    { id: 'free_debate_counter', label: '短句反击版' },
+    { id: 'free_debate_followup', label: '追问承接版' }
+  ],
+  attack: [
+    { id: 'offensive_cx_question', label: '攻辩质询版' },
+    { id: 'offensive_cx_chain', label: '连续追问版' },
+    { id: 'offensive_cx_30s', label: '30秒比赛版' }
+  ],
+  defense: [
+    { id: 'defensive_response', label: '防守回应版' },
+    { id: 'defensive_cutback', label: '切割反压版' },
+    { id: 'defensive_30s', label: '30秒防守版' }
+  ],
+  closing: [
+    { id: 'closing_full', label: '结辩稿整理版' },
+    { id: 'closing_battlefield', label: '战场整合版' },
+    { id: 'closing_value', label: '价值升华版' }
+  ],
+  general: [
+    { id: 'general_debate', label: '通用辩论表达整理版' }
+  ]
+};
+
 const initialConfig = {
   topic: '',
   userSide: '',
@@ -338,8 +374,10 @@ function App() {
   const [recentGeneratedTopics, setRecentGeneratedTopics] = useState({});
   const [defensePrep, setDefensePrep] = useState('');
   const [freeDebatePrep, setFreeDebatePrep] = useState('');
+  const [trainingSession, setTrainingSession] = useState(null);
   const [isPolishing, setIsPolishing] = useState(false);
   const [polishResult, setPolishResult] = useState(null);
+  const [selectedPolishType, setSelectedPolishType] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -370,6 +408,10 @@ function App() {
     : '待定';
   const selectedDebater = celebrityDebaters.find((item) => item.value === config.celebrityDebater);
   const selectedTrainingMode = trainingModes.find((item) => item.value === config.trainingMode);
+  const currentPolishOptions = polishOptionsByMode[config.trainingMode] || polishOptionsByMode.general;
+  const activePolishType = currentPolishOptions.some((option) => option.id === selectedPolishType)
+    ? selectedPolishType
+    : currentPolishOptions[0].id;
   const heroTitle = `锋辩——${trainingModeVenueNames[config.trainingMode] || '训练准备'}`;
   const isSingleSpeechMode = longOutputModes.includes(config.trainingMode);
   const isAttackMode = config.trainingMode === 'attack';
@@ -1077,6 +1119,7 @@ function App() {
     setSelectedRecord(null);
     setSaveStatus('');
     setPolishResult(null);
+    setSelectedPolishType((polishOptionsByMode[mode] || polishOptionsByMode.general)[0].id);
     setActiveTaskSession({ taskId: task.id, title: task.title, teamCode: task.teamCode || currentTeam?.teamCode });
     setSetupStep(roundSelectionModes.includes(mode) ? 'rounds' : mode === 'defense' ? 'rounds' : 'ready');
     setActiveTab('training');
@@ -1177,11 +1220,13 @@ function App() {
 
   function selectTrainingMode(value) {
     const mode = trainingModes.find((item) => item.value === value) || trainingModes[2];
+    const nextPolishOptions = polishOptionsByMode[value] || polishOptionsByMode.general;
     updateConfig({
       ...config,
       trainingMode: value,
       rounds: mode.rounds
     });
+    setSelectedPolishType(nextPolishOptions[0].id);
     setSetupStep(roundSelectionModes.includes(value) ? 'rounds' : 'ready');
     setGeneratedTopics([]);
     if (longOutputModes.includes(value)) {
@@ -1278,6 +1323,16 @@ function App() {
     setPolishResult(null);
     setSelectedRecord(null);
     setSaveStatus('');
+    const nextTrainingSession = {
+      ...config,
+      aiSide: getOpponentSideValue(config.userSide),
+      userSideLabel: getOptionLabel(sides, config.userSide),
+      aiSideLabel: getOptionLabel(sides, getOpponentSideValue(config.userSide)),
+      defensePrep: defensePrep.trim(),
+      freeDebatePrep: freeDebatePrep.trim(),
+      startedAt: new Date().toISOString()
+    };
+    setTrainingSession(nextTrainingSession);
 
     if (config.trainingMode === 'constructive' && config.userSide === 'affirmative') {
       setHistory([]);
@@ -1288,9 +1343,7 @@ function App() {
 
     try {
       const data = await postJson('/api/debate/start', {
-        ...config,
-        defensePrep: defensePrep.trim(),
-        freeDebatePrep: freeDebatePrep.trim(),
+        ...nextTrainingSession,
         history: []
       });
       const content = requireContent(data);
@@ -1337,8 +1390,11 @@ function App() {
     try {
       const data = await postJson('/api/debate/respond', {
         ...config,
-        defensePrep: defensePrep.trim(),
-        freeDebatePrep: freeDebatePrep.trim(),
+        aiSide: getOpponentSideValue(config.userSide),
+        userSideLabel: getOptionLabel(sides, config.userSide),
+        aiSideLabel: getOptionLabel(sides, getOpponentSideValue(config.userSide)),
+        defensePrep: trainingSession?.defensePrep ?? defensePrep.trim(),
+        freeDebatePrep: trainingSession?.freeDebatePrep ?? freeDebatePrep.trim(),
         history: nextHistory,
         answer: trimmedAnswer
       });
@@ -1367,8 +1423,14 @@ function App() {
     setError('');
 
     try {
+      const sessionForReview = trainingSession || {};
       const data = await postJson('/api/debate/review', {
         ...config,
+        aiSide: sessionForReview.aiSide || getOpponentSideValue(config.userSide),
+        userSideLabel: sessionForReview.userSideLabel || getOptionLabel(sides, config.userSide),
+        aiSideLabel: sessionForReview.aiSideLabel || getOptionLabel(sides, getOpponentSideValue(config.userSide)),
+        defensePrep: sessionForReview.defensePrep ?? defensePrep.trim(),
+        freeDebatePrep: sessionForReview.freeDebatePrep ?? freeDebatePrep.trim(),
         history
       });
       const content = requireContent(data);
@@ -1409,6 +1471,7 @@ function App() {
     setRecentGeneratedTopics({});
     setDefensePrep('');
     setFreeDebatePrep('');
+    setTrainingSession(null);
     setSetupStep('topic');
     setLongOutputPromptMode('');
     setActiveTaskSession(null);
@@ -1539,7 +1602,7 @@ function App() {
     }
   }
 
-  async function polishAnswer() {
+  async function polishAnswer(polishType = activePolishType) {
     if (isBusy || isRecording) return;
 
     const trimmedAnswer = answer.trim();
@@ -1554,12 +1617,25 @@ function App() {
     try {
       const data = await postJson('/api/debate/polish', {
         ...config,
+        mode: config.trainingMode,
+        modeDisplayName: getOptionLabel(trainingModes, config.trainingMode),
+        aiSide: getOpponentSideValue(config.userSide),
+        userSideLabel: getOptionLabel(sides, config.userSide),
+        aiSideLabel: getOptionLabel(sides, getOpponentSideValue(config.userSide)),
+        polishType,
         history,
         answer: trimmedAnswer
       });
+      const fallbackOptions = currentPolishOptions.map((option) => ({
+        ...option,
+        text: option.id === polishType ? data.polished || trimmedAnswer : data.concise || data.polished || trimmedAnswer
+      }));
 
       setPolishResult({
         original: data.original || trimmedAnswer,
+        modeDisplayName: data.modeDisplayName || getOptionLabel(trainingModes, config.trainingMode),
+        selectedType: data.selectedType || polishType,
+        options: Array.isArray(data.options) && data.options.length ? data.options : fallbackOptions,
         polished: data.polished || trimmedAnswer,
         concise: data.concise || trimmedAnswer,
         tip: data.tip || '建议先给结论，再补一个清晰标准。'
@@ -2209,7 +2285,7 @@ function App() {
           <div className="versus-mark">VS</div>
           <div className="side-card ai-side">
             <span>{isCelebrityMode ? '明星辩手模式' : 'AI 攻辩方'}</span>
-            <strong>{isCelebrityMode ? selectedDebater.shortName : opponentSideLabel}</strong>
+            <strong>{isCelebrityMode ? `${selectedDebater.shortName} · ${opponentSideLabel}` : opponentSideLabel}</strong>
           </div>
         </section>
       )}
@@ -2519,6 +2595,28 @@ function App() {
                     placeholder={getAnswerPlaceholder(config.trainingMode)}
                     rows={4}
                   />
+                  <div className="polish-mode-panel">
+                    <div className="polish-mode-label">
+                      <span>当前训练模式：{getOptionLabel(trainingModes, config.trainingMode) || '通用整理'}</span>
+                      <strong>整理表达选项</strong>
+                    </div>
+                    <div className="polish-type-grid">
+                      {currentPolishOptions.map((option) => (
+                        <button
+                          type="button"
+                          key={option.id}
+                          className={option.id === activePolishType ? 'active' : ''}
+                          onClick={() => {
+                            setSelectedPolishType(option.id);
+                            if (polishResult) setPolishResult(null);
+                          }}
+                          disabled={isBusy || isRecording}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div className="speech-panel">
                     <button
                       type="button"
@@ -2531,7 +2629,7 @@ function App() {
                     <button
                       type="button"
                       className="polish-button"
-                      onClick={polishAnswer}
+                      onClick={() => polishAnswer(activePolishType)}
                       disabled={isBusy || isRecording || !answer.trim()}
                     >
                       {isPolishing ? '整理中...' : '整理表达'}
@@ -2557,20 +2655,18 @@ function App() {
                         <span>原始文本</span>
                         <p>{polishResult.original}</p>
                       </div>
-                      <div className="polish-option featured">
-                        <span>攻辩整理版</span>
-                        <p>{polishResult.polished}</p>
-                        <button type="button" onClick={() => usePolishedAnswer(polishResult.polished)}>
-                          使用整理版
-                        </button>
-                      </div>
-                      <div className="polish-option">
-                        <span>30秒比赛版</span>
-                        <p>{polishResult.concise}</p>
-                        <button type="button" onClick={() => usePolishedAnswer(polishResult.concise)}>
-                          使用30秒版
-                        </button>
-                      </div>
+                      {(polishResult.options || []).map((option) => (
+                        <div
+                          className={`polish-option ${option.id === polishResult.selectedType ? 'featured' : ''}`}
+                          key={option.id}
+                        >
+                          <span>{option.label}</span>
+                          <p>{option.text}</p>
+                          <button type="button" onClick={() => usePolishedAnswer(option.text)}>
+                            使用{option.label}
+                          </button>
+                        </div>
+                      ))}
                       <div className="polish-tip">{polishResult.tip}</div>
                     </div>
                   )}
@@ -3506,7 +3602,14 @@ function getLatestMessage(history, role) {
 }
 
 function getOpponentSideValue(userSide) {
-  return userSide === 'affirmative' ? 'negative' : 'affirmative';
+  const normalized = normalizeSideValue(userSide);
+  return normalized === 'affirmative' ? 'negative' : 'affirmative';
+}
+
+function normalizeSideValue(side) {
+  if (side === '正方' || side === 'affirmative') return 'affirmative';
+  if (side === '反方' || side === 'negative') return 'negative';
+  return 'affirmative';
 }
 
 function getRoundPromptLabel(trainingMode) {

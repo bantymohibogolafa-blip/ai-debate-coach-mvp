@@ -1037,6 +1037,54 @@ textarea:focus {
   gap: 12px;
 }
 
+.polish-mode-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.polish-mode-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #687982;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.polish-mode-label strong {
+  color: #c8502d;
+  white-space: nowrap;
+}
+
+.polish-type-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.polish-type-grid button {
+  min-height: 44px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #20313a;
+  background: #fff;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.polish-type-grid button.active {
+  border-color: #2c817f;
+  color: #fff;
+  background: linear-gradient(135deg, #2c817f, #1d6f70);
+}
+
 .record-button,
 .polish-button {
   min-height: 46px;
@@ -2395,6 +2443,14 @@ textarea:focus {
   }
 
   .speech-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .polish-mode-label {
+    display: grid;
+  }
+
+  .polish-type-grid {
     grid-template-columns: 1fr;
   }
 

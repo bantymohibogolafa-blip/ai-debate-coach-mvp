@@ -18,6 +18,8 @@ import {
   isValidTrainingMode,
   normalizeCelebrityDebater,
   normalizeDifficulty,
+  getOpponentSide,
+  getSideLabel,
   normalizeSide,
   normalizeTrainingMode
 } from './prompts.js';
@@ -27,6 +29,7 @@ import {
   getScoringRubric,
   normalizeScoringMode
 } from './scoringRubrics.js';
+import { getPolishOptions, getPolishTypeProfile } from './polishPrompts.js';
 
 dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 
@@ -146,7 +149,7 @@ app.post('/api/debate/start', async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body);
     const messages = buildStartMessages(payload);
-    const content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'start'));
+    const content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'start'), payload);
 
     res.json({ content: cleanOpeningQuestion(content) });
   } catch (error) {
@@ -164,7 +167,7 @@ app.post('/api/debate/respond', async (req, res, next) => {
     }
 
     const messages = buildRespondMessages({ ...payload, answer });
-    const content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'respond'));
+    const content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'respond'), payload);
 
     res.json({ content });
   } catch (error) {
@@ -174,17 +177,19 @@ app.post('/api/debate/respond', async (req, res, next) => {
 
 app.post('/api/debate/polish', async (req, res, next) => {
   try {
-    const payload = validateSessionPayload(req.body);
+    const payload = validateSessionPayload(req.body, { requirePrep: false });
     const answer = normalizeText(req.body.answer);
+    const polishType = normalizeText(req.body.polishType || req.body.polish_type);
+    const modeDisplayName = normalizeText(req.body.modeDisplayName || req.body.mode_display_name);
 
     if (!answer) {
       return res.status(400).json({ message: '请先输入回答。' });
     }
 
-    const messages = buildPolishMessages({ ...payload, answer });
-    const content = await callDeepSeek(messages, { maxTokens: 700, temperature: 0.45 });
+    const messages = buildPolishMessages({ ...payload, answer, polishType, modeDisplayName });
+    const content = await callDeepSeekNoIncompleteMarkers(messages, { maxTokens: 1300, temperature: 0.45 });
 
-    res.json(parsePolishContent(content, answer));
+    res.json(parsePolishContent(content, answer, payload.trainingMode, polishType, modeDisplayName));
   } catch (error) {
     next(error);
   }
@@ -192,7 +197,7 @@ app.post('/api/debate/polish', async (req, res, next) => {
 
 app.post('/api/debate/review', async (req, res, next) => {
   try {
-    const payload = validateSessionPayload(req.body);
+    const payload = validateSessionPayload(req.body, { requirePrep: false });
 
     if (!payload.history.length) {
       return res.status(400).json({ message: '暂无对话，无法复盘。' });
@@ -571,11 +576,14 @@ function validateLoginPayload(body) {
   return { username, password };
 }
 
-function validateSessionPayload(body) {
+function validateSessionPayload(body, { requirePrep = true } = {}) {
   const topic = normalizeText(body.topic);
   const userSide = normalizeSide(normalizeText(body.userSide));
+  const submittedAiSide = normalizeText(body.aiSide || body.ai_side);
+  const normalizedSubmittedAiSide = submittedAiSide ? normalizeSide(submittedAiSide) : '';
+  const aiSide = getOpponentSide(userSide);
   const celebrityDebater = normalizeCelebrityDebater(normalizeText(body.celebrityDebater));
-  const trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode));
+  const trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode || body.mode));
   const difficulty = celebrityDebater === 'none' ? normalizeDifficulty(normalizeText(body.difficulty)) : 'city';
   const rounds = Number(body.rounds);
   const defensePrep = normalizeText(body.defensePrep || body.defense_prep || '');
@@ -588,6 +596,14 @@ function validateSessionPayload(body) {
 
   if (!isValidSide(userSide)) {
     throw badRequest('请选择正方或反方。');
+  }
+
+  if (normalizedSubmittedAiSide && normalizedSubmittedAiSide !== aiSide) {
+    console.warn('[stance-lock] Ignored mismatched aiSide from client', {
+      userSide,
+      submittedAiSide: normalizedSubmittedAiSide,
+      enforcedAiSide: aiSide
+    });
   }
 
   if (!isValidDifficulty(difficulty)) {
@@ -606,17 +622,20 @@ function validateSessionPayload(body) {
     throw badRequest('请选择有效训练轮数。');
   }
 
-  if (trainingMode === 'defense' && !defensePrep) {
+  if (requirePrep && trainingMode === 'defense' && !defensePrep) {
     throw badRequest('请先填写己方分论点和论据。');
   }
 
-  if (trainingMode === 'free_debate' && !freeDebatePrep) {
+  if (requirePrep && trainingMode === 'free_debate' && !freeDebatePrep) {
     throw badRequest('请至少填写一个主要论点，方便 AI 基于你的真实观点进行交锋。');
   }
 
   return {
     topic,
     userSide,
+    aiSide,
+    userSideLabel: getSideLabel(userSide),
+    aiSideLabel: getSideLabel(aiSide),
     difficulty,
     celebrityDebater,
     trainingMode,
@@ -639,7 +658,9 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   const spaceType = normalizeSpaceType(body.spaceType || body.space_type || body.recordScope || body.scope);
   const topic = normalizeText(body.topic);
   const userSide = normalizeSide(normalizeText(body.userSide || body.user_side));
-  const aiSide = normalizeSide(normalizeText(body.aiSide || body.ai_side));
+  const submittedAiSide = normalizeText(body.aiSide || body.ai_side);
+  const normalizedSubmittedAiSide = submittedAiSide ? normalizeSide(submittedAiSide) : '';
+  const aiSide = getOpponentSide(userSide);
   const difficulty = normalizeDifficulty(normalizeText(body.difficulty));
   const styleId = normalizeCelebrityDebater(normalizeText(body.styleId || body.style_id || 'none'));
   const trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode));
@@ -694,8 +715,16 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     throw badRequest('训练记录缺少辩题。');
   }
 
-  if (!isValidSide(userSide) || !isValidSide(aiSide)) {
+  if (!isValidSide(userSide)) {
     throw badRequest('训练记录缺少有效立场。');
+  }
+
+  if (normalizedSubmittedAiSide && normalizedSubmittedAiSide !== aiSide) {
+    console.warn('[stance-lock] Ignored mismatched aiSide in training record', {
+      userSide,
+      submittedAiSide: normalizedSubmittedAiSide,
+      enforcedAiSide: aiSide
+    });
   }
 
   if (!isValidDifficulty(difficulty)) {
@@ -1156,7 +1185,45 @@ function getDebateGenerationOptions(trainingMode, phase) {
   return { maxTokens: 560, temperature: 0.45 };
 }
 
-async function callDeepSeekComplete(messages, options) {
+async function callDeepSeekComplete(messages, options, stanceContext = {}) {
+  let content = await callDeepSeek(messages, options);
+  let attempts = 0;
+
+  while ((hasIncompleteOutputMarker(content) || detectStanceDrift(content)) && attempts < 2) {
+    attempts += 1;
+    const reason = detectStanceDrift(content)
+      ? buildStanceDriftRetryInstruction(stanceContext)
+      : buildIncompleteOutputRetryInstruction();
+    content = await callDeepSeek([
+      ...messages,
+      {
+        role: 'assistant',
+        content
+      },
+      {
+        role: 'user',
+        content: reason
+      }
+    ], {
+      ...options,
+      maxTokens: Math.max(options?.maxTokens || 700, 1600),
+      temperature: 0.3
+    });
+  }
+
+  if (detectStanceDrift(content)) {
+    console.warn('[stance-lock] Replaced drifting model output with fallback challenge.', {
+      trainingMode: stanceContext.trainingMode,
+      userSide: stanceContext.userSide,
+      aiSide: stanceContext.aiSide
+    });
+    return getStanceLockFallbackQuestion(stanceContext);
+  }
+
+  return normalizeText(content);
+}
+
+async function callDeepSeekNoIncompleteMarkers(messages, options) {
   let content = await callDeepSeek(messages, options);
   let attempts = 0;
 
@@ -1170,12 +1237,7 @@ async function callDeepSeekComplete(messages, options) {
       },
       {
         role: 'user',
-        content: [
-          '你刚才的输出中出现了省略号、省略表达或半截句子。',
-          '请把上一条内容完整重写：删除所有“……”“...”“等等”“诸如此类”“此处略”“以下省略”。',
-          '宁可减少分论点数量，也必须把保留下来的每个分论点、摘要、事实依据、质询问题完整写完。',
-          '只输出重写后的正文，不要解释。'
-        ].join('\n')
+        content: buildIncompleteJsonRetryInstruction()
       }
     ], {
       ...options,
@@ -1189,6 +1251,65 @@ async function callDeepSeekComplete(messages, options) {
 
 function hasIncompleteOutputMarker(text) {
   return /……|…|\.{3,}|等等|诸如此类|此处略|以下省略/.test(String(text || ''));
+}
+
+function buildIncompleteOutputRetryInstruction() {
+  return [
+    '你刚才的输出中出现了省略号、省略表达或半截句子。',
+    '请把上一条内容完整重写：删除所有“……”“...”“等等”“诸如此类”“此处略”“以下省略”。',
+    '宁可减少分论点数量，也必须把保留下来的每个分论点、摘要、事实依据、质询问题完整写完。',
+    '只输出重写后的正文，不要解释。'
+  ].join('\n');
+}
+
+function buildIncompleteJsonRetryInstruction() {
+  return [
+    '你刚才的输出中出现了省略号、省略表达或半截句子。',
+    '请把上一条内容完整重写：删除所有“……”“...”“等等”“诸如此类”“此处略”“以下省略”。',
+    '宁可减少信息密度，也必须把每一个保留下来的观点完整写完。',
+    '保持上一条要求的 JSON 字段和数组结构，只输出合法 JSON，不要解释。'
+  ].join('\n');
+}
+
+function buildStanceDriftRetryInstruction(context = {}) {
+  const userSideLabel = context.userSideLabel || getSideLabel(context.userSide);
+  const aiSideLabel = context.aiSideLabel || getSideLabel(context.aiSide || getOpponentSide(context.userSide));
+
+  return [
+    '你上一轮输出违反立场锁定，出现了帮助用户方、教练式表达或站错立场。',
+    `用户方立场：${userSideLabel}`,
+    `AI 方立场：${aiSideLabel}`,
+    '请重新输出。你必须站在 AI 方立场，对用户方进行质询、反驳或压迫，不得帮助用户方。',
+    '禁止出现“你可以这样说”“建议你方”“我帮你完善”“作为教练”“我同意你方”等表达。',
+    '只输出重写后的 AI 方发言，不要解释。'
+  ].join('\n');
+}
+
+function detectStanceDrift(text) {
+  const content = normalizeText(text);
+  const forbiddenPatterns = [
+    '你方可以这样',
+    '建议你方',
+    '帮你补充',
+    '我同意你方',
+    '你的观点很好，我帮你',
+    '站在你方立场',
+    '作为教练',
+    '我建议你',
+    '可以进一步完善为',
+    '你可以这样回应',
+    '我帮你完善',
+    '你的论点可以进一步完善为',
+    '这点你说得很好，我帮你展开',
+    '我们可以从用户方角度'
+  ];
+
+  return forbiddenPatterns.some((pattern) => content.includes(pattern));
+}
+
+function getStanceLockFallbackQuestion(context = {}) {
+  const aiSideLabel = context.aiSideLabel || getSideLabel(context.aiSide || getOpponentSide(context.userSide));
+  return `${aiSideLabel}追问：请正面回应，你方刚才论证中的关键前提是什么？如果这个前提不能成立，你方结论如何继续成立？`;
 }
 
 function isValidLegacyUserId(userId) {
@@ -2640,18 +2761,37 @@ function formatStructuredReview(structuredReview, fallbackContent = '') {
   ].join('\n\n');
 }
 
-function parsePolishContent(content, fallbackAnswer) {
+function parsePolishContent(content, fallbackAnswer, trainingMode, requestedPolishType, modeDisplayName) {
   const clean = normalizeText(content);
   const jsonText = extractJsonObject(clean);
+  const { profile, polishType, typeProfile } = getPolishTypeProfile(trainingMode, requestedPolishType);
+  const expectedOptions = getPolishOptions(trainingMode);
 
   if (jsonText) {
     try {
       const parsed = JSON.parse(jsonText);
+      const parsedOptions = Array.isArray(parsed.options) ? parsed.options : [];
+      const options = expectedOptions.map((expectedOption, index) => {
+        const matchedOption = parsedOptions.find((item) => item?.id === expectedOption.id) || parsedOptions[index] || {};
+        return {
+          id: expectedOption.id,
+          label: expectedOption.label,
+          text: cleanPolishText(matchedOption.text || matchedOption.content || matchedOption.value || '')
+        };
+      });
+
+      const firstText = options.find((option) => option.text)?.text;
+      const legacyPolished = cleanPolishText(parsed.polished);
+      const legacyConcise = cleanPolishText(parsed.concise);
+
       return {
         original: fallbackAnswer,
-        polished: limitLength(parsed.polished, 180) || fallbackAnswer,
-        concise: limitLength(parsed.concise, 130) || limitLength(fallbackAnswer, 130),
-        tip: limitLength(parsed.tip, 120) || '建议先给结论，再补一个清晰标准。'
+        modeDisplayName: normalizeText(parsed.modeDisplayName) || modeDisplayName || profile.displayName,
+        selectedType: normalizeText(parsed.selectedType) || polishType,
+        options: fillMissingPolishOptions(options, fallbackAnswer, polishType, typeProfile.label),
+        polished: legacyPolished || firstText || fallbackAnswer,
+        concise: legacyConcise || options[1]?.text || firstText || fallbackAnswer,
+        tip: cleanPolishText(parsed.tip) || '建议先给结论，再补一个清晰标准。'
       };
     } catch {
       // Fall through to the conservative fallback below.
@@ -2660,10 +2800,41 @@ function parsePolishContent(content, fallbackAnswer) {
 
   return {
     original: fallbackAnswer,
-    polished: limitLength(clean, 180) || fallbackAnswer,
-    concise: limitLength(fallbackAnswer, 130),
+    modeDisplayName: modeDisplayName || profile.displayName,
+    selectedType: polishType,
+    options: fillMissingPolishOptions(
+      expectedOptions.map((option) => ({
+        ...option,
+        text: option.id === polishType ? cleanPolishText(clean) : ''
+      })),
+      fallbackAnswer,
+      polishType,
+      typeProfile.label
+    ),
+    polished: cleanPolishText(clean) || fallbackAnswer,
+    concise: fallbackAnswer,
     tip: '建议先给结论，再补一个清晰标准。'
   };
+}
+
+function fillMissingPolishOptions(options, fallbackAnswer, selectedType, selectedLabel) {
+  const fallbackText = cleanPolishText(fallbackAnswer);
+  return options.map((option) => ({
+    id: option.id || selectedType,
+    label: option.label || selectedLabel,
+    text: cleanPolishText(option.text) || fallbackText
+  }));
+}
+
+function cleanPolishText(value) {
+  return normalizeText(value)
+    .replace(/……/g, '')
+    .replace(/\.{3,}/g, '')
+    .replace(/等等/g, '')
+    .replace(/诸如此类/g, '')
+    .replace(/此处略/g, '')
+    .replace(/以下省略/g, '')
+    .trim();
 }
 
 function extractJsonObject(text) {

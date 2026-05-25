@@ -1,4 +1,5 @@
 import { buildReviewRubricInstruction } from './scoringRubrics.js';
+import { getPolishOptions, getPolishTypeProfile } from './polishPrompts.js';
 
 const difficultyProfiles = {
   novice: {
@@ -67,6 +68,47 @@ const completeOutputInstruction = `
 5. 自由辩论可以简明扼要、节奏快，但观点和问题仍必须完整。
 6. 防守训练的质询问题必须完整，不得出现“正在组织追问”或半截问题。
 `;
+
+function buildStanceLockInstruction({ topic, userSide, aiSide }) {
+  const userSideLabel = getSideLabel(userSide);
+  const aiSideLabel = getSideLabel(aiSide || getOpponentSide(userSide));
+
+  return `
+【最高优先级：立场锁定】
+
+当前辩题：${topic}
+用户方立场：${userSideLabel}
+AI 方立场：${aiSideLabel}
+
+你现在处于训练阶段，不是复盘阶段。
+你不是中立评委，也不是用户教练。
+你必须始终作为用户方的对立方进行发言。
+你只能代表 AI 方立场进行质询、反驳、追问、总结和压迫。
+
+如果用户方是正方，你必须站在反方。
+如果用户方是反方，你必须站在正方。
+
+严禁：
+1. 替用户方补充论证；
+2. 顺着用户方立场说话；
+3. 把用户方观点当作 AI 方观点；
+4. 以中立裁判身份参与训练；
+5. 使用“你可以这样说”“建议你方补充”“我同意你方”等教练式表达；
+6. 在训练阶段帮助用户优化表达；
+7. 用“我们”指代用户方；
+8. 代表用户方发言。
+
+你每一轮输出前都必须自检：
+1. 我是否站在 AI 方立场？
+2. 我是否在帮助用户方？
+3. 我是否应该把这句话改成对用户方的质询或反驳？
+4. 我的输出是否会对用户方形成压力？
+
+如果发现输出会帮助用户方，必须改写为 AI 方对用户方的攻击、质疑或追问。
+
+注意：只有当用户点击“结束并复盘”后，你才可以切换为教练/评审身份。
+`;
+}
 
 const trainingModeProfiles = {
   constructive: {
@@ -526,7 +568,21 @@ export function isValidCelebrityDebater(value) {
 }
 
 export function normalizeTrainingMode(value) {
-  return value || 'free_debate';
+  const mode = String(value || '').trim();
+  const aliases = {
+    constructive_speech: 'constructive',
+    cx_summary: 'summary',
+    offensive_cx: 'attack',
+    defensive_cx: 'defense',
+    closing_speech: 'closing',
+    '立论训练': 'constructive',
+    '攻辩小结': 'summary',
+    '自由辩论': 'free_debate',
+    '攻辩训练': 'attack',
+    '防守训练': 'defense',
+    '结辩训练': 'closing'
+  };
+  return aliases[mode] || mode || 'free_debate';
 }
 
 export function isValidTrainingMode(value) {
@@ -541,17 +597,20 @@ export function getOpponentSide(userSide) {
   return userSide === 'affirmative' ? 'negative' : 'affirmative';
 }
 
-export function buildStartMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, defensePrep, freeDebatePrep }) {
+export function buildStartMessages({ topic, userSide, aiSide, difficulty, celebrityDebater, trainingMode, defensePrep, freeDebatePrep }) {
   const userSideLabel = getSideLabel(userSide);
-  const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
+  const opponentSide = aiSide || getOpponentSide(userSide);
+  const opponentSideLabel = getSideLabel(opponentSide);
   const modeInstruction = getOpeningModeInstruction(difficulty, celebrityDebater);
   const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
+  const stanceLockInstruction = buildStanceLockInstruction({ topic, userSide, aiSide: opponentSide });
 
   if (trainingMode === 'defense') {
     return [
       {
         role: 'system',
         content: [
+          stanceLockInstruction,
           '你是高中生辩论赛中的二辩质询陪练。',
           `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
           sideJudgementInstruction,
@@ -583,7 +642,8 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
       {
         role: 'system',
         content: [
-          '你是高中生辩论训练教练。',
+          stanceLockInstruction,
+          '你是高中生辩论训练中的对立方陪练。',
           `当前训练模式：${modeProfile.label}。`,
           `用户立场是${userSideLabel}，AI 立场是${opponentSideLabel}。`,
           sideJudgementInstruction,
@@ -616,6 +676,7 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
     {
       role: 'system',
       content: [
+        stanceLockInstruction,
         '你是高中生辩论赛中的二辩攻辩陪练。',
         `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
         sideJudgementInstruction,
@@ -642,18 +703,21 @@ export function buildStartMessages({ topic, userSide, difficulty, celebrityDebat
   ];
 }
 
-export function buildRespondMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, history, answer, defensePrep, freeDebatePrep }) {
+export function buildRespondMessages({ topic, userSide, aiSide, difficulty, celebrityDebater, trainingMode, history, answer, defensePrep, freeDebatePrep }) {
   const userSideLabel = getSideLabel(userSide);
-  const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
+  const opponentSide = aiSide || getOpponentSide(userSide);
+  const opponentSideLabel = getSideLabel(opponentSide);
   const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
   const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
   const transcript = formatHistory(history);
+  const stanceLockInstruction = buildStanceLockInstruction({ topic, userSide, aiSide: opponentSide });
 
   if (trainingMode === 'defense') {
     return [
       {
         role: 'system',
         content: [
+          stanceLockInstruction,
           '你是高中生辩论赛中的二辩质询陪练。',
           `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
           sideJudgementInstruction,
@@ -685,6 +749,7 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
       {
         role: 'system',
         content: [
+          stanceLockInstruction,
           '你是高中生辩论训练陪练。',
           `当前训练模式：${modeProfile.label}。`,
           `用户立场是${userSideLabel}，AI 立场是${opponentSideLabel}。`,
@@ -713,6 +778,7 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
     {
       role: 'system',
       content: [
+        stanceLockInstruction,
         '你是高中生辩论赛中的二辩攻辩陪练。',
         `用户立场是${userSideLabel}，你必须站在${opponentSideLabel}。`,
         sideJudgementInstruction,
@@ -742,12 +808,13 @@ export function buildRespondMessages({ topic, userSide, difficulty, celebrityDeb
   ];
 }
 
-export function buildReviewMessages({ topic, userSide, difficulty, celebrityDebater, trainingMode, history }) {
+export function buildReviewMessages({ topic, userSide, aiSide, difficulty, celebrityDebater, trainingMode, history, defensePrep, freeDebatePrep }) {
   const userSideLabel = getSideLabel(userSide);
-  const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
+  const opponentSideLabel = getSideLabel(aiSide || getOpponentSide(userSide));
   const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
   const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
   const transcript = formatHistory(history);
+  const prepContext = getReviewPrepContext(trainingMode, { defensePrep, freeDebatePrep });
 
   return [
     {
@@ -767,16 +834,59 @@ export function buildReviewMessages({ topic, userSide, difficulty, celebrityDeba
     },
     {
       role: 'user',
-      content: `辩题：${topic}\n完整对话：\n${transcript || '暂无'}\n请生成复盘报告。`
+      content: [
+        `辩题：${topic}`,
+        `用户立场：${userSideLabel}`,
+        `AI 立场：${opponentSideLabel}`,
+        prepContext,
+        `完整对话：\n${transcript || '暂无'}`,
+        '请生成复盘报告。'
+      ].filter(Boolean).join('\n\n')
     }
   ];
 }
 
-export function buildPolishMessages({ topic, userSide, difficulty, celebrityDebater, history, answer }) {
+function getReviewPrepContext(trainingMode, { defensePrep, freeDebatePrep }) {
+  if (trainingMode === 'defense') {
+    return defensePrep
+      ? `用户前置防守论点与论据：\n${defensePrep}`
+      : '本轮缺少用户前置防守论点，请主要基于对话记录进行复盘，并提示复盘准确性可能下降。';
+  }
+
+  if (trainingMode === 'free_debate') {
+    return freeDebatePrep
+      ? `用户前置自由辩论主要论点：\n${freeDebatePrep}`
+      : '本轮缺少用户前置主要论点，请主要基于对话记录进行复盘，并提示复盘准确性可能下降。';
+  }
+
+  return '';
+}
+
+export function buildPolishMessages({
+  topic,
+  userSide,
+  difficulty,
+  celebrityDebater,
+  trainingMode,
+  mode,
+  modeDisplayName,
+  polishType,
+  history,
+  answer
+}) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(getOpponentSide(userSide));
   const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
   const transcript = formatHistory(history);
+  const normalizedPolishMode = trainingMode || mode;
+  const { profile, polishType: resolvedPolishType, typeProfile } = getPolishTypeProfile(
+    normalizedPolishMode,
+    polishType
+  );
+  const options = getPolishOptions(normalizedPolishMode);
+  const optionSchema = options
+    .map((option) => `{"id":"${option.id}","label":"${option.label}","text":"整理后的完整表达"}`)
+    .join(',');
 
   return [
     {
@@ -787,13 +897,19 @@ export function buildPolishMessages({ topic, userSide, difficulty, celebrityDeba
         sideJudgementInstruction,
         completeOutputInstruction,
         modeInstruction,
-        '你的任务是把用户当前的口语化回答整理成更适合被质询时使用的比赛表达。',
+        `当前训练模式：${modeDisplayName || profile.displayName}。`,
+        `本次优先整理类型：${typeProfile.label}。`,
+        ...profile.sharedGoal,
+        typeProfile.instruction,
         '不要替用户改变核心立场，不要自动帮用户承认对方观点，不要新增虚构事实。',
+        '不得把用户没有表达过的核心观点强行加进去，可以优化表达，但不能篡改论点。',
+        '不得套用其他训练环节模板，必须符合当前训练模式。',
+        '禁止使用省略号替代完整观点。如果内容较长，请压缩表达，而不是省略。宁可少写几个点，也要把每一个点写完整。',
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
         '必须只输出合法 JSON，不要使用 Markdown，不要加代码块。',
-        'JSON 字段必须为：polished、concise、tip。',
-        'polished：攻辩整理版，适合直接放进回答框，控制在120字以内。',
-        'concise：30秒比赛版，更短、更有判断和反压，控制在80字以内。',
+        'JSON 字段必须为：modeDisplayName、selectedType、options、tip。',
+        `options 必须是数组，必须包含以下 id 和 label，每一项 text 都要完整： [${optionSchema}]`,
+        'selectedType：填写本次优先整理类型 id。',
         'tip：一句表达质量提示，指出当前回答最该补强的地方。'
       ].join('\n')
     },
@@ -801,6 +917,8 @@ export function buildPolishMessages({ topic, userSide, difficulty, celebrityDeba
       role: 'user',
       content: [
         `辩题：${topic}`,
+        `训练模式：${modeDisplayName || profile.displayName}`,
+        `优先整理类型：${typeProfile.label}（${resolvedPolishType}）`,
         `此前对话：\n${transcript || '暂无'}`,
         `用户原始回答：${answer}`,
         `请基于${userSideLabel}立场整理表达。`
