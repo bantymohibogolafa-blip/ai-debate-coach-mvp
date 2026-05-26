@@ -883,7 +883,8 @@ export function buildPolishMessages({
     normalizedPolishMode,
     polishType
   );
-  const options = getPolishOptions(normalizedPolishMode);
+  const allOptions = getPolishOptions(normalizedPolishMode);
+  const options = allOptions.filter((option) => option.id === resolvedPolishType);
   const optionSchema = options
     .map((option) => `{"id":"${option.id}","label":"${option.label}","text":"整理后的完整表达"}`)
     .join(',');
@@ -908,7 +909,8 @@ export function buildPolishMessages({
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
         '必须只输出合法 JSON，不要使用 Markdown，不要加代码块。',
         'JSON 字段必须为：modeDisplayName、selectedType、options、tip。',
-        `options 必须是数组，必须包含以下 id 和 label，每一项 text 都要完整： [${optionSchema}]`,
+        `options 必须是数组，只能包含本次优先整理类型这一项，每一项 text 都要完整： [${optionSchema}]`,
+        '不要输出其他整理类型的内容，不要把多个版本拼进同一个 text。',
         'selectedType：填写本次优先整理类型 id。',
         'tip：一句表达质量提示，指出当前回答最该补强的地方。'
       ].join('\n')

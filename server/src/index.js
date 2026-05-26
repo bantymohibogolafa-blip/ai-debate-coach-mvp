@@ -2765,38 +2765,37 @@ function parsePolishContent(content, fallbackAnswer, trainingMode, requestedPoli
   const clean = normalizeText(content);
   const jsonText = extractJsonObject(clean);
   const { profile, polishType, typeProfile } = getPolishTypeProfile(trainingMode, requestedPolishType);
-  const expectedOptions = getPolishOptions(trainingMode);
+  const allExpectedOptions = getPolishOptions(trainingMode);
+  const selectedExpectedOption = allExpectedOptions.find((option) => option.id === polishType) || allExpectedOptions[0];
+  const expectedOptions = selectedExpectedOption ? [selectedExpectedOption] : allExpectedOptions;
 
   if (jsonText) {
     try {
       const parsed = JSON.parse(jsonText);
-      const parsedOptions = Array.isArray(parsed.options) ? parsed.options : [];
-      const options = expectedOptions.map((expectedOption, index) => {
-        const matchedOption = parsedOptions.find((item) => item?.id === expectedOption.id) || parsedOptions[index] || {};
-        return {
-          id: expectedOption.id,
-          label: expectedOption.label,
-          text: cleanPolishText(matchedOption.text || matchedOption.content || matchedOption.value || '')
-        };
-      });
-
-      const firstText = options.find((option) => option.text)?.text;
-      const legacyPolished = cleanPolishText(parsed.polished);
-      const legacyConcise = cleanPolishText(parsed.concise);
-
-      return {
-        original: fallbackAnswer,
-        modeDisplayName: normalizeText(parsed.modeDisplayName) || modeDisplayName || profile.displayName,
-        selectedType: normalizeText(parsed.selectedType) || polishType,
-        options: fillMissingPolishOptions(options, fallbackAnswer, polishType, typeProfile.label),
-        polished: legacyPolished || firstText || fallbackAnswer,
-        concise: legacyConcise || options[1]?.text || firstText || fallbackAnswer,
-        tip: cleanPolishText(parsed.tip) || '建议先给结论，再补一个清晰标准。'
-      };
+      return normalizeParsedPolishResponse(
+        parsed,
+        fallbackAnswer,
+        expectedOptions,
+        polishType,
+        typeProfile.label,
+        modeDisplayName || profile.displayName
+      );
     } catch {
-      // Fall through to the conservative fallback below.
+      const looseParsed = parseLoosePolishJson(jsonText, expectedOptions);
+      if (looseParsed.options.some((option) => option.text)) {
+        return normalizeParsedPolishResponse(
+          looseParsed,
+          fallbackAnswer,
+          expectedOptions,
+          polishType,
+          typeProfile.label,
+          modeDisplayName || profile.displayName
+        );
+      }
     }
   }
+
+  const fallbackText = looksLikeJsonPayload(clean) ? fallbackAnswer : clean;
 
   return {
     original: fallbackAnswer,
@@ -2805,29 +2804,58 @@ function parsePolishContent(content, fallbackAnswer, trainingMode, requestedPoli
     options: fillMissingPolishOptions(
       expectedOptions.map((option) => ({
         ...option,
-        text: option.id === polishType ? cleanPolishText(clean) : ''
+        text: option.id === polishType ? cleanPolishText(fallbackText) : ''
       })),
       fallbackAnswer,
       polishType,
       typeProfile.label
     ),
-    polished: cleanPolishText(clean) || fallbackAnswer,
+    polished: cleanPolishText(fallbackText) || fallbackAnswer,
     concise: fallbackAnswer,
     tip: '建议先给结论，再补一个清晰标准。'
   };
 }
 
+function normalizeParsedPolishResponse(parsed, fallbackAnswer, expectedOptions, polishType, selectedLabel, modeDisplayName) {
+  const parsedOptions = Array.isArray(parsed.options) ? parsed.options : [];
+  const options = expectedOptions.map((expectedOption, index) => {
+    const matchedOption = parsedOptions.find((item) => item?.id === expectedOption.id) || parsedOptions[index] || {};
+    return {
+      id: expectedOption.id,
+      label: expectedOption.label,
+      text: cleanPolishText(matchedOption.text || matchedOption.content || matchedOption.value || '')
+    };
+  });
+
+  const firstText = options.find((option) => option.text)?.text;
+  const legacyPolished = cleanPolishText(parsed.polished);
+  const legacyConcise = cleanPolishText(parsed.concise);
+
+  return {
+    original: fallbackAnswer,
+    modeDisplayName: normalizeText(parsed.modeDisplayName) || modeDisplayName,
+    selectedType: normalizeText(parsed.selectedType) || polishType,
+    options: fillMissingPolishOptions(options, fallbackAnswer, polishType, selectedLabel),
+    polished: legacyPolished || firstText || fallbackAnswer,
+    concise: legacyConcise || firstText || fallbackAnswer,
+    tip: cleanPolishText(parsed.tip) || '建议先给结论，再补一个清晰标准。'
+  };
+}
+
 function fillMissingPolishOptions(options, fallbackAnswer, selectedType, selectedLabel) {
   const fallbackText = cleanPolishText(fallbackAnswer);
-  return options.map((option) => ({
-    id: option.id || selectedType,
-    label: option.label || selectedLabel,
-    text: cleanPolishText(option.text) || fallbackText
-  }));
+  return options
+    .map((option) => ({
+      id: option.id || selectedType,
+      label: option.label || selectedLabel,
+      text: cleanPolishText(option.text) || (option.id === selectedType ? fallbackText : '')
+    }))
+    .filter((option) => option.text);
 }
 
 function cleanPolishText(value) {
   return normalizeText(value)
+    .replace(/\\r\\n|\\n|\\r/g, '\n')
     .replace(/……/g, '')
     .replace(/\.{3,}/g, '')
     .replace(/等等/g, '')
@@ -2835,6 +2863,62 @@ function cleanPolishText(value) {
     .replace(/此处略/g, '')
     .replace(/以下省略/g, '')
     .trim();
+}
+
+function parseLoosePolishJson(text, expectedOptions) {
+  const clean = normalizeText(text);
+  return {
+    modeDisplayName: extractLooseJsonString(clean, 'modeDisplayName'),
+    selectedType: extractLooseJsonString(clean, 'selectedType'),
+    tip: extractLooseJsonString(clean, 'tip'),
+    options: expectedOptions.map((option) => ({
+      id: option.id,
+      label: option.label,
+      text: extractLoosePolishOptionText(clean, option.id)
+    }))
+  };
+}
+
+function extractLooseJsonString(text, key) {
+  const pattern = new RegExp(`["']${escapeRegExp(key)}["']\\s*:\\s*["']([\\s\\S]*?)["']\\s*(?:,|})`, 'i');
+  return cleanPolishText(text.match(pattern)?.[1] || '');
+}
+
+function extractLoosePolishOptionText(text, optionId) {
+  const idPattern = new RegExp(`["']id["']\\s*:\\s*["']${escapeRegExp(optionId)}["']`, 'i');
+  const idMatch = idPattern.exec(text);
+  if (!idMatch) return '';
+
+  const chunkStart = idMatch.index;
+  const nextIdPattern = /["']id["']\s*:\s*["'][^"']+["']/gi;
+  nextIdPattern.lastIndex = idMatch.index + idMatch[0].length;
+  const nextIdMatch = nextIdPattern.exec(text);
+  const tipIndex = text.indexOf('"tip"', chunkStart);
+  const boundaryCandidates = [
+    nextIdMatch?.index ?? -1,
+    tipIndex
+  ].filter((index) => index > chunkStart);
+  const chunkEnd = boundaryCandidates.length ? Math.min(...boundaryCandidates) : text.length;
+  const chunk = text.slice(chunkStart, chunkEnd);
+  const textKeyMatch = /["']text["']\s*:\s*/i.exec(chunk);
+  if (!textKeyMatch) return '';
+
+  let value = chunk.slice(textKeyMatch.index + textKeyMatch[0].length).trim();
+  value = value.replace(/^["']/, '');
+  value = value
+    .replace(/["']?\s*}\s*,?\s*$/g, '')
+    .replace(/["']?\s*]\s*,?\s*$/g, '')
+    .replace(/,\s*["']label["']\s*:[\s\S]*$/i, '')
+    .trim();
+  return cleanPolishText(value);
+}
+
+function looksLikeJsonPayload(text) {
+  return /["']?(?:modeDisplayName|selectedType|options|polished|concise)["']?\s*:/.test(normalizeText(text));
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function extractJsonObject(text) {
