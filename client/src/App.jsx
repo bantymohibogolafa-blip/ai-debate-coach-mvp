@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import OnboardingGuide from './components/OnboardingGuide.jsx';
 
 const sides = [
   { label: '正方', value: 'affirmative' },
@@ -294,6 +295,7 @@ const appModeStorageKey = 'ai-debate-coach-app-mode';
 const selectedSpaceStorageKey = 'ai-debate-coach-selected-space';
 const authTokenStorageKey = 'fengbian-auth-token';
 const authUserStorageKey = 'fengbian-auth-user';
+const onboardingStorageKey = 'fengbian_onboarding_seen';
 const trainingRecordLimit = 20;
 const personalNickname = '个人用户';
 const personalSpace = { type: 'personal', teamCode: '' };
@@ -378,6 +380,7 @@ function App() {
   const [isPolishing, setIsPolishing] = useState(false);
   const [polishResult, setPolishResult] = useState(null);
   const [selectedPolishType, setSelectedPolishType] = useState('');
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -442,6 +445,18 @@ function App() {
     } else {
       setCurrentTrainingSpace(personalSpace);
     }
+  }, []);
+
+  useEffect(() => {
+    if (localStorage.getItem(onboardingStorageKey) === 'true') {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setShowOnboarding(true);
+    }, 500);
+
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -1688,6 +1703,20 @@ function App() {
     }
   }
 
+  function closeOnboarding() {
+    localStorage.setItem(onboardingStorageKey, 'true');
+    setShowOnboarding(false);
+  }
+
+  function startFromOnboarding() {
+    closeOnboarding();
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector('.setup-panel, .mode-selector-panel, .arena-hero')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
   return (
     <main className={`app-shell ${hasSessionContent ? 'session-active' : ''}`}>
       <section className="team-topbar" aria-label="训练空间选择器">
@@ -1728,7 +1757,12 @@ function App() {
             <option value="join">+ 加入 / 创建团队</option>
           </select>
         </label>
+        <button type="button" className="onboarding-entry-button" onClick={() => setShowOnboarding(true)}>
+          新手指南
+        </button>
       </section>
+
+      <OnboardingGuide open={showOnboarding} onClose={closeOnboarding} onStart={startFromOnboarding} />
 
       {authStatus && <div className="history-status">{authStatus}</div>}
       {joinSuccess && <div className="history-status">{joinSuccess}</div>}

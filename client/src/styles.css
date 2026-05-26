@@ -183,6 +183,10 @@ textarea:disabled {
   font-weight: 900;
 }
 
+.onboarding-entry-button {
+  white-space: nowrap;
+}
+
 .auth-status-card {
   display: grid;
   min-width: min(280px, 100%);
@@ -279,6 +283,136 @@ textarea:disabled {
 
 .modal-actions.single {
   grid-template-columns: 1fr;
+}
+
+.onboarding-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 42;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(12, 22, 27, 0.5);
+}
+
+.onboarding-panel {
+  display: flex;
+  width: min(100%, 680px);
+  max-height: calc(100dvh - 32px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(24, 36, 43, 0.12);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 28px 80px rgba(24, 36, 43, 0.28);
+}
+
+.onboarding-header {
+  padding: 22px 22px 10px;
+}
+
+.onboarding-header h2 {
+  margin: 0;
+  color: #13232b;
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.onboarding-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 22px 14px;
+}
+
+.onboarding-progress span {
+  height: 6px;
+  border-radius: 999px;
+  background: #dbe6e9;
+}
+
+.onboarding-progress span.active {
+  background: linear-gradient(135deg, #2f7375, #c8502d);
+}
+
+.onboarding-content {
+  display: grid;
+  gap: 14px;
+  overflow: auto;
+  padding: 6px 22px 20px;
+  color: #263942;
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.onboarding-content h3 {
+  margin: 0;
+  color: #13232b;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.onboarding-content p,
+.onboarding-content ol {
+  margin: 0;
+}
+
+.onboarding-tip {
+  border-left: 5px solid #c8502d;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #6a3a2b;
+  background: #fff1eb;
+  font-weight: 900;
+}
+
+.onboarding-steps {
+  display: grid;
+  gap: 8px;
+  padding-left: 22px;
+}
+
+.onboarding-mode-grid,
+.onboarding-feature-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.onboarding-mode-card,
+.onboarding-feature-card {
+  display: grid;
+  gap: 7px;
+  border: 1px solid rgba(24, 36, 43, 0.11);
+  border-radius: 8px;
+  padding: 13px;
+  background: #f8fbfb;
+}
+
+.onboarding-mode-card h3,
+.onboarding-feature-card strong {
+  margin: 0;
+  color: #245e62;
+  font-size: 16px;
+}
+
+.onboarding-mode-card p,
+.onboarding-mode-card strong,
+.onboarding-feature-card p {
+  margin: 0;
+}
+
+.onboarding-mode-card strong {
+  color: #13232b;
+  font-size: 14px;
+}
+
+.onboarding-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 10px;
+  border-top: 1px solid rgba(24, 36, 43, 0.08);
+  padding: 14px 22px 22px;
 }
 
 .secondary-button.danger,
@@ -2300,6 +2434,41 @@ textarea:focus {
 
   .team-topbar button {
     width: 100%;
+  }
+
+  .onboarding-backdrop {
+    align-items: end;
+    padding: 10px;
+  }
+
+  .onboarding-panel {
+    max-height: calc(100dvh - 20px);
+  }
+
+  .onboarding-header {
+    padding: 18px 16px 8px;
+  }
+
+  .onboarding-header h2 {
+    font-size: 24px;
+  }
+
+  .onboarding-progress {
+    padding: 0 16px 12px;
+  }
+
+  .onboarding-content {
+    padding: 4px 16px 18px;
+  }
+
+  .onboarding-mode-grid,
+  .onboarding-feature-list,
+  .onboarding-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .onboarding-actions {
+    padding: 12px 16px 16px;
   }
 
   .modal-panel {
