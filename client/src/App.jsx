@@ -3458,6 +3458,98 @@ function RankingList({ title, items, metric }) {
   );
 }
 
+function DimensionScoreChart({ dimensions }) {
+  const chartDimensions = dimensions
+    .map((dimension) => ({
+      ...dimension,
+      score: Number(dimension.score)
+    }))
+    .filter((dimension) => Number.isFinite(dimension.score));
+
+  if (chartDimensions.length === 0) {
+    return null;
+  }
+
+  const size = 240;
+  const center = size / 2;
+  const radius = 78;
+  const angleStep = (Math.PI * 2) / chartDimensions.length;
+  const toPoint = (index, valueRatio = 1) => {
+    const angle = -Math.PI / 2 + index * angleStep;
+    const pointRadius = radius * valueRatio;
+    return {
+      x: center + Math.cos(angle) * pointRadius,
+      y: center + Math.sin(angle) * pointRadius
+    };
+  };
+  const pointString = chartDimensions
+    .map((dimension, index) => {
+      const scoreRatio = Math.max(0, Math.min(100, dimension.score)) / 100;
+      const point = toPoint(index, scoreRatio);
+      return `${point.x},${point.y}`;
+    })
+    .join(' ');
+
+  return (
+    <div className="dimension-chart-card">
+      <div className="dimension-chart-header">
+        <div>
+          <span>五维能力图表</span>
+          <strong>本轮维度分布</strong>
+        </div>
+        <p>越靠外代表该维度越稳定，右侧条形可快速比较短板和优势。</p>
+      </div>
+      <div className="dimension-chart-layout">
+        <div className="dimension-radar-wrap" aria-label="五维能力雷达图">
+          <svg viewBox={`0 0 ${size} ${size}`} role="img">
+            <title>复盘五维度分数雷达图</title>
+            {[0.25, 0.5, 0.75, 1].map((level) => (
+              <polygon
+                key={level}
+                className="dimension-radar-grid"
+                points={chartDimensions.map((_, index) => {
+                  const point = toPoint(index, level);
+                  return `${point.x},${point.y}`;
+                }).join(' ')}
+              />
+            ))}
+            {chartDimensions.map((dimension, index) => {
+              const outer = toPoint(index, 1);
+              const labelPoint = toPoint(index, 1.24);
+              return (
+                <g key={dimension.name}>
+                  <line className="dimension-radar-axis" x1={center} y1={center} x2={outer.x} y2={outer.y} />
+                  <text className="dimension-radar-label" x={labelPoint.x} y={labelPoint.y}>
+                    {index + 1}
+                  </text>
+                </g>
+              );
+            })}
+            <polygon className="dimension-radar-area" points={pointString} />
+            {chartDimensions.map((dimension, index) => {
+              const point = toPoint(index, Math.max(0, Math.min(100, dimension.score)) / 100);
+              return <circle key={dimension.name} className="dimension-radar-point" cx={point.x} cy={point.y} r="4" />;
+            })}
+          </svg>
+        </div>
+        <div className="dimension-bar-list">
+          {chartDimensions.map((dimension, index) => (
+            <div className="dimension-bar-row" key={dimension.name}>
+              <div>
+                <strong>{index + 1}. {dimension.name}</strong>
+                <span>{formatScoreValue(dimension.score)} / 100</span>
+              </div>
+              <div className="dimension-bar-track" aria-hidden="true">
+                <span style={{ width: `${Math.max(0, Math.min(100, dimension.score))}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReviewReport({ reviewText, structuredReview, fallbackMode }) {
   const reviewData = normalizeStructuredReview(structuredReview);
 
@@ -3487,6 +3579,8 @@ function ReviewReport({ reviewText, structuredReview, fallbackMode }) {
           </div>
         )}
       </div>
+
+      <DimensionScoreChart dimensions={reviewData.dimensionScores} />
 
       <div className="dimension-score-list">
         {reviewData.dimensionScores.map((dimension) => (

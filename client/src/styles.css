@@ -1396,6 +1396,135 @@ textarea:focus {
   font-size: 18px;
 }
 
+.dimension-chart-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #dbe8ea;
+  border-radius: 8px;
+  padding: 14px;
+  background: linear-gradient(180deg, #f8fbfc 0%, #eef7f6 100%);
+}
+
+.dimension-chart-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.dimension-chart-header span {
+  display: block;
+  margin-bottom: 4px;
+  color: #6b7b84;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.dimension-chart-header strong {
+  color: #10282f;
+  font-size: 18px;
+}
+
+.dimension-chart-header p {
+  max-width: 420px;
+  margin: 0;
+  color: #52656e;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.dimension-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+}
+
+.dimension-radar-wrap {
+  display: grid;
+  place-items: center;
+}
+
+.dimension-radar-wrap svg {
+  width: min(100%, 260px);
+  height: auto;
+  overflow: visible;
+}
+
+.dimension-radar-grid {
+  fill: none;
+  stroke: rgba(47, 115, 117, 0.18);
+  stroke-width: 1;
+}
+
+.dimension-radar-axis {
+  stroke: rgba(47, 115, 117, 0.22);
+  stroke-width: 1;
+}
+
+.dimension-radar-label {
+  fill: #2f7375;
+  font-size: 13px;
+  font-weight: 900;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.dimension-radar-area {
+  fill: rgba(200, 80, 45, 0.2);
+  stroke: #c8502d;
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+
+.dimension-radar-point {
+  fill: #fff;
+  stroke: #c8502d;
+  stroke-width: 3;
+}
+
+.dimension-bar-list {
+  display: grid;
+  gap: 12px;
+}
+
+.dimension-bar-row {
+  display: grid;
+  gap: 7px;
+}
+
+.dimension-bar-row > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #10282f;
+  font-weight: 900;
+}
+
+.dimension-bar-row strong {
+  min-width: 0;
+}
+
+.dimension-bar-row span {
+  flex: 0 0 auto;
+  color: #2f7375;
+}
+
+.dimension-bar-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbe8ea;
+}
+
+.dimension-bar-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2f7375, #c8502d);
+}
+
 .dimension-score-list {
   display: grid;
   gap: 10px;
@@ -2404,6 +2533,7 @@ textarea:focus {
   .mode-selector-panel,
   .prep-context-grid,
   .review-score-card,
+  .dimension-chart-layout,
   .review-summary-grid,
   .task-form-grid,
   .task-form-row,
@@ -2422,6 +2552,10 @@ textarea:focus {
 
   .ability-chart-card {
     padding: 12px;
+  }
+
+  .dimension-chart-header {
+    display: grid;
   }
 
   .team-topbar {
