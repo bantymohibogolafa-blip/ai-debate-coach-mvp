@@ -1617,6 +1617,11 @@ textarea:focus {
   gap: 10px;
 }
 
+.history-record-group {
+  display: grid;
+  gap: 8px;
+}
+
 .history-item {
   display: grid;
   gap: 5px;
@@ -1662,6 +1667,15 @@ textarea:focus {
   margin-top: 20px;
   border-top: 1px solid #d8e3e8;
   padding-top: 20px;
+}
+
+.inline-history-detail {
+  margin: 0 0 8px;
+  border: 1px solid #dbe8ea;
+  border-left: 5px solid #c8502d;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfdfd;
 }
 
 .history-detail-header {

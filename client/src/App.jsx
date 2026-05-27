@@ -337,14 +337,16 @@ function App() {
   const [activeMemberActionId, setActiveMemberActionId] = useState('');
   const [teamSettingsForm, setTeamSettingsForm] = useState({ teamName: '', currentPassword: '', nextPassword: '' });
   const [activeTab, setActiveTab] = useState('training');
-  const [trainingRecords, setTrainingRecords] = useState([]);
+  const [personalRecords, setPersonalRecords] = useState([]);
+  const [teamMemberRecords, setTeamMemberRecords] = useState([]);
   const [teamRecords, setTeamRecords] = useState([]);
   const [teamStats, setTeamStats] = useState(null);
   const [teamTasks, setTeamTasks] = useState([]);
   const [teamTasksError, setTeamTasksError] = useState('');
   const [isTeamTasksLoading, setIsTeamTasksLoading] = useState(false);
   const [activeTeamPanelTab, setActiveTeamPanelTab] = useState('overview');
-  const [abilityEstimate, setAbilityEstimate] = useState(null);
+  const [personalAbilityEstimate, setPersonalAbilityEstimate] = useState(null);
+  const [teamAbilityEstimate, setTeamAbilityEstimate] = useState(null);
   const [isAbilityLoading, setIsAbilityLoading] = useState(false);
   const [abilityError, setAbilityError] = useState('');
   const [isTaskCreateOpen, setIsTaskCreateOpen] = useState(false);
@@ -433,6 +435,8 @@ function App() {
   const currentSpaceLabel = isTeamSpace ? (currentTeam.teamName || currentTeam.teamCode) : '个人模式';
   const currentNickname = isTeamSpace ? currentTeam.nickname : (currentUser?.displayName || personalNickname);
   const currentSpaceValue = isTeamSpace ? `team:${currentTeam.teamCode}` : 'personal';
+  const displayedRecords = personalRecords;
+  const displayedAbilityEstimate = personalAbilityEstimate;
   const maxRecordingSeconds = 30;
 
   useEffect(() => {
@@ -462,19 +466,35 @@ function App() {
   useEffect(() => {
     if (!localUserId) return;
 
-    if (currentSpace.type === 'personal') {
-      loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
-      loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
-      return;
-    }
+    loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
+    loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
 
-    if (!isTeamSpace) {
+    if (currentSpace.type !== 'personal' && !isTeamSpace) {
       setCurrentTrainingSpace(personalSpace);
       return;
     }
 
-    loadTeamDashboard(currentTeam.teamCode, localUserId);
+    if (isTeamSpace) {
+      loadTeamDashboard(currentTeam.teamCode, localUserId);
+    }
   }, [currentSpace.type, currentSpace.teamCode, isTeamSpace, localUserId, authToken, currentUser?.id]);
+
+  useEffect(() => {
+    if (!localUserId) return;
+
+    if (activeTab === 'mine') {
+      loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
+    }
+
+    if (activeTab === 'ability') {
+      loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
+    }
+
+    if (activeTab === 'team' && isTeamSpace) {
+      loadTeamData(currentTeam.teamCode, localUserId);
+      loadTeamTasks(currentTeam.teamCode, localUserId);
+    }
+  }, [activeTab, isTeamSpace, currentSpace.teamCode, localUserId, authToken, currentUser?.id]);
 
   useEffect(() => {
     if (currentSpace.type === 'personal' && activeTab === 'team') {
@@ -519,9 +539,13 @@ function App() {
     setAuthToken('');
     setCurrentUser(null);
     setJoinedTeams([]);
+    setPersonalRecords([]);
+    setTeamMemberRecords([]);
     setTeamRecords([]);
     setTeamStats(null);
     setTeamTasks([]);
+    setPersonalAbilityEstimate(null);
+    setTeamAbilityEstimate(null);
     setCurrentTrainingSpace(personalSpace);
     setActiveTab('training');
     setAuthStatus(statusMessage);
@@ -924,10 +948,8 @@ function App() {
   async function loadTeamDashboard(teamCode, userId) {
     if (!isLoggedIn) return;
     await Promise.all([
-      loadMyTrainingRecords({ spaceType: 'team', teamCode, userId }),
       loadTeamData(teamCode, userId),
-      loadTeamTasks(teamCode, userId),
-      loadAbilityEstimate({ spaceType: 'team', teamCode, userId })
+      loadTeamTasks(teamCode, userId)
     ]);
   }
 
@@ -942,7 +964,12 @@ function App() {
       });
       if (spaceType === 'team') query.set('teamCode', teamCode);
       const data = await getJson(`/api/training-records/my?${query.toString()}`);
-      setTrainingRecords(Array.isArray(data.records) ? data.records : []);
+      const nextRecords = Array.isArray(data.records) ? data.records : [];
+      if (spaceType === 'team') {
+        setTeamMemberRecords(nextRecords);
+      } else {
+        setPersonalRecords(nextRecords);
+      }
     } catch (requestError) {
       setHistoryError(getFriendlyError(requestError));
     } finally {
@@ -997,9 +1024,17 @@ function App() {
       });
       if (spaceType === 'team') query.set('teamCode', teamCode);
       const data = await getJson(`/api/ability/estimate?${query.toString()}`);
-      setAbilityEstimate(data);
+      if (spaceType === 'team') {
+        setTeamAbilityEstimate(data);
+      } else {
+        setPersonalAbilityEstimate(data);
+      }
     } catch (requestError) {
-      setAbilityEstimate(null);
+      if (spaceType === 'team') {
+        setTeamAbilityEstimate(null);
+      } else {
+        setPersonalAbilityEstimate(null);
+      }
       setAbilityError(getFriendlyError(requestError));
     } finally {
       setIsAbilityLoading(false);
@@ -1149,12 +1184,18 @@ function App() {
       return;
     }
 
+    if (currentSpace.type === 'team' && !currentSpace.teamCode) {
+      setSaveStatus('团队训练记录保存失败：缺少团队信息，请重新进入团队后训练。');
+      return;
+    }
+
     setSaveStatus('正在保存本次训练记录...');
 
     try {
+      const recordSpaceType = currentSpace.type === 'team' ? 'team' : 'personal';
       const data = await postJson('/api/training-records', {
-        spaceType: currentSpace.type,
-        teamCode: currentSpace.type === 'team' ? currentSpace.teamCode : '',
+        spaceType: recordSpaceType,
+        teamCode: recordSpaceType === 'team' ? currentSpace.teamCode : null,
         localUserId,
         nickname: currentNickname,
         topic: config.topic,
@@ -1175,22 +1216,30 @@ function App() {
       });
 
       if (data.record) {
-        setTrainingRecords((currentRecords) => [
-          data.record,
-          ...currentRecords.filter((record) => record.id !== data.record.id)
-        ].slice(0, trainingRecordLimit));
-        setTeamRecords((currentRecords) => [
-          data.record,
-          ...currentRecords.filter((record) => record.id !== data.record.id)
-        ].slice(0, 50));
+        if (recordSpaceType === 'team') {
+          setTeamMemberRecords((currentRecords) => [
+            data.record,
+            ...currentRecords.filter((record) => record.id !== data.record.id)
+          ].slice(0, trainingRecordLimit));
+          setTeamRecords((currentRecords) => [
+            data.record,
+            ...currentRecords.filter((record) => record.id !== data.record.id)
+          ].slice(0, 50));
+        } else {
+          setPersonalRecords((currentRecords) => [
+            data.record,
+            ...currentRecords.filter((record) => record.id !== data.record.id)
+          ].slice(0, trainingRecordLimit));
+        }
       }
 
       setSaveStatus('本次训练记录已保存。');
-      if (currentSpace.type === 'team') {
+      if (recordSpaceType === 'team') {
         loadTeamData(currentSpace.teamCode);
         loadTeamTasks(currentSpace.teamCode);
-        loadAbilityEstimate({ spaceType: 'team', teamCode: currentSpace.teamCode, userId: localUserId });
+        loadMyTrainingRecords({ spaceType: 'team', teamCode: currentSpace.teamCode, userId: localUserId });
       } else {
+        loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
         loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
       }
     } catch (requestError) {
@@ -1717,6 +1766,17 @@ function App() {
     });
   }
 
+  function logDataStateDebug(nextTab = activeTab) {
+    if (!import.meta.env.DEV) return;
+    console.debug('[data-sync] tab switch', {
+      activeTab: nextTab,
+      currentSpace,
+      selectedTeamCode: currentSpace.type === 'team' ? currentSpace.teamCode : '',
+      personalRecordsCount: personalRecords.length,
+      teamRecordsCount: teamRecords.length
+    });
+  }
+
   return (
     <main className={`app-shell ${hasSessionContent ? 'session-active' : ''}`}>
       <section className="team-topbar" aria-label="训练空间选择器">
@@ -2238,6 +2298,7 @@ function App() {
             key={tab.value}
             className={activeTab === tab.value ? 'active' : ''}
             onClick={() => {
+              logDataStateDebug(tab.value);
               setActiveTab(tab.value);
               setSelectedRecord(null);
             }}
@@ -2743,78 +2804,83 @@ function App() {
       <section className="panel history-panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">{isTeamSpace ? '团队空间' : '个人训练'}</p>
+            <p className="eyebrow">个人训练</p>
             <h2>我的记录</h2>
           </div>
-          {isHistoryLoading && <span className="badge">加载中</span>}
+          {isHistoryLoading && <span className="badge">正在同步最新训练数据…</span>}
         </div>
         <p className="anonymous-note">
-          {isTeamSpace
-            ? `当前展示你在「${currentTeam.teamName || currentTeam.teamCode}」中的训练记录。`
-            : '当前展示个人模式记录，不混入团队训练记录。'}
+          当前展示个人模式记录，不混入团队训练记录。团队训练记录请在“团队数据”中查看。
         </p>
         {saveStatus && <div className="history-status">{saveStatus}</div>}
         {historyError && <div className="error-box">{historyError}</div>}
 
-        {!isHistoryLoading && trainingRecords.length === 0 ? (
+        {!isHistoryLoading && displayedRecords.length === 0 ? (
           <div className="history-empty">暂无训练记录</div>
         ) : (
           <div className="history-list">
-            {trainingRecords.map((record) => (
-              <button
-                type="button"
-                key={record.id || record.createdAt}
-                className={`history-item ${selectedRecord?.id === record.id ? 'active' : ''}`}
-                onClick={() => setSelectedRecord(record)}
-              >
-                  <span>{formatRecordDate(record.createdAt)}</span>
-                  <strong>{record.topic}</strong>
-                  <small>
-                  {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'} / {getOptionLabel(sides, record.userSide)} / {getOptionLabel(difficulties, record.difficulty)}
-                  {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
-                  {record.result ? ` / ${record.result}` : ''}
-                </small>
-              </button>
-            ))}
-          </div>
-        )}
+            {displayedRecords.map((record) => {
+              const recordKey = record.id || record.createdAt;
+              const selectedRecordKey = selectedRecord?.id || selectedRecord?.createdAt;
+              const isExpanded = selectedRecordKey === recordKey;
 
-        {selectedRecord && (
-          <div className="history-detail">
-            <div className="history-detail-header">
-              <div>
-                <span>{formatRecordDate(selectedRecord.createdAt)}</span>
-                <h3>{selectedRecord.topic}</h3>
-              </div>
-              <button type="button" onClick={() => setSelectedRecord(null)}>
-                收起
-              </button>
-            </div>
+              return (
+                <div className="history-record-group" key={recordKey}>
+                  <button
+                    type="button"
+                    className={`history-item ${isExpanded ? 'active' : ''}`}
+                    onClick={() => setSelectedRecord(isExpanded ? null : record)}
+                  >
+                    <span>{formatRecordDate(record.createdAt)}</span>
+                    <strong>{record.topic}</strong>
+                    <small>
+                      {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'} / {getOptionLabel(sides, record.userSide)} / {getOptionLabel(difficulties, record.difficulty)}
+                      {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
+                      {record.result ? ` / ${record.result}` : ''}
+                    </small>
+                  </button>
 
-            <div className="history-meta">
-              <span>我的立场：{getOptionLabel(sides, selectedRecord.userSide)}</span>
-              <span>AI 立场：{getOptionLabel(sides, selectedRecord.aiSide)}</span>
-              <span>难度：{getOptionLabel(difficulties, selectedRecord.difficulty)}</span>
-              <span>风格：{getOptionLabel(celebrityDebaters, selectedRecord.styleId) || '普通 AI'}</span>
-            </div>
+                  {isExpanded && (
+                    <div className="history-detail inline-history-detail">
+                      <div className="history-detail-header">
+                        <div>
+                          <span>{formatRecordDate(record.createdAt)}</span>
+                          <h3>{record.topic}</h3>
+                        </div>
+                        <button type="button" onClick={() => setSelectedRecord(null)}>
+                          收起
+                        </button>
+                      </div>
 
-            <div className="conversation history-conversation">
-              {selectedRecord.messages.map((item, index) => (
-                <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
-                  <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
-                  <p>{formatConversationContent(item.content, item.role)}</p>
-                </article>
-              ))}
-            </div>
+                      <div className="history-meta">
+                        <span>我的立场：{getOptionLabel(sides, record.userSide)}</span>
+                        <span>AI 立场：{getOptionLabel(sides, record.aiSide)}</span>
+                        <span>难度：{getOptionLabel(difficulties, record.difficulty)}</span>
+                        <span>风格：{getOptionLabel(celebrityDebaters, record.styleId) || '普通 AI'}</span>
+                      </div>
 
-            <div className="history-review">
-              <h3>复盘报告</h3>
-              <ReviewReport
-                reviewText={selectedRecord.review}
-                structuredReview={selectedRecord}
-                fallbackMode={selectedRecord.trainingMode}
-              />
-            </div>
+                      <div className="conversation history-conversation">
+                        {(record.messages || []).map((item, index) => (
+                          <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
+                            <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
+                            <p>{formatConversationContent(item.content, item.role)}</p>
+                          </article>
+                        ))}
+                      </div>
+
+                      <div className="history-review">
+                        <h3>复盘报告</h3>
+                        <ReviewReport
+                          reviewText={record.review}
+                          structuredReview={record}
+                          fallbackMode={record.trainingMode}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
@@ -2822,10 +2888,10 @@ function App() {
 
       {activeTab === 'ability' && (
         <AbilityPanel
-          estimate={abilityEstimate}
+          estimate={displayedAbilityEstimate}
           isLoading={isAbilityLoading}
           error={abilityError}
-          spaceLabel={currentSpaceLabel}
+          spaceLabel="个人模式"
         />
       )}
 
@@ -2964,7 +3030,7 @@ function TeamDataPanel({
           <p className="eyebrow">团队复盘</p>
           <h2>{team?.teamName || team?.teamCode || '团队数据'}</h2>
         </div>
-        {(isLoading || isTasksLoading) && <span className="badge">加载中</span>}
+        {(isLoading || isTasksLoading) && <span className="badge">正在同步最新训练数据…</span>}
       </div>
 
       {error && <div className="error-box">{error}</div>}

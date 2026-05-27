@@ -459,7 +459,8 @@ app.get('/api/training-records/team', requireAuth, async (req, res, next) => {
     }
 
     await requireActiveMembership(teamCode, req.user.id);
-    const records = await fetchTeamTrainingRecords(teamCode, 50);
+    const allRecords = await fetchTeamTrainingRecords(teamCode, 1000);
+    const records = (await filterRecordsByActiveMembers(teamCode, allRecords)).slice(0, 50);
     res.json({ records: records.map(mapTrainingRecordFromDb) });
   } catch (error) {
     next(error);
@@ -476,6 +477,14 @@ app.get('/api/team/stats', requireAuth, async (req, res, next) => {
 
     await requireActiveMembership(teamCode, req.user.id);
     const stats = await fetchTeamStats(teamCode);
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug('[data-sync] team stats query', {
+        teamCode,
+        viewerAppUserId: req.user?.id,
+        recordsCount: stats.totalRecords,
+        membersCount: stats.memberStats?.length || 0
+      });
+    }
     res.json(stats);
   } catch (error) {
     next(error);
@@ -787,6 +796,18 @@ async function validateTrainingRecordPayload(body, authUser = null) {
 
   if (taskId) {
     record.task_id = taskId;
+  }
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.debug('[data-sync] saving training record', {
+      appUserId: authUser?.id || null,
+      localUserId,
+      spaceType,
+      teamCode: normalizedTeamCode,
+      taskId: taskId || null,
+      mode: trainingMode,
+      score
+    });
   }
 
   return record;
@@ -2121,8 +2142,42 @@ async function fetchTeamTrainingRecords(teamCode, limit) {
   }
 }
 
+async function filterRecordsByActiveMembers(teamCode, records = []) {
+  const activeMembers = await fetchTeamMembers(teamCode);
+  const activeMemberIds = new Set();
+  activeMembers.forEach((member) => {
+    if (member.app_user_id) activeMemberIds.add(member.app_user_id);
+    if (member.local_user_id) activeMemberIds.add(member.local_user_id);
+  });
+
+  return records.filter((record) => {
+    const identity = record.app_user_id || record.local_user_id;
+    if (!identity) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[data-sync] ignored team record without member identity', {
+          teamCode,
+          recordId: record.id
+        });
+      }
+      return false;
+    }
+
+    const isActiveMemberRecord = activeMemberIds.has(identity);
+    if (!isActiveMemberRecord && process.env.NODE_ENV !== 'production') {
+      console.warn('[data-sync] ignored team record outside active members', {
+        teamCode,
+        recordId: record.id,
+        appUserId: record.app_user_id || null,
+        localUserId: record.local_user_id || null
+      });
+    }
+
+    return isActiveMemberRecord;
+  });
+}
+
 async function fetchTeamStats(teamCode) {
-  const records = await fetchAllTeamRecordsForStats(teamCode);
+  const records = await filterRecordsByActiveMembers(teamCode, await fetchAllTeamRecordsForStats(teamCode));
   const scoredRecords = records.filter((record) => Number.isFinite(Number(record.score)));
   const memberMap = new Map();
   const recentRecords = records
