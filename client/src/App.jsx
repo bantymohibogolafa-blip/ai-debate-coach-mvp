@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import OnboardingGuide from './components/OnboardingGuide.jsx';
+import { getAbilityVideosForDimension } from './data/abilityVideoMap.js';
 
 const sides = [
   { label: '正方', value: 'affirmative' },
@@ -3616,6 +3617,78 @@ function DimensionScoreChart({ dimensions }) {
   );
 }
 
+function getWeakestDimensions(dimensionScores, count = 2) {
+  if (!Array.isArray(dimensionScores)) {
+    return [];
+  }
+
+  return dimensionScores
+    .filter((dimension) => {
+      const score = Number(dimension?.score);
+      return dimension?.name && Number.isFinite(score);
+    })
+    .map((dimension) => ({
+      ...dimension,
+      score: Number(dimension.score)
+    }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, count);
+}
+
+function WeaknessVideoRecommendations({ dimensions }) {
+  const weakestDimensions = getWeakestDimensions(dimensions, 2);
+
+  if (weakestDimensions.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="weakness-video-section">
+      <div className="weakness-video-header">
+        <div>
+          <span>学习推荐</span>
+          <h3>针对短板的学习推荐</h3>
+        </div>
+        <p>系统根据本轮五维能力中分数较低的两个维度，为你推荐对应学习视频。</p>
+      </div>
+
+      <div className="weakness-video-grid">
+        {weakestDimensions.map((dimension, index) => {
+          const videos = getAbilityVideosForDimension(dimension.name).slice(0, 2);
+          return (
+            <article className="weakness-video-card" key={`${dimension.name}-${index}`}>
+              <div className="weakness-video-meta">
+                <span>短板{index + 1}</span>
+                <strong>{dimension.name}</strong>
+                <em>{formatScoreValue(dimension.score)} / 100</em>
+              </div>
+              <p className="weakness-video-reason">
+                你本轮在“{dimension.name}”上的分数相对较低，建议先学习对应方法，再回到同类训练中专项练习。
+              </p>
+              <div className="weakness-video-list">
+                {videos.map((video) => {
+                  const searchUrl = `https://search.bilibili.com/all?keyword=${encodeURIComponent(video.searchKeyword || video.title)}`;
+                  return (
+                    <div className="weakness-video-item" key={video.title}>
+                      <div>
+                        <strong>{video.title}</strong>
+                        <p>{video.reason}</p>
+                      </div>
+                      <a className="bilibili-search-link" href={searchUrl} target="_blank" rel="noopener noreferrer">
+                        去 B站搜索
+                      </a>
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function ReviewReport({ reviewText, structuredReview, fallbackMode }) {
   const reviewData = normalizeStructuredReview(structuredReview);
 
@@ -3647,6 +3720,8 @@ function ReviewReport({ reviewText, structuredReview, fallbackMode }) {
       </div>
 
       <DimensionScoreChart dimensions={reviewData.dimensionScores} />
+
+      <WeaknessVideoRecommendations dimensions={reviewData.dimensionScores} />
 
       <div className="dimension-score-list">
         {reviewData.dimensionScores.map((dimension) => (

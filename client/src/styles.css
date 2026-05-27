@@ -1525,6 +1525,128 @@ textarea:focus {
   background: linear-gradient(90deg, #2f7375, #c8502d);
 }
 
+.weakness-video-section {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #dbe8ea;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fffaf7;
+}
+
+.weakness-video-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.weakness-video-header span {
+  display: block;
+  margin-bottom: 4px;
+  color: #c8502d;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.weakness-video-header h3 {
+  margin: 0;
+  color: #10282f;
+  font-size: 18px;
+}
+
+.weakness-video-header p {
+  max-width: 460px;
+  margin: 0;
+  color: #52656e;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.weakness-video-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.weakness-video-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid #f0d5c9;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.weakness-video-meta {
+  display: grid;
+  gap: 4px;
+}
+
+.weakness-video-meta span {
+  color: #c8502d;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.weakness-video-meta strong {
+  color: #10282f;
+  font-size: 17px;
+  line-height: 1.45;
+}
+
+.weakness-video-meta em {
+  color: #2f7375;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.weakness-video-reason {
+  margin: 0;
+  color: #34464d;
+  line-height: 1.7;
+}
+
+.weakness-video-list {
+  display: grid;
+  gap: 10px;
+}
+
+.weakness-video-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-top: 1px solid #f0d5c9;
+  padding-top: 10px;
+}
+
+.weakness-video-item strong {
+  display: block;
+  color: #10282f;
+  line-height: 1.5;
+}
+
+.weakness-video-item p {
+  margin: 5px 0 0;
+  color: #52656e;
+  line-height: 1.6;
+}
+
+.bilibili-search-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  width: fit-content;
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: #fff;
+  background: #2f7375;
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .dimension-score-list {
   display: grid;
   gap: 10px;
@@ -2580,6 +2702,16 @@ textarea:focus {
 
   .dimension-chart-header {
     display: grid;
+  }
+
+  .weakness-video-header,
+  .weakness-video-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .bilibili-search-link {
+    width: 100%;
   }
 
   .team-topbar {
