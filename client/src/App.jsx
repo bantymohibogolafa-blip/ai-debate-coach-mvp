@@ -1546,6 +1546,64 @@ function App() {
     }
   }
 
+  function prepareNextTraining(nextMode = config.trainingMode, statusMessage = '') {
+    if (isBusy || isRecording) return;
+
+    const modeConfig = trainingModes.find((item) => item.value === nextMode) || trainingModes[2];
+    const nextPolishOptions = polishOptionsByMode[nextMode] || polishOptionsByMode.general;
+    updateConfig({
+      ...config,
+      trainingMode: nextMode,
+      rounds: modeConfig.rounds || config.rounds
+    });
+    setHistory([]);
+    setAnswer('');
+    setReview('');
+    setStructuredReview(null);
+    setError('');
+    setSelectedRecord(null);
+    setSaveStatus(statusMessage);
+    setPolishResult(null);
+    setSelectedPolishType(nextPolishOptions[0].id);
+    setRecordingError('');
+    setRecordingStatus('');
+    setRecordedAudioUrl((currentUrl) => {
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      return '';
+    });
+    setRecordingDuration(0);
+    stopRecordingResources();
+    setIsTraining(false);
+    setTrainingSession(null);
+    setLongOutputPromptMode(longOutputModes.includes(nextMode) ? nextMode : '');
+    setSetupStep(getSetupStepForMode(nextMode, {
+      hasDefensePrep: Boolean(defensePrep.trim()),
+      hasFreeDebatePrep: Boolean(freeDebatePrep.trim())
+    }));
+    setActiveTab('training');
+  }
+
+  function continueSameTrainingMode() {
+    prepareNextTraining(config.trainingMode, '已保留本轮设置，可以继续练同一模式。');
+  }
+
+  function practiceWeakestDimensionAgain() {
+    const weakestDimension = getWeakestDimensions(structuredReview?.dimensionScores, 1)[0];
+    prepareNextTraining(
+      config.trainingMode,
+      weakestDimension
+        ? `已回到当前模式，请重点关注「${weakestDimension.name}」。`
+        : '已回到当前模式，可以针对刚才的短板再练一次。'
+    );
+  }
+
+  function switchToRecommendedTrainingMode() {
+    const weakestDimension = getWeakestDimensions(structuredReview?.dimensionScores, 1)[0];
+    const recommendedMode = getRecommendedTrainingModeForDimension(weakestDimension?.name, config.trainingMode);
+    const modeLabel = getOptionLabel(trainingModes, recommendedMode) || '推荐模式';
+    prepareNextTraining(recommendedMode, `已切换到${modeLabel}，可以针对短板专项训练。`);
+  }
+
   function resetTraining() {
     if (isBusy || isRecording) return;
 
@@ -2830,6 +2888,24 @@ function App() {
             structuredReview={structuredReview}
             fallbackMode={config.trainingMode}
           />
+          <div className="next-training-card">
+            <div>
+              <span>下一次训练</span>
+              <h3>复盘之后，直接接着练</h3>
+              <p>可以保持当前辩题和设置，也可以围绕本轮最低维度做一次针对性训练。</p>
+            </div>
+            <div className="next-training-actions">
+              <button type="button" onClick={continueSameTrainingMode}>
+                继续练同一模式
+              </button>
+              <button type="button" onClick={practiceWeakestDimensionAgain}>
+                针对最低维度再练一次
+              </button>
+              <button type="button" onClick={switchToRecommendedTrainingMode}>
+                换成推荐模式训练
+              </button>
+            </div>
+          </div>
         </section>
       )}
       </>
@@ -3465,6 +3541,41 @@ function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, o
       ? detail.memberProgress
       : [];
   const recentRecords = Array.isArray(stats.recentRecords) ? stats.recentRecords : [];
+  const [copyStatus, setCopyStatus] = useState('');
+  const totalMembers = Number(stats.totalMembers ?? memberProgress.length) || memberProgress.length;
+  const completedMembers = Number(stats.completedMembers ?? memberProgress.filter((member) => member.status === 'completed').length) || 0;
+  const completionRate = Number.isFinite(Number(stats.completionRate))
+    ? Number(stats.completionRate)
+    : totalMembers
+      ? Math.round((completedMembers / totalMembers) * 1000) / 10
+      : 0;
+  const incompleteMembers = memberProgress.filter((member) => member.status !== 'completed');
+  const countRanking = [...memberProgress].sort((a, b) => (Number(b.completedCount) || 0) - (Number(a.completedCount) || 0)).slice(0, 5);
+  const averageRanking = [...memberProgress]
+    .filter((member) => Number.isFinite(Number(member.averageScore)))
+    .sort((a, b) => Number(b.averageScore) - Number(a.averageScore))
+    .slice(0, 5);
+  const recentRecordByMember = new Map();
+  recentRecords.forEach((record) => {
+    const key = record.appUserId || record.app_user_id || record.localUserId || record.local_user_id || record.nickname;
+    if (key && !recentRecordByMember.has(key)) {
+      recentRecordByMember.set(key, record);
+    }
+  });
+
+  async function copyIncompleteMembers() {
+    const names = incompleteMembers.map((member) => member.nickname || '未命名成员');
+    const text = names.length
+      ? `未完成「${task.title || '训练任务'}」的成员：${names.join('、')}`
+      : `「${task.title || '训练任务'}」已无人未完成。`;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus('已复制未完成名单。');
+    } catch {
+      setCopyStatus(text);
+    }
+  }
 
   return (
     <div className="task-detail">
@@ -3489,6 +3600,28 @@ function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, o
         <span>最高分：{formatNullableNumber(stats.highestScore)}</span>
       </div>
 
+      <div className="task-completion-overview">
+        <article>
+          <span>成员完成进度</span>
+          <strong>{completedMembers} / {totalMembers}</strong>
+          <div className="task-progress-track" aria-hidden="true">
+            <i style={{ width: `${Math.max(0, Math.min(100, completionRate))}%` }} />
+          </div>
+        </article>
+        <article>
+          <span>未完成成员</span>
+          <strong>{incompleteMembers.length}</strong>
+          <button type="button" onClick={copyIncompleteMembers}>
+            一键复制催练名单
+          </button>
+        </article>
+        <article>
+          <span>最近一次训练</span>
+          <strong>{recentRecords[0] ? formatRecordDate(recentRecords[0].createdAt) : '暂无'}</strong>
+        </article>
+      </div>
+      {copyStatus && <div className="history-status">{copyStatus}</div>}
+
       <div className="task-actions">
         <button type="button" onClick={() => onStartTask(task)}>
           开始训练
@@ -3505,17 +3638,33 @@ function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, o
         {memberProgress.length === 0 ? (
           <div className="history-empty">暂无成员进度</div>
         ) : (
-          <div className="member-progress-table">
-            {memberProgress.map((member) => (
-              <article className="member-progress-row" key={member.localUserId}>
-                <strong>{member.nickname || '未命名成员'}</strong>
-                <span>{member.completedCount} / {member.requiredCount}</span>
-                <span>均分：{formatNullableNumber(member.averageScore)}</span>
-                <span>最高：{formatNullableNumber(member.highestScore)}</span>
-                <em>{member.status === 'completed' ? '已完成' : '未完成'}</em>
-              </article>
-            ))}
-          </div>
+          <>
+            <div className="member-progress-table">
+              {memberProgress.map((member) => {
+                const memberKey = member.appUserId || member.localUserId || member.nickname;
+                const recentRecord = recentRecordByMember.get(memberKey);
+                const progressRate = Math.min(100, ((Number(member.completedCount) || 0) / Math.max(1, Number(member.requiredCount) || 1)) * 100);
+                return (
+                  <article className="member-progress-row" key={memberKey}>
+                    <strong>{member.nickname || '未命名成员'}</strong>
+                    <span>{member.completedCount} / {member.requiredCount}</span>
+                    <span>均分：{formatNullableNumber(member.averageScore)}</span>
+                    <span>最高：{formatNullableNumber(member.highestScore)}</span>
+                    <span>最近：{recentRecord ? formatRecordDate(recentRecord.createdAt) : '暂无'}</span>
+                    <em>{member.status === 'completed' ? '已完成' : '未完成'}</em>
+                    <div className="member-progress-track" aria-hidden="true">
+                      <i style={{ width: `${progressRate}%` }} />
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+
+            <div className="task-rank-grid">
+              <RankingList title="训练次数排行" items={countRanking} metric={(item) => `${item.completedCount || 0} 次`} />
+              <RankingList title="平均分排行" items={averageRanking} metric={(item) => formatNullableNumber(item.averageScore)} />
+            </div>
+          </>
         )}
       </div>
 
@@ -3551,7 +3700,7 @@ function RankingList({ title, items, metric }) {
       ) : (
         <ol>
           {items.map((item) => (
-            <li key={item.localUserId}>
+            <li key={item.localUserId || item.appUserId || item.nickname}>
               <span>{item.nickname || '未命名成员'}</span>
               <strong>{metric(item)}</strong>
             </li>
@@ -3670,6 +3819,27 @@ function getWeakestDimensions(dimensionScores, count = 2) {
     }))
     .sort((a, b) => a.score - b.score)
     .slice(0, count);
+}
+
+function getSetupStepForMode(mode, { hasDefensePrep = false, hasFreeDebatePrep = false } = {}) {
+  if (mode === 'defense' && !hasDefensePrep) return 'defensePrep';
+  if (mode === 'free_debate' && !hasFreeDebatePrep) return 'freeDebatePrep';
+  if (roundSelectionModes.includes(mode)) return 'rounds';
+  return 'ready';
+}
+
+function getRecommendedTrainingModeForDimension(name, fallbackMode = 'free_debate') {
+  const normalizedName = String(name || '');
+  const rules = [
+    { keywords: ['定义', '判准', '论证结构', '逻辑链条', '论据', '数据', '例证', '可防守'], mode: 'constructive' },
+    { keywords: ['攻辩内容', '结算', '归纳', '主线连接'], mode: 'summary' },
+    { keywords: ['自由', '临场', '攻守转换', '团队协同', '战场识别', '战场控制'], mode: 'free_debate' },
+    { keywords: ['问题精准', '追问', '抓漏洞', '逻辑压迫'], mode: 'attack' },
+    { keywords: ['正面回应', '防守', '切割', '陷阱', '反压', '稳定'], mode: 'defense' },
+    { keywords: ['整合', '胜负比较', '攻防成果', '价值', '升华', '收束', '感染力', '时间控制'], mode: 'closing' }
+  ];
+  const matchedRule = rules.find((rule) => rule.keywords.some((keyword) => normalizedName.includes(keyword)));
+  return matchedRule?.mode || fallbackMode || 'free_debate';
 }
 
 function WeaknessVideoRecommendations({ dimensions }) {

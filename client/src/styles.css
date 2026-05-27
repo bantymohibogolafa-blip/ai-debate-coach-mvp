@@ -1353,6 +1353,51 @@ textarea:focus {
   margin-top: 22px;
 }
 
+.next-training-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  border: 1px solid #f0d5c9;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fffaf7;
+}
+
+.next-training-card span {
+  display: block;
+  margin-bottom: 4px;
+  color: #c8502d;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.next-training-card h3 {
+  margin: 0;
+  color: #10282f;
+  font-size: 18px;
+}
+
+.next-training-card p {
+  margin: 6px 0 0;
+  color: #52656e;
+  line-height: 1.6;
+}
+
+.next-training-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.next-training-actions button {
+  min-height: 44px;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-weight: 900;
+}
+
 .review-panel pre {
   margin: 0;
   white-space: pre-wrap;
@@ -2489,6 +2534,58 @@ textarea:focus {
   background: #fff0eb;
 }
 
+.task-completion-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.task-completion-overview article {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.task-completion-overview span {
+  color: #687982;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.task-completion-overview strong {
+  color: #13232b;
+  font-size: 20px;
+}
+
+.task-completion-overview button {
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-weight: 900;
+}
+
+.task-progress-track,
+.member-progress-track {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbe8ea;
+}
+
+.task-progress-track i,
+.member-progress-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2f7375, #c8502d);
+}
+
 .member-progress-wrap {
   display: grid;
   gap: 10px;
@@ -2507,7 +2604,7 @@ textarea:focus {
 
 .member-progress-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) repeat(4, minmax(80px, 1fr));
+  grid-template-columns: minmax(0, 1.5fr) repeat(5, minmax(74px, 1fr));
   gap: 8px;
   align-items: center;
   border: 1px solid #edf2f4;
@@ -2530,6 +2627,16 @@ textarea:focus {
 
 .member-progress-row em {
   color: #c8502d;
+}
+
+.member-progress-track {
+  grid-column: 1 / -1;
+}
+
+.task-rank-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .history-item.static {
@@ -2678,12 +2785,15 @@ textarea:focus {
   .main-tabs,
   .mode-selector-panel,
   .prep-context-grid,
+  .next-training-actions,
   .review-score-card,
   .dimension-chart-layout,
   .review-summary-grid,
   .task-form-grid,
   .task-form-row,
   .task-meta-grid,
+  .task-completion-overview,
+  .task-rank-grid,
   .ability-hero,
   .ability-grid,
   .ability-chart-grid,
@@ -2781,6 +2891,14 @@ textarea:focus {
   .task-panel-header,
   .member-progress-row {
     display: grid;
+  }
+
+  .member-progress-row {
+    grid-template-columns: 1fr;
+  }
+
+  .member-progress-track {
+    grid-column: auto;
   }
 
   .member-actions button {
