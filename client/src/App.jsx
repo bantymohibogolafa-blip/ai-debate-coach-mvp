@@ -436,8 +436,20 @@ function App() {
   const currentSpaceLabel = isTeamSpace ? (currentTeam.teamName || currentTeam.teamCode) : '个人模式';
   const currentNickname = isTeamSpace ? currentTeam.nickname : (currentUser?.displayName || personalNickname);
   const currentSpaceValue = isTeamSpace ? `team:${currentTeam.teamCode}` : 'personal';
-  const displayedRecords = personalRecords;
-  const displayedAbilityEstimate = personalAbilityEstimate;
+  const displayedRecords = isTeamSpace ? teamMemberRecords : personalRecords;
+  const displayedAbilityEstimate = isTeamSpace ? teamAbilityEstimate : personalAbilityEstimate;
+  const myRecordsScopeLabel = isTeamSpace
+    ? `当前查看：我在【${currentTeam.teamName || currentTeam.teamCode}】中的训练记录`
+    : '当前查看：个人训练记录';
+  const emptyRecordsMessage = isTeamSpace
+    ? '你在当前团队中暂无训练记录，完成一次团队训练后会显示在这里。'
+    : '暂无个人训练记录，完成一次个人训练后会显示在这里。';
+  const abilityScopeLabel = isTeamSpace
+    ? `当前能力估测基于：我在【${currentTeam.teamName || currentTeam.teamCode}】中的训练记录`
+    : '当前能力估测基于：个人训练记录';
+  const emptyAbilityMessage = isTeamSpace
+    ? '你在当前团队中暂无训练记录，完成一次团队训练后即可生成团队空间下的个人能力估测。'
+    : '暂无个人训练记录，完成训练后即可生成能力估测。';
   const maxRecordingSeconds = 30;
 
   useEffect(() => {
@@ -467,9 +479,6 @@ function App() {
   useEffect(() => {
     if (!localUserId) return;
 
-    loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
-    loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
-
     if (currentSpace.type !== 'personal' && !isTeamSpace) {
       setCurrentTrainingSpace(personalSpace);
       return;
@@ -477,18 +486,32 @@ function App() {
 
     if (isTeamSpace) {
       loadTeamDashboard(currentTeam.teamCode, localUserId);
+      loadMyTrainingRecords({ spaceType: 'team', teamCode: currentTeam.teamCode, userId: localUserId });
+      loadAbilityEstimate({ spaceType: 'team', teamCode: currentTeam.teamCode, userId: localUserId });
+      return;
     }
+
+    loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
+    loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
   }, [currentSpace.type, currentSpace.teamCode, isTeamSpace, localUserId, authToken, currentUser?.id]);
 
   useEffect(() => {
     if (!localUserId) return;
 
     if (activeTab === 'mine') {
-      loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
+      if (isTeamSpace) {
+        loadMyTrainingRecords({ spaceType: 'team', teamCode: currentTeam.teamCode, userId: localUserId });
+      } else {
+        loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
+      }
     }
 
     if (activeTab === 'ability') {
-      loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
+      if (isTeamSpace) {
+        loadAbilityEstimate({ spaceType: 'team', teamCode: currentTeam.teamCode, userId: localUserId });
+      } else {
+        loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
+      }
     }
 
     if (activeTab === 'team' && isTeamSpace) {
@@ -957,6 +980,11 @@ function App() {
   async function loadMyTrainingRecords({ spaceType, teamCode = '', userId }) {
     setIsHistoryLoading(true);
     setHistoryError('');
+    if (spaceType === 'team') {
+      setTeamMemberRecords([]);
+    } else {
+      setPersonalRecords([]);
+    }
 
     try {
       const query = new URLSearchParams({
@@ -1017,6 +1045,11 @@ function App() {
     if (!userId) return;
     setIsAbilityLoading(true);
     setAbilityError('');
+    if (spaceType === 'team') {
+      setTeamAbilityEstimate(null);
+    } else {
+      setPersonalAbilityEstimate(null);
+    }
 
     try {
       const query = new URLSearchParams({
@@ -1239,6 +1272,7 @@ function App() {
         loadTeamData(currentSpace.teamCode);
         loadTeamTasks(currentSpace.teamCode);
         loadMyTrainingRecords({ spaceType: 'team', teamCode: currentSpace.teamCode, userId: localUserId });
+        loadAbilityEstimate({ spaceType: 'team', teamCode: currentSpace.teamCode, userId: localUserId });
       } else {
         loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
         loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
@@ -2811,13 +2845,13 @@ function App() {
           {isHistoryLoading && <span className="badge">正在同步最新训练数据…</span>}
         </div>
         <p className="anonymous-note">
-          当前展示个人模式记录，不混入团队训练记录。团队训练记录请在“团队数据”中查看。
+          {myRecordsScopeLabel}
         </p>
         {saveStatus && <div className="history-status">{saveStatus}</div>}
         {historyError && <div className="error-box">{historyError}</div>}
 
         {!isHistoryLoading && displayedRecords.length === 0 ? (
-          <div className="history-empty">暂无训练记录</div>
+          <div className="history-empty">{emptyRecordsMessage}</div>
         ) : (
           <div className="history-list">
             {displayedRecords.map((record) => {
@@ -2892,7 +2926,9 @@ function App() {
           estimate={displayedAbilityEstimate}
           isLoading={isAbilityLoading}
           error={abilityError}
-          spaceLabel="个人模式"
+          spaceLabel={currentSpaceLabel}
+          scopeLabel={abilityScopeLabel}
+          emptyMessage={emptyAbilityMessage}
         />
       )}
 
@@ -3215,7 +3251,7 @@ function AuthModal({ mode, form, error, isLoading, onSubmit, onChange, onModeCha
   );
 }
 
-function AbilityPanel({ estimate, isLoading, error, spaceLabel }) {
+function AbilityPanel({ estimate, isLoading, error, spaceLabel, scopeLabel, emptyMessage }) {
   const dimensions = Array.isArray(estimate?.dimensions) ? estimate.dimensions : [];
   const history = Array.isArray(estimate?.history) ? estimate.history : [];
 
@@ -3229,10 +3265,11 @@ function AbilityPanel({ estimate, isLoading, error, spaceLabel }) {
         {isLoading && <span className="badge">估测中</span>}
       </div>
 
+      {scopeLabel && <p className="anonymous-note">{scopeLabel}</p>}
       {error && <div className="error-box">{error}</div>}
 
       {!estimate || !estimate.scoredRecordCount ? (
-        <div className="history-empty">暂无可估测记录。完成一次带评分的复盘后，这里会生成锋力值和能力曲线。</div>
+        <div className="history-empty">{emptyMessage || '暂无可估测记录。完成一次带评分的复盘后，这里会生成锋力值和能力曲线。'}</div>
       ) : (
         <>
           <div className="ability-hero">
