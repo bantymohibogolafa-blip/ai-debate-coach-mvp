@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import OnboardingGuide from './components/OnboardingGuide.jsx';
+import ReviewGeneratingCard from './components/ReviewGeneratingCard.jsx';
 import { getAbilityVideosForDimension } from './data/abilityVideoMap.js';
 
 const sides = [
@@ -373,6 +374,8 @@ function App() {
   const [isTraining, setIsTraining] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
+  const [reviewGenerationStatus, setReviewGenerationStatus] = useState('idle');
+  const [reviewLoadingError, setReviewLoadingError] = useState('');
   const [error, setError] = useState('');
   const [setupStep, setSetupStep] = useState('topic');
   const [longOutputPromptMode, setLongOutputPromptMode] = useState('');
@@ -1443,6 +1446,8 @@ function App() {
     setError('');
     setReview('');
     setStructuredReview(null);
+    setReviewGenerationStatus('idle');
+    setReviewLoadingError('');
     setHistory([]);
     setPolishResult(null);
     setSelectedRecord(null);
@@ -1544,7 +1549,10 @@ function App() {
     }
 
     setIsReviewing(true);
+    setReviewGenerationStatus('loading');
+    setReviewLoadingError('');
     setError('');
+    let reviewCompleted = false;
 
     try {
       const sessionForReview = trainingSession || {};
@@ -1564,10 +1572,19 @@ function App() {
       setStructuredReview(nextStructuredReview);
       setIsTraining(false);
       await saveTrainingRecord(content, nextStructuredReview);
+      reviewCompleted = true;
+      setReviewGenerationStatus('complete');
+      await new Promise((resolve) => window.setTimeout(resolve, 650));
     } catch (requestError) {
-      setError(getFriendlyError(requestError));
+      const message = '复盘生成失败，请稍后重试。';
+      setReviewLoadingError(message);
+      setReviewGenerationStatus('error');
+      setError(message);
     } finally {
       setIsReviewing(false);
+      if (reviewCompleted) {
+        setReviewGenerationStatus('idle');
+      }
     }
   }
 
@@ -1585,6 +1602,8 @@ function App() {
     setAnswer('');
     setReview('');
     setStructuredReview(null);
+    setReviewGenerationStatus('idle');
+    setReviewLoadingError('');
     setError('');
     setSelectedRecord(null);
     setSaveStatus(statusMessage);
@@ -1637,6 +1656,8 @@ function App() {
     setAnswer('');
     setReview('');
     setError('');
+    setReviewGenerationStatus('idle');
+    setReviewLoadingError('');
     setSelectedRecord(null);
     setSaveStatus('');
     setPolishResult(null);
@@ -2833,11 +2854,8 @@ function App() {
                 <p>正在组织追问<span className="dot-loader" /></p>
               </div>
             )}
-            {isReviewing && (
-              <div className="message ai thinking">
-                <span>复盘教练</span>
-                <p>正在生成复盘报告<span className="dot-loader" /></p>
-              </div>
+            {(isReviewing || reviewGenerationStatus === 'error') && (
+              <ReviewGeneratingCard status={reviewGenerationStatus} error={reviewLoadingError} />
             )}
           </div>
 
