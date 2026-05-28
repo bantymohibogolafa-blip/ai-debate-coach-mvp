@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import InstallPwaHint from './components/InstallPwaHint.jsx';
 import OnboardingGuide from './components/OnboardingGuide.jsx';
 import ReviewGeneratingCard from './components/ReviewGeneratingCard.jsx';
 import { getAbilityVideosForDimension } from './data/abilityVideoMap.js';
@@ -300,6 +301,7 @@ const selectedSpaceStorageKey = 'ai-debate-coach-selected-space';
 const authTokenStorageKey = 'fengbian-auth-token';
 const authUserStorageKey = 'fengbian-auth-user';
 const onboardingStorageKey = 'fengbian_onboarding_seen';
+const pwaHintStorageKey = 'fengbian_pwa_hint_dismissed';
 const trainingRecordLimit = 20;
 const defaultRecordFilters = { mode: 'all', sortBy: 'date', timeRange: 'all' };
 const defaultRecordPage = { offset: 0, hasMore: false, isLoadingMore: false };
@@ -396,6 +398,7 @@ function App() {
   const [polishResult, setPolishResult] = useState(null);
   const [selectedPolishType, setSelectedPolishType] = useState('');
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showPwaHint, setShowPwaHint] = useState(() => localStorage.getItem(pwaHintStorageKey) !== 'true');
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -2026,6 +2029,11 @@ function App() {
     });
   }
 
+  function dismissPwaHint() {
+    localStorage.setItem(pwaHintStorageKey, 'true');
+    setShowPwaHint(false);
+  }
+
   function logDataStateDebug(nextTab = activeTab) {
     if (!import.meta.env.DEV) return;
     console.debug('[data-sync] tab switch', {
@@ -2083,6 +2091,8 @@ function App() {
       </section>
 
       <OnboardingGuide open={showOnboarding} onClose={closeOnboarding} onStart={startFromOnboarding} />
+
+      {showPwaHint && <InstallPwaHint onDismiss={dismissPwaHint} />}
 
       {authStatus && <div className="history-status">{authStatus}</div>}
       {joinSuccess && <div className="history-status">{joinSuccess}</div>}

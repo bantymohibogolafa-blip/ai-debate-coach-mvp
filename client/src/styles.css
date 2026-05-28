@@ -187,6 +187,54 @@ textarea:disabled {
   white-space: nowrap;
 }
 
+.install-pwa-hint {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  border: 1px solid #d8e3e8;
+  border-left: 5px solid #2f7375;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fbfc;
+  box-shadow: 0 10px 24px rgba(24, 36, 43, 0.06);
+}
+
+.install-pwa-hint span {
+  display: block;
+  color: #13232b;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.install-pwa-hint p {
+  margin: 5px 0 8px;
+  color: #52636c;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.install-pwa-hint ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: #687982;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.install-pwa-hint button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 0 13px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-weight: 900;
+}
+
 .auth-status-card {
   display: grid;
   min-width: min(280px, 100%);
@@ -3154,6 +3202,15 @@ textarea:focus {
   .task-panel-header,
   .member-progress-row {
     display: grid;
+  }
+
+  .install-pwa-hint {
+    display: grid;
+  }
+
+  .install-pwa-hint button {
+    width: 100%;
+    min-height: 44px;
   }
 
   .member-progress-row {
