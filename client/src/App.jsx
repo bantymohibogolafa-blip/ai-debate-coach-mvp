@@ -3296,29 +3296,38 @@ function TeamDataPanel({
           <div className="history-empty">暂无训练记录</div>
         ) : (
           <div className="history-list">
-            {records.map((record) => (
-              <button
-                type="button"
-                key={record.id || record.createdAt}
-                className={`history-item ${selectedRecord?.id === record.id ? 'active' : ''}`}
-                onClick={() => onSelectRecord(record)}
-              >
-                <span>{formatRecordDate(record.createdAt)} · {record.nickname || '未命名成员'}</span>
-                <strong>{record.topic}</strong>
-                <small>
-                  {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'} / {getOptionLabel(difficulties, record.difficulty)}
-                  {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
-                  {record.result ? ` / ${record.result}` : ''}
-                </small>
-              </button>
-            ))}
+            {records.map((record) => {
+              const recordKey = record.id || record.createdAt;
+              const selectedRecordKey = selectedRecord?.id || selectedRecord?.createdAt;
+              const isExpanded = selectedRecordKey === recordKey;
+
+              return (
+                <div className="history-record-group" key={recordKey}>
+                  <button
+                    type="button"
+                    className={`history-item ${isExpanded ? 'active' : ''}`}
+                    onClick={() => onSelectRecord(isExpanded ? null : record)}
+                  >
+                    <span>{formatRecordDate(record.createdAt)} · {record.nickname || '未命名成员'}</span>
+                    <strong>{record.topic}</strong>
+                    <small>
+                      {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'} / {getOptionLabel(difficulties, record.difficulty)}
+                      {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
+                      {record.result ? ` / ${record.result}` : ''}
+                    </small>
+                  </button>
+
+                  {isExpanded && (
+                    <div className="inline-history-detail">
+                      <RecordDetail record={record} onClose={onClearRecord} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
-
-      {selectedRecord && (
-        <RecordDetail record={selectedRecord} onClose={onClearRecord} />
-      )}
       </>
       ) : (
         <TeamTasksPanel
