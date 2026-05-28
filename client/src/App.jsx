@@ -2854,9 +2854,6 @@ function App() {
                 <p>正在组织追问<span className="dot-loader" /></p>
               </div>
             )}
-            {(isReviewing || reviewGenerationStatus === 'error') && (
-              <ReviewGeneratingCard status={reviewGenerationStatus} error={reviewLoadingError} />
-            )}
           </div>
 
           {isTraining && (
@@ -2964,6 +2961,9 @@ function App() {
               <button className="secondary-button" onClick={finishAndReview} disabled={isBusy || isRecording || !history.length}>
                 结束并复盘
               </button>
+              {(isReviewing || reviewGenerationStatus === 'error') && (
+                <ReviewGeneratingCard status={reviewGenerationStatus} error={reviewLoadingError} />
+              )}
             </div>
           )}
 

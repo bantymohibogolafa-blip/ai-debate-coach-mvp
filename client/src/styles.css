@@ -1220,6 +1220,12 @@ textarea:focus {
   transition: width 460ms ease;
 }
 
+.answer-box .review-generating-card {
+  grid-column: 1 / -1;
+  width: 100%;
+  justify-self: stretch;
+}
+
 .answer-box {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
