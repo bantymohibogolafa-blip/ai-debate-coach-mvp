@@ -2427,6 +2427,69 @@ textarea:focus {
   gap: 12px;
 }
 
+.task-assignment-box,
+.task-member-picker,
+.task-locked-config {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.task-assignment-title,
+.task-locked-config strong {
+  color: #13232b;
+  font-weight: 900;
+}
+
+.task-assignment-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.task-assignment-toggle button,
+.task-member-option {
+  min-height: 44px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  background: #fff;
+  color: #263942;
+  font-weight: 900;
+}
+
+.task-assignment-toggle button.active {
+  color: #fff;
+  border-color: #2d7f7a;
+  background: #2d7f7a;
+}
+
+.task-member-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.task-member-option span {
+  flex: 1;
+}
+
+.task-member-option em {
+  color: #687982;
+  font-style: normal;
+  font-size: 13px;
+}
+
+.task-member-picker > span,
+.task-member-picker p {
+  margin: 0;
+  color: #687982;
+  font-weight: 850;
+}
+
 .task-form-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -2527,6 +2590,12 @@ textarea:focus {
   color: #245e62;
   background: #e8f2f1;
   font-weight: 900;
+}
+
+.task-actions button:disabled {
+  cursor: not-allowed;
+  color: #87959b;
+  background: #edf2f4;
 }
 
 .task-actions .danger {

@@ -277,7 +277,9 @@ const defaultTaskForm = {
   styleId: 'none',
   requiredCount: 1,
   deadline: '',
-  description: ''
+  description: '',
+  assignmentType: 'all',
+  assignedUserIds: []
 };
 
 const abilityDimensionMeta = [
@@ -438,6 +440,7 @@ function App() {
   const currentSpaceValue = isTeamSpace ? `team:${currentTeam.teamCode}` : 'personal';
   const displayedRecords = isTeamSpace ? teamMemberRecords : personalRecords;
   const displayedAbilityEstimate = isTeamSpace ? teamAbilityEstimate : personalAbilityEstimate;
+  const taskAssignableMembers = teamMembers.filter((member) => member.status === 'active' && member.appUserId);
   const myRecordsScopeLabel = isTeamSpace
     ? `当前查看：我在【${currentTeam.teamName || currentTeam.teamCode}】中的训练记录`
     : '当前查看：个人训练记录';
@@ -1090,6 +1093,11 @@ function App() {
       return;
     }
 
+    if (taskForm.assignmentType === 'selected' && !taskForm.assignedUserIds.length) {
+      setTaskActionError('指定成员任务至少需要选择 1 名成员。');
+      return;
+    }
+
     setIsTaskActionLoading(true);
     setTaskActionError('');
     setTaskActionStatus('');
@@ -1106,7 +1114,9 @@ function App() {
         styleId: taskForm.styleId,
         requiredCount: Number(taskForm.requiredCount) || 1,
         deadline: taskForm.deadline ? new Date(taskForm.deadline).toISOString() : '',
-        description: taskForm.description.trim()
+        description: taskForm.description.trim(),
+        assignmentType: taskForm.assignmentType,
+        assignedUserIds: taskForm.assignedUserIds
       });
       setTaskActionStatus('任务已发布。');
       setTaskForm(defaultTaskForm);
@@ -1182,6 +1192,10 @@ function App() {
       requestLogin();
       return;
     }
+    if (!isTaskActive(task)) {
+      setTaskActionError('该任务已结束，不能继续通过任务入口训练。');
+      return;
+    }
     const mode = task.mode || 'free_debate';
     const selectedMode = trainingModes.find((item) => item.value === mode) || trainingModes[2];
     const taskConfig = {
@@ -1204,7 +1218,18 @@ function App() {
     setSaveStatus('');
     setPolishResult(null);
     setSelectedPolishType((polishOptionsByMode[mode] || polishOptionsByMode.general)[0].id);
-    setActiveTaskSession({ taskId: task.id, title: task.title, teamCode: task.teamCode || currentTeam?.teamCode });
+    setActiveTaskSession({
+      taskId: task.id,
+      title: task.title,
+      teamCode: task.teamCode || currentTeam?.teamCode,
+      topic: task.topic || '',
+      userSide: task.userSide || 'affirmative',
+      mode,
+      difficulty: task.difficulty || 'novice',
+      styleId: task.styleId || 'none',
+      requiredCount: task.requiredCount || 1,
+      deadline: task.deadline || ''
+    });
     setSetupStep(roundSelectionModes.includes(mode) ? 'rounds' : mode === 'defense' ? 'rounds' : 'ready');
     setActiveTab('training');
     if (longOutputModes.includes(mode)) {
@@ -2248,6 +2273,57 @@ function App() {
             </div>
 
             <form className="task-form" onSubmit={createTeamTask}>
+              <div className="task-assignment-box">
+                <span className="task-assignment-title">任务对象</span>
+                <div className="task-assignment-toggle">
+                  <button
+                    type="button"
+                    className={taskForm.assignmentType === 'all' ? 'active' : ''}
+                    disabled={isTaskActionLoading}
+                    onClick={() => setTaskForm({ ...taskForm, assignmentType: 'all', assignedUserIds: [] })}
+                  >
+                    全员
+                  </button>
+                  <button
+                    type="button"
+                    className={taskForm.assignmentType === 'selected' ? 'active' : ''}
+                    disabled={isTaskActionLoading}
+                    onClick={() => setTaskForm({ ...taskForm, assignmentType: 'selected' })}
+                  >
+                    指定成员
+                  </button>
+                </div>
+                {taskForm.assignmentType === 'selected' && (
+                  <div className="task-member-picker">
+                    <span>已选择 {taskForm.assignedUserIds.length} 人</span>
+                    {taskAssignableMembers.length === 0 ? (
+                      <p>暂无可指派成员，请先确认团队成员已登录加入。</p>
+                    ) : (
+                      taskAssignableMembers.map((member) => {
+                        const checked = taskForm.assignedUserIds.includes(member.appUserId);
+                        return (
+                          <label key={member.appUserId} className="task-member-option">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={isTaskActionLoading}
+                              onChange={() => {
+                                const nextIds = checked
+                                  ? taskForm.assignedUserIds.filter((id) => id !== member.appUserId)
+                                  : [...taskForm.assignedUserIds, member.appUserId];
+                                setTaskForm({ ...taskForm, assignedUserIds: nextIds });
+                              }}
+                            />
+                            <span>{member.nickname || member.localUserId}</span>
+                            <em>{member.role === 'owner' || member.role === 'captain' ? '队长' : '成员'}</em>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+
               <label className="field">
                 <span>任务名称</span>
                 <input
@@ -2460,6 +2536,9 @@ function App() {
         <section className="task-session-banner">
           <span>团队任务</span>
           <strong>{activeTaskSession.title}</strong>
+          <small>
+            参数已锁定：{getOptionLabel(trainingModes, activeTaskSession.mode)} · {getOptionLabel(difficulties, activeTaskSession.difficulty)} · {getOptionLabel(celebrityDebaters, activeTaskSession.styleId) || '普通 AI'}
+          </small>
           <small>本次复盘保存后会自动计入该任务完成次数。</small>
         </section>
       )}
@@ -3087,11 +3166,14 @@ function App() {
               userSide: config.userSide || 'affirmative',
               mode: config.trainingMode || 'free_debate',
               difficulty: config.difficulty || 'novice',
-              styleId: config.celebrityDebater || 'none'
+              styleId: config.celebrityDebater || 'none',
+              assignmentType: 'all',
+              assignedUserIds: []
             });
             setTaskActionError('');
             setTaskActionStatus('');
             setIsTaskCreateOpen(true);
+            loadTeamMembers(currentTeam.teamCode);
           }}
           onStartTask={startTaskTraining}
           onOpenTaskDetail={openTaskDetail}
@@ -3501,16 +3583,23 @@ function TeamTasksPanel({
                 <span>模式：{getOptionLabel(trainingModes, task.mode) || '自由辩论'}</span>
                 <span>难度：{getOptionLabel(difficulties, task.difficulty) || '--'}</span>
                 <span>风格：{getOptionLabel(celebrityDebaters, task.styleId) || '普通 AI'}</span>
+                <span>任务对象：{getTaskAssignmentLabel(task)}</span>
+                <span>状态：{getTaskStatusLabel(task.status)}</span>
                 <span>我的进度：{task.completedCount || 0} / {task.requiredCount || 1}</span>
               </div>
               {task.description && <p className="task-description">{task.description}</p>}
               <div className="task-actions">
-                <button type="button" onClick={() => onStartTask(task)}>
+                <button type="button" onClick={() => onStartTask(task)} disabled={!isTaskActive(task)}>
                   开始训练
                 </button>
                 <button type="button" className="ghost-button" onClick={() => onOpenTaskDetail(task)}>
                   查看详情
                 </button>
+                {isOwner && isTaskActive(task) && (
+                  <button type="button" className="danger" onClick={() => onCloseTask(task)}>
+                    结束任务
+                  </button>
+                )}
               </div>
             </article>
           ))}
@@ -3600,6 +3689,20 @@ function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, o
         <span>最高分：{formatNullableNumber(stats.highestScore)}</span>
       </div>
 
+      <div className="task-locked-config">
+        <strong>该任务由队长布置，训练参数已锁定。</strong>
+        <div className="task-meta-grid">
+          <span>任务对象：{getTaskAssignmentLabel(task)}</span>
+          <span>状态：{getTaskStatusLabel(task.status)}</span>
+          <span>用户立场：{getOptionLabel(sides, task.userSide) || '--'}</span>
+          <span>AI 立场：{getOptionLabel(sides, task.aiSide) || '--'}</span>
+          <span>训练模式：{getOptionLabel(trainingModes, task.mode) || '--'}</span>
+          <span>难度：{getOptionLabel(difficulties, task.difficulty) || '--'}</span>
+          <span>AI 风格：{getOptionLabel(celebrityDebaters, task.styleId) || '普通 AI'}</span>
+          <span>要求次数：{task.requiredCount || 1}</span>
+        </div>
+      </div>
+
       <div className="task-completion-overview">
         <article>
           <span>成员完成进度</span>
@@ -3623,7 +3726,7 @@ function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, o
       {copyStatus && <div className="history-status">{copyStatus}</div>}
 
       <div className="task-actions">
-        <button type="button" onClick={() => onStartTask(task)}>
+        <button type="button" onClick={() => onStartTask(task)} disabled={!isTaskActive(task)}>
           开始训练
         </button>
         {isOwner && task.status === 'active' && (
@@ -4410,6 +4513,24 @@ function formatTaskDeadline(value) {
     hour: '2-digit',
     minute: '2-digit'
   })}`;
+}
+
+function isTaskActive(task = {}) {
+  return (task.status || 'active') === 'active';
+}
+
+function getTaskStatusLabel(status) {
+  if (status === 'ended' || status === 'closed') return '已结束';
+  if (status === 'expired') return '已过期';
+  if (status === 'archived') return '已归档';
+  return '进行中';
+}
+
+function getTaskAssignmentLabel(task = {}) {
+  if (task.assignmentType === 'selected') {
+    return `指定 ${Number(task.assignedCount || task.assignedMembers?.length || 0)} 人`;
+  }
+  return '全员';
 }
 
 function shuffle(items) {

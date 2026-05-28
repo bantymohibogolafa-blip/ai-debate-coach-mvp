@@ -42,6 +42,7 @@ const trainingRecordsTable = process.env.SUPABASE_TRAINING_TABLE || 'training_re
 const teamsTable = process.env.SUPABASE_TEAMS_TABLE || 'teams';
 const teamMembersTable = process.env.SUPABASE_TEAM_MEMBERS_TABLE || 'team_members';
 const teamTasksTable = process.env.SUPABASE_TEAM_TASKS_TABLE || 'team_tasks';
+const teamTaskAssignmentsTable = process.env.SUPABASE_TEAM_TASK_ASSIGNMENTS_TABLE || 'team_task_assignments';
 const appUsersTable = process.env.SUPABASE_APP_USERS_TABLE || 'app_users';
 const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '30d';
 const aliyunTokenCache = {
@@ -353,8 +354,9 @@ app.get('/api/team/tasks', requireAuth, async (req, res, next) => {
 app.get('/api/team/tasks/detail', requireAuth, async (req, res, next) => {
   try {
     const { taskId, teamCode, localUserId } = validateTeamTaskDetailQuery(req.query, req.user);
-    await requireActiveMembership(teamCode, localUserId);
+    const member = await requireActiveMembership(teamCode, localUserId);
     const task = await requireTeamTask(taskId, teamCode);
+    await requireTaskVisibleToUser(task, member, localUserId);
     const stats = await fetchTeamTaskStats(task, localUserId);
     res.json({
       task: mapTeamTaskFromDb(task),
@@ -369,8 +371,9 @@ app.get('/api/team/tasks/detail', requireAuth, async (req, res, next) => {
 app.get('/api/team/tasks/stats', requireAuth, async (req, res, next) => {
   try {
     const { taskId, teamCode, localUserId } = validateTeamTaskDetailQuery(req.query, req.user);
-    await requireActiveMembership(teamCode, localUserId);
+    const member = await requireActiveMembership(teamCode, localUserId);
     const task = await requireTeamTask(taskId, teamCode);
+    await requireTaskVisibleToUser(task, member, localUserId);
     const stats = await fetchTeamTaskStats(task, localUserId);
     res.json(stats);
   } catch (error) {
@@ -412,6 +415,9 @@ app.post('/api/training-records', optionalAuth, async (req, res, next) => {
   try {
     const record = await validateTrainingRecordPayload(req.body, req.user);
     const savedRecords = await insertTrainingRecord(record);
+    if (record.task_id && record.space_type === 'team' && record.app_user_id) {
+      await syncTaskAssignmentProgress(record.task_id, record.team_code, record.app_user_id);
+    }
 
     res.status(201).json({ record: mapTrainingRecordFromDb(savedRecords[0]) });
   } catch (error) {
@@ -665,14 +671,14 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   const localUserId = normalizeText(body.localUserId || body.local_user_id || body.userId || body.user_id);
   const nickname = normalizeNickname(body.nickname);
   const spaceType = normalizeSpaceType(body.spaceType || body.space_type || body.recordScope || body.scope);
-  const topic = normalizeText(body.topic);
-  const userSide = normalizeSide(normalizeText(body.userSide || body.user_side));
+  let topic = normalizeText(body.topic);
+  let userSide = normalizeSide(normalizeText(body.userSide || body.user_side));
   const submittedAiSide = normalizeText(body.aiSide || body.ai_side);
   const normalizedSubmittedAiSide = submittedAiSide ? normalizeSide(submittedAiSide) : '';
-  const aiSide = getOpponentSide(userSide);
-  const difficulty = normalizeDifficulty(normalizeText(body.difficulty));
-  const styleId = normalizeCelebrityDebater(normalizeText(body.styleId || body.style_id || 'none'));
-  const trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode));
+  let aiSide = getOpponentSide(userSide);
+  let difficulty = normalizeDifficulty(normalizeText(body.difficulty));
+  let styleId = normalizeCelebrityDebater(normalizeText(body.styleId || body.style_id || 'none'));
+  let trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode));
   const taskId = normalizeText(body.taskId || body.task_id);
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const review = normalizeText(body.review);
@@ -708,9 +714,16 @@ async function validateTrainingRecordPayload(body, authUser = null) {
         throw badRequest('任务信息无效，请从任务入口重新开始训练。');
       }
       const task = await requireTeamTask(taskId, normalizedTeamCode);
-      if (task.status !== 'active') {
+      if (!isTaskActive(task)) {
         throw httpError(403, '该训练任务已关闭，不能继续提交任务记录。');
       }
+      await requireTaskAssignedToUser(task, authUser.id);
+      topic = normalizeText(task.topic);
+      userSide = normalizeSide(task.user_side || userSide);
+      aiSide = normalizeSide(task.ai_side || getOpponentSide(userSide));
+      difficulty = normalizeDifficulty(task.difficulty);
+      styleId = normalizeCelebrityDebater(task.style_id || 'none');
+      trainingMode = normalizeTrainingMode(task.mode);
     }
   } else if (taskId) {
     throw badRequest('个人模式记录不能绑定团队任务。');
@@ -960,12 +973,20 @@ function validateTeamTaskPayload(body, authUser) {
   const title = normalizeText(body.title);
   const topic = normalizeText(body.topic);
   const userSide = normalizeOptionalSide(body.userSide || body.user_side);
+  const aiSide = userSide ? getOpponentSide(userSide) : '';
   const mode = normalizeTrainingMode(normalizeText(body.mode || body.trainingMode || body.training_mode));
   const difficulty = normalizeDifficulty(normalizeText(body.difficulty));
   const styleId = normalizeCelebrityDebater(normalizeText(body.styleId || body.style_id || 'none'));
   const requiredCount = clampNumber(Number(body.requiredCount || body.required_count || 1), 1, 20);
   const deadline = normalizeOptionalDate(body.deadline);
   const description = limitLength(normalizeText(body.description), 500);
+  const assignmentType = normalizeAssignmentType(body.assignmentType || body.assignment_type);
+  const rawAssignedUserIds = Array.isArray(body.assignedUserIds)
+    ? body.assignedUserIds
+    : Array.isArray(body.assigned_user_ids)
+      ? body.assigned_user_ids
+      : [];
+  const assignedUserIds = [...new Set(rawAssignedUserIds.map((item) => normalizeText(item)).filter(isUuid))];
 
   if (!isValidTeamCode(teamCode)) {
     throw badRequest('团队码无效，请重新选择团队。');
@@ -999,18 +1020,25 @@ function validateTeamTaskPayload(body, authUser) {
     throw badRequest('请选择有效 AI 风格。');
   }
 
+  if (assignmentType === 'selected' && !assignedUserIds.length) {
+    throw badRequest('指定成员任务至少需要选择 1 名成员。');
+  }
+
   return {
     teamCode,
     localUserId,
     title,
     topic,
     userSide: userSide || null,
+    aiSide: aiSide || null,
     mode,
     difficulty,
     styleId,
     requiredCount,
     deadline,
-    description
+    description,
+    assignmentType,
+    assignedUserIds
   };
 }
 
@@ -1164,8 +1192,8 @@ function getPublicErrorMessage(error) {
     if (/app_users|app_user_id|created_by_app_user_id/i.test(detailText)) {
       return '账号系统数据库表结构尚未更新，请先在 Supabase 执行 supabase-auth-1.sql。';
     }
-    if (/space_type|status|joined_at|join_password|team_tasks|task_id|mode_display_name|score_level|dimension_scores|schema cache|column/i.test(detailText)) {
-      return '数据库表结构尚未更新，请先在 Supabase 执行 supabase-team-spaces.sql。';
+    if (/space_type|status|joined_at|join_password|team_tasks|team_task_assignments|assignment_type|task_id|mode_display_name|score_level|dimension_scores|schema cache|column/i.test(detailText)) {
+      return '数据库表结构尚未更新，请先在 Supabase 执行 supabase-team-spaces.sql 和 supabase-team-task-4.sql。';
     }
     return '历史记录保存或读取失败，请稍后重试。';
   }
@@ -1362,6 +1390,10 @@ function normalizeLegacyOrLocalUserId(userId) {
 
 function normalizeSpaceType(value) {
   return normalizeText(value) === 'team' ? 'team' : 'personal';
+}
+
+function normalizeAssignmentType(value) {
+  return normalizeText(value) === 'selected' ? 'selected' : 'all';
 }
 
 function getPersonalTeamCode(localUserId) {
@@ -1813,47 +1845,86 @@ async function updateTeamPassword({ teamCode, localUserId, currentPassword, next
 
 async function createTeamTask(payload) {
   await requireTeamOwner(payload.teamCode, payload.localUserId);
-  const createdTasks = await supabaseRequest(teamTasksTable, {
-    method: 'POST',
-    body: {
-      team_code: payload.teamCode,
-      title: payload.title,
-      topic: payload.topic,
-      user_side: payload.userSide,
-      mode: payload.mode,
-      difficulty: payload.difficulty,
-      style_id: payload.styleId,
-      required_count: payload.requiredCount,
-      deadline: payload.deadline,
-      description: payload.description,
-      created_by: payload.localUserId,
-      created_by_app_user_id: payload.localUserId,
-      status: 'active',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    prefer: 'return=representation'
-  });
+  const activeMembers = await fetchTeamMembers(payload.teamCode);
+  const assignableMembers = activeMembers.filter((member) => member.status === 'active' && member.app_user_id);
+  const assigneeIds = payload.assignmentType === 'selected'
+    ? payload.assignedUserIds
+    : assignableMembers.map((member) => member.app_user_id);
 
-  return createdTasks[0];
+  if (payload.assignmentType === 'selected') {
+    const activeMemberIds = new Set(assignableMembers.map((member) => member.app_user_id));
+    const invalidIds = assigneeIds.filter((id) => !activeMemberIds.has(id));
+    if (invalidIds.length) {
+      throw badRequest('指定成员中包含非当前团队有效成员。');
+    }
+  }
+
+  const taskBody = {
+    team_code: payload.teamCode,
+    title: payload.title,
+    topic: payload.topic,
+    user_side: payload.userSide,
+    ai_side: payload.aiSide,
+    mode: payload.mode,
+    difficulty: payload.difficulty,
+    style_id: payload.styleId,
+    required_count: payload.requiredCount,
+    deadline: payload.deadline,
+    description: payload.description,
+    assignment_type: payload.assignmentType,
+    created_by: payload.localUserId,
+    created_by_app_user_id: payload.localUserId,
+    status: 'active',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  let createdTasks;
+  try {
+    createdTasks = await supabaseRequest(teamTasksTable, {
+      method: 'POST',
+      body: taskBody,
+      prefer: 'return=representation'
+    });
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    if (payload.assignmentType === 'selected') throw error;
+    const legacyTaskBody = { ...taskBody };
+    delete legacyTaskBody.ai_side;
+    delete legacyTaskBody.assignment_type;
+    createdTasks = await supabaseRequest(teamTasksTable, {
+      method: 'POST',
+      body: legacyTaskBody,
+      prefer: 'return=representation'
+    });
+  }
+
+  const task = createdTasks[0];
+  await createTaskAssignments(task, assigneeIds);
+  return task;
 }
 
 async function fetchTeamTasksWithProgress(teamCode, localUserId) {
+  const viewer = await requireActiveMembership(teamCode, localUserId);
+  const isOwner = isTeamOwnerRole(viewer.role);
   const tasks = await supabaseRequest(
     `${teamTasksTable}?${new URLSearchParams({
-      select: 'id,team_code,title,topic,user_side,mode,difficulty,style_id,required_count,deadline,description,created_by,created_by_app_user_id,status,created_at,updated_at',
+      select: '*',
       team_code: `eq.${teamCode}`,
-      status: 'eq.active',
       order: 'created_at.desc'
     }).toString()}`
   );
+  const visibleTasks = await filterVisibleTasksForUser(tasks, teamCode, localUserId, isOwner);
 
-  return Promise.all(tasks.map(async (task) => {
+  return Promise.all(visibleTasks.map(async (task) => {
     const completedCount = await fetchTaskCompletedCount(task.id, teamCode, localUserId);
+    const assignedMembers = await fetchTaskAssignedMembers(task, teamCode);
     return {
       ...mapTeamTaskFromDb(task),
       completedCount,
-      requiredCount: task.required_count || 1
+      requiredCount: task.required_count || 1,
+      assignedCount: assignedMembers.length,
+      assignedMembers: assignedMembers.map(mapTeamMemberFromDb)
     };
   }));
 }
@@ -1862,7 +1933,7 @@ async function requireTeamTask(taskId, teamCode) {
   const task = await getSingleByQuery(
     teamTasksTable,
     new URLSearchParams({
-      select: 'id,team_code,title,topic,user_side,mode,difficulty,style_id,required_count,deadline,description,created_by,created_by_app_user_id,status,created_at,updated_at',
+      select: '*',
       id: `eq.${taskId}`,
       team_code: `eq.${teamCode}`,
       limit: '1'
@@ -1879,19 +1950,167 @@ async function requireTeamTask(taskId, teamCode) {
 async function closeTeamTask({ taskId, teamCode, localUserId }) {
   await requireTeamOwner(teamCode, localUserId);
   await requireTeamTask(taskId, teamCode);
-  const updatedTasks = await supabaseRequest(
-    `${teamTasksTable}?id=eq.${encodeURIComponent(taskId)}&team_code=eq.${encodeURIComponent(teamCode)}`,
-    {
-      method: 'PATCH',
-      body: {
-        status: 'closed',
-        updated_at: new Date().toISOString()
-      },
-      prefer: 'return=representation'
-    }
-  );
+  const endedAt = new Date().toISOString();
+  let updatedTasks;
+  try {
+    updatedTasks = await supabaseRequest(
+      `${teamTasksTable}?id=eq.${encodeURIComponent(taskId)}&team_code=eq.${encodeURIComponent(teamCode)}`,
+      {
+        method: 'PATCH',
+        body: {
+          status: 'ended',
+          ended_at: endedAt,
+          ended_by: localUserId,
+          updated_at: endedAt
+        },
+        prefer: 'return=representation'
+      }
+    );
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    updatedTasks = await supabaseRequest(
+      `${teamTasksTable}?id=eq.${encodeURIComponent(taskId)}&team_code=eq.${encodeURIComponent(teamCode)}`,
+      {
+        method: 'PATCH',
+        body: {
+          status: 'closed',
+          updated_at: endedAt
+        },
+        prefer: 'return=representation'
+      }
+    );
+  }
 
   return updatedTasks[0];
+}
+
+async function createTaskAssignments(task, assigneeIds = []) {
+  if (!task?.id || !task.team_code || !assigneeIds.length) return;
+
+  const rows = [...new Set(assigneeIds)]
+    .filter(isUuid)
+    .map((appUserId) => ({
+      task_id: task.id,
+      team_code: task.team_code,
+      app_user_id: appUserId,
+      status: 'assigned',
+      assigned_at: new Date().toISOString()
+    }));
+
+  if (!rows.length) return;
+
+  try {
+    await supabaseRequest(teamTaskAssignmentsTable, {
+      method: 'POST',
+      body: rows,
+      prefer: 'resolution=ignore-duplicates'
+    });
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+  }
+}
+
+async function fetchTaskAssignments(taskId, teamCode) {
+  try {
+    return await supabaseRequest(
+      `${teamTaskAssignmentsTable}?${new URLSearchParams({
+        select: 'id,task_id,team_code,app_user_id,status,assigned_at,completed_count,completed_at',
+        task_id: `eq.${taskId}`,
+        team_code: `eq.${teamCode}`,
+        order: 'assigned_at.asc'
+      }).toString()}`
+    );
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+    return [];
+  }
+}
+
+async function filterVisibleTasksForUser(tasks, teamCode, localUserId, isOwner) {
+  if (isOwner) return tasks;
+  const visible = [];
+
+  for (const task of tasks) {
+    const assignmentType = task.assignment_type || 'all';
+    if (assignmentType === 'all') {
+      visible.push(task);
+      continue;
+    }
+
+    const assignments = await fetchTaskAssignments(task.id, teamCode);
+    if (assignments.some((assignment) => assignment.app_user_id === localUserId)) {
+      visible.push(task);
+    }
+  }
+
+  return visible;
+}
+
+async function fetchTaskAssignedMembers(task, teamCode = task?.team_code) {
+  const members = await fetchTeamMembers(teamCode);
+  const activeMembers = members.filter((member) => member.status === 'active' && member.app_user_id);
+  const assignmentType = task?.assignment_type || 'all';
+  if (assignmentType === 'all') return activeMembers;
+
+  const assignments = await fetchTaskAssignments(task.id, teamCode);
+  const assignedIds = new Set(assignments.map((assignment) => assignment.app_user_id));
+  return activeMembers.filter((member) => assignedIds.has(member.app_user_id));
+}
+
+async function requireTaskAssignedToUser(task, appUserId) {
+  if (!task?.id || !appUserId) {
+    throw httpError(403, '你不在该任务的指派对象中，不能提交该任务记录。');
+  }
+
+  if ((task.assignment_type || 'all') === 'all') return true;
+
+  const assignments = await fetchTaskAssignments(task.id, task.team_code);
+  if (!assignments.length) {
+    throw httpError(403, '你不在该任务的指派对象中，不能提交该任务记录。');
+  }
+
+  if (!assignments.some((assignment) => assignment.app_user_id === appUserId)) {
+    throw httpError(403, '你不在该任务的指派对象中，不能提交该任务记录。');
+  }
+
+  return true;
+}
+
+async function requireTaskVisibleToUser(task, member, appUserId) {
+  if (isTeamOwnerRole(member?.role)) return true;
+  return requireTaskAssignedToUser(task, appUserId);
+}
+
+async function syncTaskAssignmentProgress(taskId, teamCode, appUserId) {
+  if (!taskId || !teamCode || !appUserId) return;
+  const [task, completedCount] = await Promise.all([
+    requireTeamTask(taskId, teamCode),
+    fetchTaskCompletedCount(taskId, teamCode, appUserId)
+  ]);
+  const requiredCount = Number(task.required_count) || 1;
+  const isCompleted = completedCount >= requiredCount;
+  const completedAt = isCompleted ? new Date().toISOString() : null;
+
+  try {
+    await supabaseRequest(
+      `${teamTaskAssignmentsTable}?task_id=eq.${encodeURIComponent(taskId)}&team_code=eq.${encodeURIComponent(teamCode)}&app_user_id=eq.${encodeURIComponent(appUserId)}`,
+      {
+        method: 'PATCH',
+        body: {
+          completed_count: completedCount,
+          status: isCompleted ? 'completed' : 'assigned',
+          completed_at: completedAt
+        },
+        prefer: 'return=minimal'
+      }
+    );
+  } catch (error) {
+    if (!isSupabaseSchemaError(error)) throw error;
+  }
+}
+
+function isTaskActive(task = {}) {
+  return (task.status || 'active') === 'active';
 }
 
 async function fetchTaskCompletedCount(taskId, teamCode, localUserId) {
@@ -1904,7 +2123,7 @@ async function fetchTaskCompletedCount(taskId, teamCode, localUserId) {
 
 async function fetchTeamTaskStats(task, currentLocalUserId) {
   const [members, records] = await Promise.all([
-    fetchTeamMembers(task.team_code),
+    fetchTaskAssignedMembers(task, task.team_code),
     fetchTaskRecords(task.id, task.team_code, { limit: 1000 })
   ]);
   const requiredCount = task.required_count || 1;
@@ -2635,12 +2854,16 @@ function mapTeamTaskFromDb(task = {}) {
     title: task.title,
     topic: task.topic,
     userSide: task.user_side,
+    aiSide: task.ai_side || (task.user_side ? getOpponentSide(task.user_side) : ''),
     mode: task.mode || 'free_debate',
     difficulty: task.difficulty || 'novice',
     styleId: task.style_id || 'none',
     requiredCount: task.required_count || 1,
     deadline: task.deadline,
     description: task.description || '',
+    assignmentType: task.assignment_type || 'all',
+    endedAt: task.ended_at || null,
+    endedBy: task.ended_by || null,
     createdBy: task.created_by_app_user_id || task.created_by,
     status: task.status || 'active',
     createdAt: task.created_at,
