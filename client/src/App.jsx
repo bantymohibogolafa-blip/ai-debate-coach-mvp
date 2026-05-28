@@ -301,6 +301,8 @@ const authTokenStorageKey = 'fengbian-auth-token';
 const authUserStorageKey = 'fengbian-auth-user';
 const onboardingStorageKey = 'fengbian_onboarding_seen';
 const trainingRecordLimit = 20;
+const defaultRecordFilters = { mode: 'all', sortBy: 'date', timeRange: 'all' };
+const defaultRecordPage = { offset: 0, hasMore: false, isLoadingMore: false };
 const personalNickname = '个人用户';
 const personalSpace = { type: 'personal', teamCode: '' };
 const roundSelectionModes = ['free_debate', 'attack', 'defense'];
@@ -344,6 +346,11 @@ function App() {
   const [personalRecords, setPersonalRecords] = useState([]);
   const [teamMemberRecords, setTeamMemberRecords] = useState([]);
   const [teamRecords, setTeamRecords] = useState([]);
+  const [myRecordFilters, setMyRecordFilters] = useState(defaultRecordFilters);
+  const [teamRecordFilters, setTeamRecordFilters] = useState(defaultRecordFilters);
+  const [personalRecordsPage, setPersonalRecordsPage] = useState(defaultRecordPage);
+  const [teamMemberRecordsPage, setTeamMemberRecordsPage] = useState(defaultRecordPage);
+  const [teamRecordsPage, setTeamRecordsPage] = useState(defaultRecordPage);
   const [teamStats, setTeamStats] = useState(null);
   const [teamTasks, setTeamTasks] = useState([]);
   const [teamTasksError, setTeamTasksError] = useState('');
@@ -442,6 +449,7 @@ function App() {
   const currentNickname = isTeamSpace ? currentTeam.nickname : (currentUser?.displayName || personalNickname);
   const currentSpaceValue = isTeamSpace ? `team:${currentTeam.teamCode}` : 'personal';
   const displayedRecords = isTeamSpace ? teamMemberRecords : personalRecords;
+  const displayedRecordsPage = isTeamSpace ? teamMemberRecordsPage : personalRecordsPage;
   const displayedAbilityEstimate = isTeamSpace ? teamAbilityEstimate : personalAbilityEstimate;
   const taskAssignableMembers = teamMembers.filter((member) => member.status === 'active' && member.appUserId);
   const myRecordsScopeLabel = isTeamSpace
@@ -499,7 +507,7 @@ function App() {
 
     loadMyTrainingRecords({ spaceType: 'personal', userId: localUserId });
     loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
-  }, [currentSpace.type, currentSpace.teamCode, isTeamSpace, localUserId, authToken, currentUser?.id]);
+  }, [currentSpace.type, currentSpace.teamCode, isTeamSpace, localUserId, authToken, currentUser?.id, myRecordFilters, teamRecordFilters]);
 
   useEffect(() => {
     if (!localUserId) return;
@@ -524,7 +532,7 @@ function App() {
       loadTeamData(currentTeam.teamCode, localUserId);
       loadTeamTasks(currentTeam.teamCode, localUserId);
     }
-  }, [activeTab, isTeamSpace, currentSpace.teamCode, localUserId, authToken, currentUser?.id]);
+  }, [activeTab, isTeamSpace, currentSpace.teamCode, localUserId, authToken, currentUser?.id, myRecordFilters, teamRecordFilters]);
 
   useEffect(() => {
     if (currentSpace.type === 'personal' && activeTab === 'team') {
@@ -572,6 +580,9 @@ function App() {
     setPersonalRecords([]);
     setTeamMemberRecords([]);
     setTeamRecords([]);
+    setPersonalRecordsPage(defaultRecordPage);
+    setTeamMemberRecordsPage(defaultRecordPage);
+    setTeamRecordsPage(defaultRecordPage);
     setTeamStats(null);
     setTeamTasks([]);
     setPersonalAbilityEstimate(null);
@@ -983,52 +994,162 @@ function App() {
     ]);
   }
 
-  async function loadMyTrainingRecords({ spaceType, teamCode = '', userId }) {
-    setIsHistoryLoading(true);
+  async function loadMyTrainingRecords({ spaceType, teamCode = '', userId, append = false, filters = myRecordFilters }) {
+    const pageState = spaceType === 'team' ? teamMemberRecordsPage : personalRecordsPage;
+    const nextOffset = append ? pageState.offset : 0;
+    if (append) {
+      if (spaceType === 'team') {
+        setTeamMemberRecordsPage((current) => ({ ...current, isLoadingMore: true }));
+      } else {
+        setPersonalRecordsPage((current) => ({ ...current, isLoadingMore: true }));
+      }
+    } else {
+      setIsHistoryLoading(true);
+    }
     setHistoryError('');
     if (spaceType === 'team') {
-      setTeamMemberRecords([]);
+      if (!append) setTeamMemberRecords([]);
     } else {
-      setPersonalRecords([]);
+      if (!append) setPersonalRecords([]);
     }
 
     try {
       const query = new URLSearchParams({
         spaceType,
-        localUserId: userId
+        localUserId: userId,
+        limit: String(trainingRecordLimit),
+        offset: String(nextOffset),
+        mode: filters.mode || 'all',
+        sortBy: filters.sortBy || 'date',
+        timeRange: filters.timeRange || 'all'
       });
       if (spaceType === 'team') query.set('teamCode', teamCode);
       const data = await getJson(`/api/training-records/my?${query.toString()}`);
       const nextRecords = Array.isArray(data.records) ? data.records : [];
       if (spaceType === 'team') {
-        setTeamMemberRecords(nextRecords);
+        setTeamMemberRecords((current) => append ? [...current, ...nextRecords] : nextRecords);
+        setTeamMemberRecordsPage({
+          offset: Number(data.nextOffset ?? nextOffset + nextRecords.length),
+          hasMore: Boolean(data.hasMore),
+          isLoadingMore: false
+        });
       } else {
-        setPersonalRecords(nextRecords);
+        setPersonalRecords((current) => append ? [...current, ...nextRecords] : nextRecords);
+        setPersonalRecordsPage({
+          offset: Number(data.nextOffset ?? nextOffset + nextRecords.length),
+          hasMore: Boolean(data.hasMore),
+          isLoadingMore: false
+        });
       }
     } catch (requestError) {
       setHistoryError(getFriendlyError(requestError));
+      if (spaceType === 'team') {
+        setTeamMemberRecordsPage((current) => ({ ...current, isLoadingMore: false }));
+      } else {
+        setPersonalRecordsPage((current) => ({ ...current, isLoadingMore: false }));
+      }
     } finally {
-      setIsHistoryLoading(false);
+      if (!append) setIsHistoryLoading(false);
     }
   }
 
-  async function loadTeamData(teamCode, userId = localUserId) {
+  async function loadTeamData(teamCode, userId = localUserId, { append = false, filters = teamRecordFilters } = {}) {
     if (!isLoggedIn) return;
-    setIsTeamDataLoading(true);
+    const nextOffset = append ? teamRecordsPage.offset : 0;
+    if (append) {
+      setTeamRecordsPage((current) => ({ ...current, isLoadingMore: true }));
+    } else {
+      setIsTeamDataLoading(true);
+    }
     setTeamDataError('');
+    if (!append) setTeamRecords([]);
 
     try {
       const [recordsData, statsData] = await Promise.all([
-        getJson(`/api/training-records/team?teamCode=${encodeURIComponent(teamCode)}&localUserId=${encodeURIComponent(userId)}`),
+        getJson(`/api/training-records/team?${new URLSearchParams({
+          teamCode,
+          localUserId: userId,
+          limit: String(trainingRecordLimit),
+          offset: String(nextOffset),
+          mode: filters.mode || 'all',
+          sortBy: filters.sortBy || 'date',
+          timeRange: filters.timeRange || 'all'
+        }).toString()}`),
         getJson(`/api/team/stats?teamCode=${encodeURIComponent(teamCode)}&localUserId=${encodeURIComponent(userId)}`)
       ]);
-      setTeamRecords(Array.isArray(recordsData.records) ? recordsData.records : []);
+      const nextRecords = Array.isArray(recordsData.records) ? recordsData.records : [];
+      setTeamRecords((current) => append ? [...current, ...nextRecords] : nextRecords);
+      setTeamRecordsPage({
+        offset: Number(recordsData.nextOffset ?? nextOffset + nextRecords.length),
+        hasMore: Boolean(recordsData.hasMore),
+        isLoadingMore: false
+      });
       setTeamStats(statsData);
     } catch (requestError) {
       setTeamDataError(getFriendlyError(requestError));
+      setTeamRecordsPage((current) => ({ ...current, isLoadingMore: false }));
     } finally {
-      setIsTeamDataLoading(false);
+      if (!append) setIsTeamDataLoading(false);
     }
+  }
+
+  function updateMyRecordFilters(nextFilters) {
+    const normalizedFilters = { ...defaultRecordFilters, ...nextFilters };
+    setMyRecordFilters(normalizedFilters);
+    setSelectedRecord(null);
+    if (isTeamSpace) {
+      setTeamMemberRecords([]);
+      setTeamMemberRecordsPage(defaultRecordPage);
+    } else {
+      setPersonalRecords([]);
+      setPersonalRecordsPage(defaultRecordPage);
+    }
+  }
+
+  function updateTeamRecordFilters(nextFilters) {
+    const normalizedFilters = { ...defaultRecordFilters, ...nextFilters };
+    setTeamRecordFilters(normalizedFilters);
+    setSelectedRecord(null);
+    setTeamRecords([]);
+    setTeamRecordsPage(defaultRecordPage);
+  }
+
+  function clearMyRecordFilters() {
+    updateMyRecordFilters(defaultRecordFilters);
+  }
+
+  function clearTeamRecordFilters() {
+    updateTeamRecordFilters(defaultRecordFilters);
+  }
+
+  function loadMoreMyRecords() {
+    if (!localUserId || isHistoryLoading) return;
+    if (isTeamSpace) {
+      if (teamMemberRecordsPage.isLoadingMore || !teamMemberRecordsPage.hasMore) return;
+      loadMyTrainingRecords({
+        spaceType: 'team',
+        teamCode: currentTeam.teamCode,
+        userId: localUserId,
+        append: true,
+        filters: myRecordFilters
+      });
+      return;
+    }
+    if (personalRecordsPage.isLoadingMore || !personalRecordsPage.hasMore) return;
+    loadMyTrainingRecords({
+      spaceType: 'personal',
+      userId: localUserId,
+      append: true,
+      filters: myRecordFilters
+    });
+  }
+
+  function loadMoreTeamRecords() {
+    if (!isTeamSpace || !localUserId || teamRecordsPage.isLoadingMore || !teamRecordsPage.hasMore) return;
+    loadTeamData(currentTeam.teamCode, localUserId, {
+      append: true,
+      filters: teamRecordFilters
+    });
   }
 
   async function loadTeamTasks(teamCode, userId = localUserId) {
@@ -3022,9 +3143,21 @@ function App() {
         </p>
         {saveStatus && <div className="history-status">{saveStatus}</div>}
         {historyError && <div className="error-box">{historyError}</div>}
+        <RecordFilterBar
+          filters={myRecordFilters}
+          onChange={updateMyRecordFilters}
+          onClear={clearMyRecordFilters}
+        />
 
         {!isHistoryLoading && displayedRecords.length === 0 ? (
-          <div className="history-empty">{emptyRecordsMessage}</div>
+          <div className="history-empty">
+            {isDefaultRecordFilters(myRecordFilters) ? emptyRecordsMessage : '当前筛选条件下暂无训练记录。'}
+            {!isDefaultRecordFilters(myRecordFilters) && (
+              <button type="button" className="filter-clear-button" onClick={clearMyRecordFilters}>
+                清除筛选
+              </button>
+            )}
+          </div>
         ) : (
           <div className="history-list">
             {displayedRecords.map((record) => {
@@ -3091,6 +3224,12 @@ function App() {
             })}
           </div>
         )}
+        <RecordsLoadMore
+          hasMore={displayedRecordsPage.hasMore}
+          isLoading={displayedRecordsPage.isLoadingMore}
+          recordsCount={displayedRecords.length}
+          onLoadMore={loadMoreMyRecords}
+        />
       </section>
       )}
 
@@ -3177,6 +3316,11 @@ function App() {
           error={teamDataError}
           onSelectRecord={setSelectedRecord}
           onClearRecord={() => setSelectedRecord(null)}
+          recordFilters={teamRecordFilters}
+          recordPage={teamRecordsPage}
+          onRecordFiltersChange={updateTeamRecordFilters}
+          onClearRecordFilters={clearTeamRecordFilters}
+          onLoadMoreRecords={loadMoreTeamRecords}
           onOpenTaskCreate={() => {
             setTaskForm({
               ...defaultTaskForm,
@@ -3206,6 +3350,85 @@ function App() {
   );
 }
 
+function isDefaultRecordFilters(filters = {}) {
+  const current = { ...defaultRecordFilters, ...filters };
+  return current.mode === 'all' && current.sortBy === 'date' && current.timeRange === 'all';
+}
+
+function RecordFilterBar({ filters, onChange, onClear }) {
+  const current = { ...defaultRecordFilters, ...filters };
+  const modeOptions = [
+    { label: '全部模式', value: 'all' },
+    { label: '立论训练', value: 'constructive' },
+    { label: '攻辩小结', value: 'summary' },
+    { label: '自由辩论', value: 'free_debate' },
+    { label: '攻辩训练', value: 'attack' },
+    { label: '防守训练', value: 'defense' },
+    { label: '结辩训练', value: 'closing' }
+  ];
+  const sortOptions = [
+    { label: '按日期', value: 'date' },
+    { label: '按分数', value: 'score' }
+  ];
+  const timeOptions = [
+    { label: '全部时间', value: 'all' },
+    { label: '最近7天', value: '7d' }
+  ];
+
+  const renderChips = (field, options) => (
+    <div className="record-filter-chips">
+      {options.map((option) => (
+        <button
+          type="button"
+          key={option.value}
+          className={current[field] === option.value ? 'active' : ''}
+          onClick={() => onChange({ ...current, [field]: option.value })}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="record-filter-panel">
+      <div className="record-filter-row">
+        <span>训练模式</span>
+        {renderChips('mode', modeOptions)}
+      </div>
+      <div className="record-filter-row compact">
+        <span>排序</span>
+        {renderChips('sortBy', sortOptions)}
+      </div>
+      <div className="record-filter-row compact">
+        <span>时间</span>
+        {renderChips('timeRange', timeOptions)}
+      </div>
+      {!isDefaultRecordFilters(current) && (
+        <button type="button" className="filter-clear-button" onClick={onClear}>
+          清除筛选
+        </button>
+      )}
+    </div>
+  );
+}
+
+function RecordsLoadMore({ hasMore, isLoading, recordsCount, onLoadMore }) {
+  if (!recordsCount) return null;
+
+  return (
+    <div className="records-load-more">
+      {hasMore ? (
+        <button type="button" onClick={onLoadMore} disabled={isLoading}>
+          {isLoading ? '正在加载...' : '加载更多'}
+        </button>
+      ) : (
+        <span>没有更多记录了</span>
+      )}
+    </div>
+  );
+}
+
 function TeamDataPanel({
   records,
   stats,
@@ -3225,6 +3448,11 @@ function TeamDataPanel({
   error,
   onSelectRecord,
   onClearRecord,
+  recordFilters,
+  recordPage,
+  onRecordFiltersChange,
+  onClearRecordFilters,
+  onLoadMoreRecords,
   onOpenTaskCreate,
   onStartTask,
   onOpenTaskDetail,
@@ -3292,8 +3520,20 @@ function TeamDataPanel({
 
       <div className="team-recent-section">
         <h3>最近训练记录</h3>
+        <RecordFilterBar
+          filters={recordFilters}
+          onChange={onRecordFiltersChange}
+          onClear={onClearRecordFilters}
+        />
         {records.length === 0 ? (
-          <div className="history-empty">暂无训练记录</div>
+          <div className="history-empty">
+            {isDefaultRecordFilters(recordFilters) ? '暂无训练记录' : '当前筛选条件下暂无训练记录。'}
+            {!isDefaultRecordFilters(recordFilters) && (
+              <button type="button" className="filter-clear-button" onClick={onClearRecordFilters}>
+                清除筛选
+              </button>
+            )}
+          </div>
         ) : (
           <div className="history-list">
             {records.map((record) => {
@@ -3327,6 +3567,12 @@ function TeamDataPanel({
             })}
           </div>
         )}
+        <RecordsLoadMore
+          hasMore={recordPage?.hasMore}
+          isLoading={recordPage?.isLoadingMore}
+          recordsCount={records.length}
+          onLoadMore={onLoadMoreRecords}
+        />
       </div>
       </>
       ) : (

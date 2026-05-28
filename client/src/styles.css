@@ -1870,6 +1870,92 @@ textarea:focus {
   font-weight: 800;
 }
 
+.record-filter-panel {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 14px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbfc;
+}
+
+.record-filter-row {
+  display: grid;
+  gap: 7px;
+}
+
+.record-filter-row span {
+  color: #687982;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.record-filter-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.record-filter-chips button,
+.filter-clear-button {
+  min-height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid #cbd9de;
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #52636c;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.record-filter-chips button.active {
+  border-color: #2f7375;
+  color: #fff9ef;
+  background: #2f7375;
+}
+
+.filter-clear-button {
+  justify-self: start;
+  border-color: #f0d2c6;
+  color: #c8502d;
+  background: #fff8f4;
+}
+
+.records-load-more {
+  display: grid;
+  place-items: center;
+  margin-top: 14px;
+}
+
+.records-load-more button {
+  width: min(100%, 320px);
+  min-height: 44px;
+  border: 1px solid #cbdeda;
+  border-radius: 8px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-weight: 900;
+}
+
+.records-load-more button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.records-load-more span {
+  color: #687982;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.history-empty .filter-clear-button {
+  margin-top: 10px;
+}
+
 .history-empty {
   display: grid;
   min-height: 110px;

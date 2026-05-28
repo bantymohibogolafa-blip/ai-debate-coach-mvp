@@ -430,14 +430,15 @@ app.get('/api/training-records/my', optionalAuth, async (req, res, next) => {
     const teamCode = normalizeTeamCode(req.query.teamCode);
     const localUserId = normalizeText(req.query.localUserId);
     const spaceType = normalizeSpaceType(req.query.spaceType || req.query.scope);
+    const page = parseRecordPageQuery(req.query);
 
     if (!isValidLocalUserId(localUserId)) {
       return res.status(400).json({ message: '用户身份无效，请刷新页面后重试。' });
     }
 
     if (spaceType === 'personal') {
-      const records = await fetchPersonalTrainingRecords(localUserId, 50, req.user?.id);
-      return res.json({ records: records.map(mapTrainingRecordFromDb) });
+      const rows = await fetchPersonalTrainingRecords(localUserId, page.limit + 1, req.user?.id, page);
+      return res.json(buildRecordPageResponse(rows, page));
     }
 
     if (!req.user) {
@@ -449,8 +450,8 @@ app.get('/api/training-records/my', optionalAuth, async (req, res, next) => {
     }
 
     await requireActiveMembership(teamCode, req.user.id);
-    const records = await fetchMyTrainingRecords(teamCode, req.user.id, 50);
-    res.json({ records: records.map(mapTrainingRecordFromDb) });
+    const rows = await fetchMyTrainingRecords(teamCode, req.user.id, page.limit + 1, page);
+    res.json(buildRecordPageResponse(rows, page));
   } catch (error) {
     next(error);
   }
@@ -465,9 +466,11 @@ app.get('/api/training-records/team', requireAuth, async (req, res, next) => {
     }
 
     await requireActiveMembership(teamCode, req.user.id);
-    const allRecords = await fetchTeamTrainingRecords(teamCode, 1000);
-    const records = (await filterRecordsByActiveMembers(teamCode, allRecords)).slice(0, 50);
-    res.json({ records: records.map(mapTrainingRecordFromDb) });
+    const page = parseRecordPageQuery(req.query);
+    const allRecords = await fetchTeamTrainingRecords(teamCode, 1000, { ...page, offset: 0 });
+    const records = (await filterRecordsByActiveMembers(teamCode, allRecords))
+      .slice(page.offset, page.offset + page.limit + 1);
+    res.json(buildRecordPageResponse(records, page));
   } catch (error) {
     next(error);
   }
@@ -1392,6 +1395,64 @@ function normalizeSpaceType(value) {
   return normalizeText(value) === 'team' ? 'team' : 'personal';
 }
 
+function normalizeRecordModeFilter(value) {
+  const clean = normalizeText(value);
+  const aliases = {
+    constructive_speech: 'constructive',
+    '立论训练': 'constructive',
+    cx_summary: 'summary',
+    '攻辩小结': 'summary',
+    offensive_cx: 'attack',
+    '攻辩训练': 'attack',
+    defensive_cx: 'defense',
+    '防守训练': 'defense',
+    closing_speech: 'closing',
+    '结辩训练': 'closing',
+    free_debate: 'free_debate',
+    '自由辩论': 'free_debate'
+  };
+  const mode = aliases[clean] || clean;
+  return ['constructive', 'summary', 'free_debate', 'attack', 'defense', 'closing'].includes(mode)
+    ? mode
+    : 'all';
+}
+
+function parseRecordPageQuery(query = {}) {
+  const limit = clampNumber(Number(query.limit || 20), 1, 50);
+  const offset = Math.max(0, Math.floor(Number(query.offset || 0)) || 0);
+  const mode = normalizeRecordModeFilter(query.mode || 'all');
+  const sortBy = normalizeText(query.sortBy) === 'score' ? 'score' : 'date';
+  const timeRange = normalizeText(query.timeRange) === '7d' ? '7d' : 'all';
+  return { limit, offset, mode, sortBy, timeRange };
+}
+
+function applyRecordPageQuery(query, page = {}) {
+  if (page.mode && page.mode !== 'all') {
+    query.set('training_mode', `eq.${page.mode}`);
+  }
+  if (page.timeRange === '7d') {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    query.set('created_at', `gte.${since}`);
+  }
+  if (page.sortBy === 'score') {
+    query.set('order', 'score.desc.nullslast,created_at.desc');
+  } else {
+    query.set('order', 'created_at.desc');
+  }
+  query.set('limit', String(page.limit || 20));
+  query.set('offset', String(page.offset || 0));
+}
+
+function buildRecordPageResponse(rows = [], page = {}) {
+  const limit = page.limit || 20;
+  const records = rows.slice(0, limit);
+  return {
+    records: records.map(mapTrainingRecordFromDb),
+    hasMore: rows.length > limit,
+    nextOffset: (page.offset || 0) + records.length
+  };
+}
+
 function normalizeAssignmentType(value) {
   return normalizeText(value) === 'selected' ? 'selected' : 'all';
 }
@@ -2307,15 +2368,14 @@ async function fetchLegacyTrainingRecords(localUserId, limit) {
   }
 }
 
-async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '') {
+async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '', page = {}) {
   const identityFilter = appUserId ? { app_user_id: `eq.${appUserId}` } : { local_user_id: `eq.${localUserId}` };
   const query = new URLSearchParams({
     select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.personal',
-    ...identityFilter,
-    order: 'created_at.desc',
-    limit: String(limit)
+    ...identityFilter
   });
+  applyRecordPageQuery(query, { ...page, limit });
 
   try {
     return await supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
@@ -2325,16 +2385,15 @@ async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '') 
   }
 }
 
-async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
+async function fetchMyTrainingRecords(teamCode, localUserId, limit, page = {}) {
   const identityFilter = isUuid(localUserId) ? { app_user_id: `eq.${localUserId}` } : { local_user_id: `eq.${localUserId}` };
   const query = new URLSearchParams({
     select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
-    ...identityFilter,
-    order: 'created_at.desc',
-    limit: String(limit)
+    ...identityFilter
   });
+  applyRecordPageQuery(query, { ...page, limit });
 
   try {
     return await supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
@@ -2344,14 +2403,13 @@ async function fetchMyTrainingRecords(teamCode, localUserId, limit) {
   }
 }
 
-async function fetchTeamTrainingRecords(teamCode, limit) {
+async function fetchTeamTrainingRecords(teamCode, limit, page = {}) {
   const query = new URLSearchParams({
     select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.team',
-    team_code: `eq.${teamCode}`,
-    order: 'created_at.desc',
-    limit: String(limit)
+    team_code: `eq.${teamCode}`
   });
+  applyRecordPageQuery(query, { ...page, limit });
 
   try {
     return await supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
