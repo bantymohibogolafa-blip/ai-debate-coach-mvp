@@ -398,7 +398,7 @@ function App() {
   const [polishResult, setPolishResult] = useState(null);
   const [selectedPolishType, setSelectedPolishType] = useState('');
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [showPwaHint, setShowPwaHint] = useState(() => localStorage.getItem(pwaHintStorageKey) !== 'true');
+  const [showPwaHint, setShowPwaHint] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -492,6 +492,18 @@ function App() {
 
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (showOnboarding || localStorage.getItem(pwaHintStorageKey) === 'true') {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setShowPwaHint(true);
+    }, 800);
+
+    return () => window.clearTimeout(timer);
+  }, [showOnboarding]);
 
   useEffect(() => {
     if (!localUserId) return;
@@ -2088,11 +2100,14 @@ function App() {
         <button type="button" className="onboarding-entry-button" onClick={() => setShowOnboarding(true)}>
           新手指南
         </button>
+        <button type="button" className="onboarding-entry-button" onClick={() => setShowPwaHint(true)}>
+          安装到桌面
+        </button>
       </section>
 
       <OnboardingGuide open={showOnboarding} onClose={closeOnboarding} onStart={startFromOnboarding} />
 
-      {showPwaHint && <InstallPwaHint onDismiss={dismissPwaHint} />}
+      <InstallPwaHint open={showPwaHint} onDismiss={dismissPwaHint} />
 
       {authStatus && <div className="history-status">{authStatus}</div>}
       {joinSuccess && <div className="history-status">{joinSuccess}</div>}

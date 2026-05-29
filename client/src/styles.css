@@ -187,18 +187,29 @@ textarea:disabled {
   white-space: nowrap;
 }
 
+.install-pwa-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(15, 32, 38, 0.42);
+}
+
 .install-pwa-hint {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  position: relative;
+  display: grid;
   gap: 14px;
-  margin-bottom: 14px;
+  width: min(520px, 100%);
+  max-height: min(82vh, 620px);
+  overflow-y: auto;
   border: 1px solid #d8e3e8;
   border-left: 5px solid #2f7375;
   border-radius: 8px;
-  padding: 14px;
+  padding: 18px;
   background: #f8fbfc;
-  box-shadow: 0 10px 24px rgba(24, 36, 43, 0.06);
+  box-shadow: 0 24px 60px rgba(24, 36, 43, 0.22);
 }
 
 .install-pwa-hint span {
@@ -225,14 +236,26 @@ textarea:disabled {
   font-weight: 800;
 }
 
-.install-pwa-hint button {
-  flex: 0 0 auto;
+.install-pwa-hint .install-pwa-primary {
   min-height: 40px;
   border-radius: 8px;
   padding: 0 13px;
   color: #245e62;
   background: #e8f2f1;
   font-weight: 900;
+}
+
+.install-pwa-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 36px;
+  min-height: 36px;
+  border-radius: 999px;
+  color: #53686f;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
 }
 
 .auth-status-card {
@@ -3280,11 +3303,13 @@ textarea:focus {
     display: grid;
   }
 
-  .install-pwa-hint {
-    display: grid;
+  .install-pwa-backdrop {
+    align-items: start;
+    padding: 14px;
+    overflow-y: auto;
   }
 
-  .install-pwa-hint button {
+  .install-pwa-hint .install-pwa-primary {
     width: 100%;
     min-height: 44px;
   }
