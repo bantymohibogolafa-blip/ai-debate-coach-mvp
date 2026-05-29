@@ -2371,7 +2371,7 @@ async function fetchLegacyTrainingRecords(localUserId, limit) {
 async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '', page = {}) {
   const identityFilter = appUserId ? { app_user_id: `eq.${appUserId}` } : { local_user_id: `eq.${localUserId}` };
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.personal',
     ...identityFilter
   });
@@ -2388,7 +2388,7 @@ async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '', 
 async function fetchMyTrainingRecords(teamCode, localUserId, limit, page = {}) {
   const identityFilter = isUuid(localUserId) ? { app_user_id: `eq.${localUserId}` } : { local_user_id: `eq.${localUserId}` };
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
     ...identityFilter
@@ -2405,7 +2405,7 @@ async function fetchMyTrainingRecords(teamCode, localUserId, limit, page = {}) {
 
 async function fetchTeamTrainingRecords(teamCode, limit, page = {}) {
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`
   });
@@ -2508,7 +2508,7 @@ async function fetchTeamStats(teamCode) {
 
 async function fetchAllTeamRecordsForStats(teamCode) {
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
+    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
     order: 'created_at.desc',
@@ -2552,13 +2552,15 @@ function buildAbilityEstimate(records = []) {
     .filter((record) => Number.isFinite(Number(record.score)))
     .sort((left, right) => new Date(left.created_at) - new Date(right.created_at));
   const history = scoredRecords.map((_, index) => {
+    const record = scoredRecords[index];
     const snapshot = calculateAbilitySnapshot(scoredRecords.slice(0, index + 1));
     return {
       index: index + 1,
-      date: scoredRecords[index].created_at,
+      date: record.created_at,
       overall: snapshot.overall,
       overallEstimate: snapshot.overallEstimate,
-      dimensions: snapshot.dimensionScores
+      dimensions: snapshot.dimensionScores,
+      source: buildAbilityHistorySource(record)
     };
   });
   const current = calculateAbilitySnapshot(scoredRecords);
@@ -2590,6 +2592,26 @@ function buildAbilityEstimate(records = []) {
     history,
     roleRecommendation: buildRoleRecommendation(current.dimensionScores, current.overall),
     note: '能力估测基于 AI 复盘分、训练模式、难度和近期权重实时计算；训练次数越多，置信度越高。'
+  };
+}
+
+function buildAbilityHistorySource(record = {}) {
+  const score = Number(record.score);
+
+  return {
+    recordId: record.id || '',
+    topic: record.topic || '',
+    createdAt: record.created_at || '',
+    mode: record.training_mode || '',
+    modeDisplayName: record.mode_display_name || '',
+    difficulty: record.difficulty || '',
+    userSide: record.user_side || '',
+    aiSide: record.ai_side || '',
+    score: Number.isFinite(score) ? roundToOne(score) : null,
+    teamCode: record.team_code || '',
+    spaceType: record.space_type || '',
+    taskId: record.task_id || '',
+    nickname: record.nickname || ''
   };
 }
 

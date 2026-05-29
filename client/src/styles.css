@@ -2333,6 +2333,78 @@ textarea:focus {
   stroke-width: 2;
 }
 
+.ability-chart .ability-chart-point {
+  cursor: pointer;
+  fill: #c8502d;
+  stroke: #fff;
+  stroke-width: 2;
+  transition: r 0.16s ease, fill 0.16s ease, stroke 0.16s ease;
+}
+
+.ability-chart .ability-chart-point.selected {
+  fill: #fff8ef;
+  stroke: #c8502d;
+  stroke-width: 3;
+}
+
+.ability-chart .ability-chart-point-hit {
+  cursor: pointer;
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 0;
+}
+
+.ability-chart-hint {
+  margin: 8px 0 0;
+  color: #687982;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ability-source-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #d8e3e8;
+  border-left: 5px solid #2d7f7a;
+  border-radius: 8px;
+  background: #f7fbfb;
+}
+
+.ability-source-card h4 {
+  margin: 0;
+  color: #10262f;
+  font-size: 15px;
+}
+
+.ability-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.ability-source-row {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ability-source-row span {
+  color: #687982;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ability-source-row strong {
+  color: #10262f;
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
 .ability-legend {
   display: flex;
   flex-wrap: wrap;
@@ -3119,6 +3191,10 @@ textarea:focus {
 
   .ability-chart-card {
     padding: 12px;
+  }
+
+  .ability-source-grid {
+    grid-template-columns: 1fr;
   }
 
   .dimension-chart-header {

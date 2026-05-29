@@ -3771,10 +3771,194 @@ function AbilityTrendCharts({ history, dimensions }) {
   return (
     <div className="ability-chart-grid">
       {chartMetas.map((meta) => (
-        <AbilityTrendCard key={meta.key} meta={meta} points={points} />
+        <AbilityTrendCardInteractive key={meta.key} meta={meta} points={points} />
       ))}
     </div>
   );
+}
+
+function AbilityTrendCardInteractive({ meta, points }) {
+  const [selectedPointIndex, setSelectedPointIndex] = useState(null);
+  const pointData = points.map((item, index) => {
+    const rawValue = meta.key === 'overall' ? item.overall : item.dimensions?.[meta.key];
+    const value = Number(rawValue);
+
+    return {
+      ...item,
+      pointIndex: index,
+      value,
+      dimensionName: meta.label,
+      dimensionScore: value,
+      source: item.source || {}
+    };
+  });
+  const validPoints = pointData.filter((point) => Number.isFinite(point.value));
+  const hasValues = validPoints.length > 0;
+  const selectedPoint = validPoints.find((point) => point.pointIndex === selectedPointIndex) || null;
+  const width = 320;
+  const height = 132;
+  const padding = 18;
+
+  useEffect(() => {
+    setSelectedPointIndex(null);
+  }, [meta.key, points.length]);
+
+  function toY(value) {
+    return height - padding - (Math.max(0, Math.min(100, Number(value))) / 100) * (height - padding * 2);
+  }
+
+  function toX(index) {
+    if (points.length <= 1) return width / 2;
+    return padding + (index / (points.length - 1)) * (width - padding * 2);
+  }
+
+  function togglePoint(index) {
+    setSelectedPointIndex((current) => current === index ? null : index);
+  }
+
+  return (
+    <div className="ability-chart-card">
+      <div className="history-detail-header">
+        <div>
+          <span>{meta.label}</span>
+          <h3>{formatNullableNumber(meta.current)} / 100</h3>
+        </div>
+      </div>
+
+      {points.length < 2 || !hasValues ? (
+        <div className="history-empty">再完成一次训练后即可形成趋势曲线。</div>
+      ) : (
+        <>
+          <svg className="ability-chart mini" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${meta.label}变化趋势图`}>
+            {[0, 50, 100].map((tick) => (
+              <g key={tick}>
+                <line x1={padding} x2={width - padding} y1={toY(tick)} y2={toY(tick)} />
+                <text x={4} y={toY(tick) + 4}>{tick}</text>
+              </g>
+            ))}
+            <polyline
+              points={validPoints.map((point) => `${toX(point.pointIndex)},${toY(point.value)}`).join(' ')}
+              stroke={meta.color}
+            />
+            {validPoints.map((point) => {
+              const isSelected = selectedPointIndex === point.pointIndex;
+              const x = toX(point.pointIndex);
+              const y = toY(point.value);
+
+              return (
+                <g key={point.pointIndex}>
+                  <circle
+                    className="ability-chart-point-hit"
+                    cx={x}
+                    cy={y}
+                    r="10"
+                    onClick={() => togglePoint(point.pointIndex)}
+                    aria-label={`查看第 ${point.pointIndex + 1} 次训练来源`}
+                  />
+                  <circle
+                    className={`ability-chart-point ${isSelected ? 'selected' : ''}`}
+                    cx={x}
+                    cy={y}
+                    r={isSelected ? 5 : 3.5}
+                    onClick={() => togglePoint(point.pointIndex)}
+                  />
+                </g>
+              );
+            })}
+          </svg>
+          {selectedPoint ? (
+            <AbilityPointSourceCard point={selectedPoint} />
+          ) : (
+            <p className="ability-chart-hint">点击曲线上的点查看来源训练。</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function AbilityPointSourceCard({ point }) {
+  const source = point?.source || {};
+  const topic = source.topic || '未命名辩题';
+  const createdAt = source.createdAt || source.created_at || point?.date || '';
+  const modeLabel = getAbilityModeLabel(source.modeDisplayName || source.mode);
+  const difficultyLabel = getAbilityDifficultyLabel(source.difficulty);
+  const sideLabel = getAbilitySideLabel(source.userSide);
+  const score = Number.isFinite(Number(source.score)) ? formatNullableNumber(source.score) : '--';
+  const dimensionScore = Number.isFinite(Number(point?.dimensionScore)) ? formatNullableNumber(point.dimensionScore) : '--';
+  const rows = [
+    ['辩题', topic],
+    ['时间', createdAt ? formatRecordDate(createdAt) : '时间未知'],
+    ['模式', modeLabel || '模式未知'],
+    ['难度', difficultyLabel || '难度未知'],
+    ['立场', sideLabel || '立场未知'],
+    ['总分', `${score} / 100`],
+    ['当前维度', point?.dimensionName || '维度未知'],
+    ['维度分数', `${dimensionScore} / 100`]
+  ];
+
+  if (source.teamName || source.teamCode) {
+    rows.push(['团队', source.teamName ? `${source.teamName}${source.teamCode ? `（${source.teamCode}）` : ''}` : source.teamCode]);
+  }
+
+  if (source.taskTitle || source.taskId) {
+    rows.push(['任务', source.taskTitle || source.taskId]);
+  }
+
+  return (
+    <div className="ability-source-card">
+      <h4>数据来源</h4>
+      <div className="ability-source-grid">
+        {rows.map(([label, value]) => (
+          <div className="ability-source-row" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function getAbilityModeLabel(value) {
+  if (!value) return '';
+  const aliases = {
+    constructive_speech: 'constructive',
+    cx_summary: 'summary',
+    offensive_cx: 'attack',
+    defensive_cx: 'defense',
+    closing_speech: 'closing',
+    立论训练: 'constructive',
+    攻辩小结: 'summary',
+    自由辩论: 'free_debate',
+    攻辩训练: 'attack',
+    防守训练: 'defense',
+    结辩训练: 'closing'
+  };
+  const normalized = aliases[value] || value;
+  return getOptionLabel(trainingModes, normalized) || value;
+}
+
+function getAbilityDifficultyLabel(value) {
+  if (!value) return '';
+  const aliases = {
+    beginner: 'novice',
+    school: 'campus',
+    novice: 'novice',
+    campus: 'campus',
+    city: 'city',
+    新手: 'novice',
+    校赛: 'campus',
+    市赛: 'city'
+  };
+  const normalized = aliases[value] || value;
+  return getOptionLabel(difficulties, normalized) || value;
+}
+
+function getAbilitySideLabel(value) {
+  if (!value) return '';
+  if (value === '正方' || value === '反方') return value;
+  return getOptionLabel(sides, normalizeSideValue(value)) || value;
 }
 
 function AbilityTrendCard({ meta, points }) {
