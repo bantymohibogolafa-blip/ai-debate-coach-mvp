@@ -3054,7 +3054,7 @@ function normalizeStructuredReview(parsed, trainingMode, fallbackText) {
         ? null
         : clampNumber(roundToOne(normalizedScore), 0, 100),
       maxScore: 100,
-      comment: limitLength(normalizeText(provided?.comment), 240)
+      comment: limitLength(normalizeText(provided?.comment), 800)
     };
   });
   const reviewText = normalizeText(parsed?.reviewText) || fallbackText;
@@ -3065,13 +3065,13 @@ function normalizeStructuredReview(parsed, trainingMode, fallbackText) {
     mode: rubric.appMode,
     modeDisplayName: rubric.displayName,
     dimensionScores,
-    battlefield: limitLength(normalizeText(parsed?.battlefield), 200),
-    mainWeakness: limitLength(normalizeText(parsed?.mainWeakness), 240),
+    battlefield: limitLength(normalizeText(parsed?.battlefield), 1000),
+    mainWeakness: limitLength(normalizeText(parsed?.mainWeakness), 1000),
     strengths: normalizeStringList(parsed?.strengths, 5, 120),
     weaknesses: normalizeStringList(parsed?.weaknesses, 5, 120),
-    reviewText: limitLength(`${isFallback ? '当前训练模式未识别，已使用通用评分。\n' : ''}${reviewText}`, 1800),
-    nextStepAdvice: normalizeStringList(parsed?.nextStepAdvice, 5, 160),
-    template: limitLength(normalizeText(parsed?.template), 500)
+    reviewText: `${isFallback ? '当前训练模式未识别，已使用通用评分。\n' : ''}${reviewText}`,
+    nextStepAdvice: normalizeStringList(parsed?.nextStepAdvice, 5, 500),
+    template: normalizeText(parsed?.template)
   };
 }
 

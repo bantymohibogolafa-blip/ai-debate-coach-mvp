@@ -1163,7 +1163,8 @@ textarea:focus {
   margin: 7px 0 0;
   line-height: 1.65;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .message.ai {
@@ -1335,7 +1336,8 @@ textarea:focus {
   font-weight: 800;
   line-height: 1.7;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .speech-panel {
@@ -1574,7 +1576,12 @@ textarea:focus {
 .review-panel pre {
   margin: 0;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
+  max-width: 100%;
+  height: auto;
+  max-height: none;
+  overflow: visible;
   color: #1f2933;
   font-family: inherit;
 }
@@ -1886,6 +1893,14 @@ textarea:focus {
   margin: 8px 0 0;
   color: #34464d;
   line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  max-width: 100%;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  box-sizing: border-box;
 }
 
 .review-summary-grid {
@@ -2093,6 +2108,8 @@ textarea:focus {
   margin-top: 20px;
   border-top: 1px solid #d8e3e8;
   padding-top: 20px;
+  max-width: 100%;
+  overflow: visible;
 }
 
 .inline-history-detail {
@@ -2102,6 +2119,8 @@ textarea:focus {
   border-radius: 8px;
   padding: 14px;
   background: #fbfdfd;
+  max-width: 100%;
+  overflow: visible;
 }
 
 .history-detail-header {
@@ -2163,8 +2182,8 @@ textarea:focus {
 
 .history-conversation {
   min-height: 0;
-  max-height: 460px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .history-review {
@@ -2174,12 +2193,19 @@ textarea:focus {
   border-radius: 8px;
   padding: 14px;
   background: #fbfcfd;
+  max-width: 100%;
+  overflow: visible;
 }
 
 .history-review pre {
   margin: 0;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
+  max-width: 100%;
+  height: auto;
+  max-height: none;
+  overflow: visible;
   color: #1f2933;
   font-family: inherit;
 }
