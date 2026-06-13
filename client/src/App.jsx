@@ -2627,6 +2627,7 @@ function App() {
           { label: '我的记录', value: 'mine' },
           { label: '能力估测', value: 'ability' },
           { label: '我的团队', value: 'teams' },
+          { label: '经验谈', value: 'experience' },
           ...(isTeamSpace ? [{ label: '团队数据', value: 'team' }] : [])
         ].map((tab) => (
           <button
@@ -3285,6 +3286,10 @@ function App() {
           scopeLabel={abilityScopeLabel}
           emptyMessage={emptyAbilityMessage}
         />
+      )}
+
+      {activeTab === 'experience' && (
+        <DebateExperienceChat />
       )}
 
       {activeTab === 'teams' && (
@@ -4494,6 +4499,103 @@ function WeaknessVideoRecommendations({ dimensions }) {
             </article>
           );
         })}
+      </div>
+    </section>
+  );
+}
+
+function DebateExperienceChat() {
+  const quickQuestions = [
+    '自由辩总是插不进去怎么办？',
+    '攻辩被对方绕进去怎么办？',
+    '结辩怎么做出终局感？',
+    '赛前准备一个辩题该怎么做？',
+    '上场紧张怎么办？',
+    '如何练战场意识？'
+  ];
+  const openingMessage = '我是林婉，我是你的辩论助手。\n接下来，我会陪你拆论点、练攻防、复盘表达，也会在你乱掉的时候提醒你先把战场找回来。';
+  const [question, setQuestion] = useState('');
+  const [messages, setMessages] = useState([{ role: 'assistant', content: openingMessage }]);
+  const [isSending, setIsSending] = useState(false);
+  const [chatError, setChatError] = useState('');
+
+  async function sendExperienceQuestion(nextQuestion = question) {
+    const cleanQuestion = String(nextQuestion || '').trim();
+    if (!cleanQuestion || isSending) return;
+
+    const historyForRequest = messages
+      .filter((item) => item.content !== openingMessage)
+      .slice(-10);
+    const nextMessages = [...messages, { role: 'user', content: cleanQuestion }];
+    setMessages(nextMessages);
+    setQuestion('');
+    setChatError('');
+    setIsSending(true);
+
+    try {
+      const data = await postJson('/api/debate-experience-chat', {
+        question: cleanQuestion,
+        chatHistory: historyForRequest
+      });
+      setMessages([...nextMessages, { role: 'assistant', content: data.answer || '我暂时没有整理好回答，你可以换个问法再试一次。' }]);
+    } catch {
+      setChatError('林婉暂时没有回应，请稍后再试。');
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  return (
+    <section className="panel experience-panel">
+      <div className="panel-header">
+        <div>
+          <p className="eyebrow">辩手经验室</p>
+          <h2>辩论场上经验谈</h2>
+          <p>像请教一位经验丰富的辩手一样，问问备赛、攻防和赛场心态。</p>
+        </div>
+      </div>
+
+      <article className="experience-opening-card">
+        <span>林婉</span>
+        <p>{openingMessage}</p>
+      </article>
+
+      <div className="assistant-quick-questions experience-quick-questions">
+        {quickQuestions.map((item) => (
+          <button
+            type="button"
+            key={item}
+            disabled={isSending}
+            onClick={() => sendExperienceQuestion(item)}
+          >
+            {item}
+          </button>
+        ))}
+      </div>
+
+      <div className="assistant-chat-list experience-chat-list">
+        {messages.map((item, index) => (
+          <article className={`assistant-chat-message ${item.role}`} key={`${item.role}-${index}`}>
+            <span>{item.role === 'user' ? '我的问题' : '林婉'}</span>
+            <p>{item.content}</p>
+          </article>
+        ))}
+      </div>
+
+      {isSending && <div className="assistant-loading">林婉正在整理思路...</div>}
+      {chatError && <div className="assistant-error">{chatError}</div>}
+
+      <div className="assistant-input-row experience-input-row">
+        <textarea
+          value={question}
+          disabled={isSending}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder="例如：自由辩总是插不进去怎么办？这段反驳为什么没打到点上？"
+          rows={3}
+        />
+        <button type="button" disabled={isSending || !question.trim()} onClick={() => sendExperienceQuestion()}>
+          发送
+        </button>
       </div>
     </section>
   );

@@ -2050,6 +2050,44 @@ textarea:focus {
   background: #fff1ea;
 }
 
+.experience-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.experience-opening-card {
+  border-left: 5px solid #2f7375;
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: #eef8f7;
+  box-shadow: 0 10px 24px rgba(31, 111, 111, 0.08);
+}
+
+.experience-opening-card span {
+  display: block;
+  margin-bottom: 8px;
+  color: #c8502d;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.experience-opening-card p {
+  margin: 0;
+  color: #203a42;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.experience-chat-list {
+  padding-top: 2px;
+}
+
+.experience-input-row textarea {
+  font-size: 16px;
+}
+
 .history-panel {
   margin-top: 22px;
 }
