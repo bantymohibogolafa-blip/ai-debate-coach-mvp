@@ -215,6 +215,18 @@ app.post('/api/debate/review', async (req, res, next) => {
   }
 });
 
+app.post('/api/review-assistant', async (req, res, next) => {
+  try {
+    const payload = validateReviewAssistantPayload(req.body);
+    const messages = buildReviewAssistantMessages(payload);
+    const answer = await callDeepSeek(messages, { maxTokens: 900, temperature: 0.45 });
+
+    res.json({ answer });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/team/join', requireAuth, async (req, res, next) => {
   try {
     const memberPayload = validateTeamMemberPayload(req.body, req.user);
@@ -1097,6 +1109,156 @@ function validateAbilityEstimateQuery(query) {
   }
 
   return { spaceType, teamCode, localUserId };
+}
+
+function validateReviewAssistantPayload(body) {
+  const question = limitLength(normalizeText(body.question || body.userQuestion || body.user_question), 500);
+  const reviewContext = normalizeReviewAssistantContext(body.reviewContext || body.review_context || {});
+  const chatHistory = Array.isArray(body.chatHistory)
+    ? body.chatHistory
+      .filter((item) => ['user', 'assistant'].includes(item?.role) && normalizeText(item?.content))
+      .slice(-6)
+      .map((item) => ({
+        role: item.role,
+        content: limitLength(normalizeText(item.content), 600)
+      }))
+    : [];
+
+  if (!question) {
+    throw badRequest('请输入想追问的问题。');
+  }
+
+  return { question, reviewContext, chatHistory };
+}
+
+function normalizeReviewAssistantContext(context) {
+  const dimensionScores = Array.isArray(context.dimensionScores || context.dimension_scores)
+    ? (context.dimensionScores || context.dimension_scores).slice(0, 8).map((dimension) => ({
+      name: limitLength(normalizeText(dimension?.name), 80),
+      score: Number.isFinite(Number(dimension?.score)) ? clampNumber(Number(dimension.score), 0, 100) : null,
+      maxScore: Number.isFinite(Number(dimension?.maxScore ?? dimension?.max_score))
+        ? clampNumber(Number(dimension.maxScore ?? dimension.max_score), 1, 100)
+        : 100,
+      comment: limitLength(normalizeText(dimension?.comment), 240)
+    })).filter((dimension) => dimension.name)
+    : [];
+  const messages = Array.isArray(context.messages)
+    ? context.messages
+      .filter((item) => ['ai', 'user', 'assistant'].includes(item?.role) && normalizeText(item?.content))
+      .slice(-10)
+      .map((item) => ({
+        role: item.role === 'assistant' ? 'ai' : item.role,
+        content: limitLength(normalizeText(item.content), 700)
+      }))
+    : [];
+
+  return {
+    topic: limitLength(normalizeText(context.topic), 300),
+    mode: normalizeTrainingMode(normalizeText(context.mode || context.trainingMode || context.training_mode)),
+    modeDisplayName: limitLength(normalizeText(context.modeDisplayName || context.mode_display_name), 80),
+    difficulty: normalizeDifficulty(normalizeText(context.difficulty)),
+    userSide: normalizeSide(normalizeText(context.userSide || context.user_side)),
+    aiSide: normalizeSide(normalizeText(context.aiSide || context.ai_side)),
+    score: Number.isFinite(Number(context.score)) ? clampNumber(Number(context.score), 0, 100) : null,
+    scoreLevel: limitLength(normalizeText(context.scoreLevel || context.score_level), 80),
+    dimensionScores,
+    review: limitLength(normalizeText(context.review || context.reviewText || context.review_text), 2200),
+    battlefieldSummary: limitLength(normalizeText(context.battlefieldSummary || context.battlefield || context.battlefield_summary), 900),
+    mainWeakness: limitLength(normalizeText(context.mainWeakness || context.main_weakness), 900),
+    highlights: normalizeStringList(context.highlights || context.strengths, 5, 160),
+    weaknesses: normalizeStringList(context.weaknesses, 5, 160),
+    nextStepAdvice: normalizeStringList(context.nextStepAdvice || context.next_step_advice, 5, 220),
+    messages
+  };
+}
+
+function buildReviewAssistantMessages({ question, reviewContext, chatHistory }) {
+  const modeName = reviewContext.modeDisplayName || getTrainingModeLabel(reviewContext.mode);
+  const contextLines = [
+    `辩题：${reviewContext.topic || '未提供'}`,
+    `训练模式：${modeName || '未提供'}`,
+    `难度：${getDifficultyLabel(reviewContext.difficulty)}`,
+    `用户立场：${getSideLabel(reviewContext.userSide)}`,
+    `AI 立场：${getSideLabel(reviewContext.aiSide || getOpponentSide(reviewContext.userSide))}`,
+    `总分：${reviewContext.score === null ? '未提供' : `${reviewContext.score} / 100`}`,
+    `评分区间：${reviewContext.scoreLevel || '未提供'}`,
+    `五维能力：${formatAssistantDimensions(reviewContext.dimensionScores)}`,
+    `核心战场：${reviewContext.battlefieldSummary || '未提供'}`,
+    `主要短板：${reviewContext.mainWeakness || reviewContext.weaknesses.join('；') || '未提供'}`,
+    `主要优势：${reviewContext.highlights.join('；') || '未提供'}`,
+    `下一步建议：${reviewContext.nextStepAdvice.join('；') || '未提供'}`,
+    `复盘说明：${reviewContext.review || '未提供'}`,
+    `最近训练对话：\n${formatAssistantMessages(reviewContext.messages)}`
+  ].join('\n');
+
+  return [
+    {
+      role: 'system',
+      content: `你是“锋辩”的 AI 复盘助手，是一名耐心、专业、具体的辩论教练。
+
+你的任务是基于用户本轮训练记录和复盘报告，回答用户关于本轮表现、失分点、表达改进、战场理解、下一轮训练的问题。
+
+硬性要求：
+1. 必须围绕本轮复盘上下文回答，不要脱离本轮记录泛泛聊天。
+2. 不要重新完整生成复盘报告，不要重新评分，不要推翻原评分。
+3. 可以解释原评分为什么这样，可以帮用户改写某段回答，也可以补充例子、论据、反驳句或下一轮训练建议。
+4. 不要编造用户没有说过的训练内容，不要编造不存在的分数。
+5. 如果上下文缺失，请说明“我只能根据当前可见复盘判断”。
+6. 语气像辩论教练，具体、鼓励、直接。默认回答 300-600 字，除非用户要求详细展开。`
+    },
+    {
+      role: 'user',
+      content: `本轮复盘上下文如下：\n${contextLines}`
+    },
+    ...chatHistory.map((item) => ({
+      role: item.role === 'assistant' ? 'assistant' : 'user',
+      content: item.content
+    })),
+    {
+      role: 'user',
+      content: question
+    }
+  ];
+}
+
+function formatAssistantDimensions(dimensions) {
+  if (!Array.isArray(dimensions) || !dimensions.length) return '未提供';
+  return dimensions
+    .map((dimension) => {
+      const scoreText = dimension.score === null || dimension.score === undefined ? '未解析' : `${dimension.score} / ${dimension.maxScore || 100}`;
+      return `${dimension.name}：${scoreText}${dimension.comment ? `（${dimension.comment}）` : ''}`;
+    })
+    .join('；');
+}
+
+function formatAssistantMessages(messages) {
+  if (!Array.isArray(messages) || !messages.length) return '未提供';
+  return messages
+    .map((item) => `${item.role === 'ai' ? 'AI' : '用户'}：${item.content}`)
+    .join('\n');
+}
+
+function getTrainingModeLabel(mode) {
+  const normalized = normalizeTrainingMode(mode);
+  const labels = {
+    constructive: '立论训练',
+    summary: '攻辩小结',
+    free_debate: '自由辩论',
+    attack: '攻辩训练',
+    defense: '防守训练',
+    closing: '结辩训练'
+  };
+  return labels[normalized] || '训练复盘';
+}
+
+function getDifficultyLabel(difficulty) {
+  const normalized = normalizeDifficulty(difficulty);
+  const labels = {
+    novice: '新手',
+    campus: '校赛',
+    city: '市赛'
+  };
+  return labels[normalized] || '未提供';
 }
 
 function normalizeText(value) {

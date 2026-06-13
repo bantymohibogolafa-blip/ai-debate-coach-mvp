@@ -1931,6 +1931,125 @@ textarea:focus {
   margin-top: 10px;
 }
 
+.review-assistant {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #dbe8ea;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fbfc;
+}
+
+.review-assistant-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.review-assistant-header span {
+  display: block;
+  margin-bottom: 4px;
+  color: #c8502d;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.review-assistant-header h3 {
+  margin: 0;
+  color: #10282f;
+  font-size: 17px;
+}
+
+.review-assistant-header button,
+.assistant-input-row button,
+.assistant-quick-questions button {
+  min-height: 44px;
+  border: 1px solid #bdd6d8;
+  border-radius: 8px;
+  padding: 9px 13px;
+  color: #245e62;
+  background: #eef8f7;
+  font-weight: 900;
+}
+
+.review-assistant-body {
+  display: grid;
+  gap: 12px;
+}
+
+.assistant-quick-questions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.assistant-quick-questions button {
+  min-height: 38px;
+  padding: 8px 11px;
+  font-size: 14px;
+}
+
+.assistant-chat-list {
+  display: grid;
+  gap: 10px;
+}
+
+.assistant-chat-message {
+  max-width: 100%;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #eef7f6;
+}
+
+.assistant-chat-message.user {
+  background: #fff7ed;
+}
+
+.assistant-chat-message span {
+  display: block;
+  margin-bottom: 5px;
+  color: #6b7b84;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.assistant-chat-message p {
+  margin: 0;
+  color: #243a42;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.assistant-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.assistant-input-row textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+}
+
+.assistant-loading,
+.assistant-error {
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #245e62;
+  background: #e8f2f1;
+  font-weight: 800;
+}
+
+.assistant-error {
+  color: #9f2f20;
+  background: #fff1ea;
+}
+
 .history-panel {
   margin-top: 22px;
 }
@@ -3248,6 +3367,17 @@ textarea:focus {
 
   .dimension-chart-header {
     display: grid;
+  }
+
+  .review-assistant-header,
+  .assistant-input-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .review-assistant-header button,
+  .assistant-input-row button {
+    width: 100%;
   }
 
   .weakness-video-header,

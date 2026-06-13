@@ -3130,6 +3130,15 @@ function App() {
             reviewText={review}
             structuredReview={structuredReview}
             fallbackMode={config.trainingMode}
+            assistantContext={{
+              topic: config.topic,
+              mode: config.trainingMode,
+              modeDisplayName: getOptionLabel(trainingModes, config.trainingMode),
+              difficulty: config.difficulty,
+              userSide: config.userSide,
+              aiSide: getOpponentSideValue(config.userSide),
+              messages: history
+            }}
           />
           <div className="next-training-card">
             <div>
@@ -3240,6 +3249,15 @@ function App() {
                           reviewText={record.review}
                           structuredReview={record}
                           fallbackMode={record.trainingMode}
+                          assistantContext={{
+                            topic: record.topic,
+                            mode: record.trainingMode,
+                            modeDisplayName: getOptionLabel(trainingModes, record.trainingMode),
+                            difficulty: record.difficulty,
+                            userSide: record.userSide,
+                            aiSide: record.aiSide,
+                            messages: record.messages || []
+                          }}
                         />
                       </div>
                     </div>
@@ -4481,11 +4499,120 @@ function WeaknessVideoRecommendations({ dimensions }) {
   );
 }
 
-function ReviewReport({ reviewText, structuredReview, fallbackMode }) {
+function ReviewAssistant({ context }) {
+  const quickQuestions = [
+    '为什么我这轮分数不高？',
+    '我这轮主要输在哪里？',
+    '帮我改写一段回答',
+    '下一轮我应该练什么？',
+    '给我补一个例子'
+  ];
+  const [isOpen, setIsOpen] = useState(false);
+  const [question, setQuestion] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [isSending, setIsSending] = useState(false);
+  const [assistantError, setAssistantError] = useState('');
+
+  async function sendQuestion(nextQuestion = question) {
+    const cleanQuestion = String(nextQuestion || '').trim();
+    if (!cleanQuestion || isSending) return;
+
+    const nextMessages = [...messages, { role: 'user', content: cleanQuestion }];
+    setMessages(nextMessages);
+    setQuestion('');
+    setAssistantError('');
+    setIsSending(true);
+
+    try {
+      const data = await postJson('/api/review-assistant', {
+        reviewContext: context || {},
+        question: cleanQuestion,
+        chatHistory: messages
+      });
+      setMessages([...nextMessages, { role: 'assistant', content: data.answer || '我暂时没有组织好回答，请换个问法再试一次。' }]);
+    } catch {
+      setAssistantError('助手暂时无法回答，请稍后重试。');
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  return (
+    <section className="review-assistant">
+      <div className="review-assistant-header">
+        <div>
+          <span>复盘助手</span>
+          <h3>对这次复盘有疑问？可以继续问我。</h3>
+        </div>
+        <button type="button" onClick={() => setIsOpen((current) => !current)}>
+          {isOpen ? '收起助手' : '问问复盘助手'}
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="review-assistant-body">
+          <div className="assistant-quick-questions">
+            {quickQuestions.map((item) => (
+              <button
+                type="button"
+                key={item}
+                disabled={isSending}
+                onClick={() => sendQuestion(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+
+          {messages.length > 0 && (
+            <div className="assistant-chat-list">
+              {messages.map((item, index) => (
+                <article className={`assistant-chat-message ${item.role}`} key={`${item.role}-${index}`}>
+                  <span>{item.role === 'user' ? '我的问题' : '复盘助手'}</span>
+                  <p>{item.content}</p>
+                </article>
+              ))}
+            </div>
+          )}
+
+          {isSending && <div className="assistant-loading">复盘助手正在思考...</div>}
+          {assistantError && <div className="assistant-error">{assistantError}</div>}
+
+          <div className="assistant-input-row">
+            <textarea
+              value={question}
+              disabled={isSending}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder="例如：这段回答怎么改？我主要输在哪里？"
+              rows={3}
+            />
+            <button type="button" disabled={isSending || !question.trim()} onClick={() => sendQuestion()}>
+              发送
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReviewReport({ reviewText, structuredReview, fallbackMode, assistantContext }) {
   const reviewData = normalizeStructuredReview(structuredReview);
+  const assistantPayload = buildReviewAssistantContext({
+    reviewText,
+    reviewData,
+    structuredReview,
+    fallbackMode,
+    assistantContext
+  });
 
   if (!reviewData?.dimensionScores?.length) {
-    return <pre>{reviewText}</pre>;
+    return (
+      <>
+        <pre>{reviewText}</pre>
+        <ReviewAssistant context={assistantPayload} />
+      </>
+    );
   }
 
   const modeDisplayName = reviewData.modeDisplayName || getOptionLabel(trainingModes, fallbackMode) || '训练复盘';
@@ -4575,6 +4702,8 @@ function ReviewReport({ reviewText, structuredReview, fallbackMode }) {
         <summary>查看原始复盘文本</summary>
         <pre>{reviewText}</pre>
       </details>
+
+      <ReviewAssistant context={assistantPayload} />
     </div>
   );
 }
@@ -4616,6 +4745,15 @@ function RecordDetail({ record, onClose }) {
           reviewText={record.review}
           structuredReview={record}
           fallbackMode={record.trainingMode}
+          assistantContext={{
+            topic: record.topic,
+            mode: record.trainingMode,
+            modeDisplayName: getOptionLabel(trainingModes, record.trainingMode),
+            difficulty: record.difficulty,
+            userSide: record.userSide,
+            aiSide: record.aiSide,
+            messages: record.messages || []
+          }}
         />
       </div>
     </div>
@@ -4918,6 +5056,41 @@ function normalizeStructuredReview(value) {
         ? value.next_step_advice.filter(Boolean)
         : [],
     template: value.template || ''
+  };
+}
+
+function buildReviewAssistantContext({ reviewText, reviewData, structuredReview, fallbackMode, assistantContext }) {
+  const source = assistantContext || {};
+  const normalizedReview = reviewData || normalizeStructuredReview(structuredReview) || {};
+  const sourceMessages = Array.isArray(source.messages)
+    ? source.messages
+    : Array.isArray(structuredReview?.messages)
+      ? structuredReview.messages
+      : [];
+
+  return {
+    topic: source.topic || structuredReview?.topic || '',
+    mode: source.mode || source.trainingMode || normalizedReview.mode || fallbackMode || structuredReview?.trainingMode || '',
+    modeDisplayName: source.modeDisplayName || normalizedReview.modeDisplayName || getOptionLabel(trainingModes, fallbackMode) || '',
+    difficulty: source.difficulty || structuredReview?.difficulty || '',
+    userSide: source.userSide || structuredReview?.userSide || '',
+    aiSide: source.aiSide || structuredReview?.aiSide || '',
+    score: normalizedReview.score ?? structuredReview?.score ?? extractScoreFromReview(reviewText),
+    scoreLevel: normalizedReview.scoreLevel || structuredReview?.scoreLevel || '',
+    dimensionScores: normalizedReview.dimensionScores || [],
+    review: reviewText || normalizedReview.reviewText || structuredReview?.review || '',
+    highlights: normalizedReview.strengths || [],
+    weaknesses: normalizedReview.weaknesses || [],
+    battlefieldSummary: normalizedReview.battlefield || structuredReview?.battlefield || '',
+    mainWeakness: normalizedReview.mainWeakness || '',
+    nextStepAdvice: normalizedReview.nextStepAdvice || [],
+    messages: sourceMessages
+      .filter((item) => item && ['ai', 'user', 'assistant'].includes(item.role) && item.content)
+      .slice(-10)
+      .map((item) => ({
+        role: item.role === 'assistant' ? 'ai' : item.role,
+        content: String(item.content || '')
+      }))
   };
 }
 
