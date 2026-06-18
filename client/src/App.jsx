@@ -455,6 +455,10 @@ function App() {
   const displayedRecords = isTeamSpace ? teamMemberRecords : personalRecords;
   const displayedRecordsPage = isTeamSpace ? teamMemberRecordsPage : personalRecordsPage;
   const displayedAbilityEstimate = isTeamSpace ? teamAbilityEstimate : personalAbilityEstimate;
+  const linWanTrainingProfile = useMemo(
+    () => buildUserTrainingProfile(displayedRecords),
+    [displayedRecords]
+  );
   const taskAssignableMembers = teamMembers.filter((member) => member.status === 'active' && member.appUserId);
   const myRecordsScopeLabel = isTeamSpace
     ? `当前查看：我在【${currentTeam.teamName || currentTeam.teamCode}】中的训练记录`
@@ -3373,7 +3377,7 @@ function App() {
       )}
 
       {activeTab === 'experience' && (
-        <DebateExperienceChat />
+        <DebateExperienceChat trainingProfile={linWanTrainingProfile} />
       )}
 
       {activeTab === 'teams' && (
@@ -4534,6 +4538,134 @@ function getRecommendedTrainingModeForDimension(name, fallbackMode = 'free_debat
   return matchedRule?.mode || fallbackMode || 'free_debate';
 }
 
+function buildUserTrainingProfile(records = []) {
+  const recentRecords = Array.isArray(records)
+    ? records
+        .filter(Boolean)
+        .slice()
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+        .slice(0, 10)
+    : [];
+
+  if (!recentRecords.length) {
+    return {
+      recentTrainingCount: 0,
+      frequentModes: [],
+      averageScore: null,
+      scoreTrend: '暂无足够数据',
+      weakDimensions: [],
+      recurringProblems: [],
+      latestRecordSummary: null,
+      recommendedFocus: ''
+    };
+  }
+
+  const scores = recentRecords
+    .map((record) => Number(record.score))
+    .filter((score) => Number.isFinite(score));
+  const averageScore = scores.length
+    ? Number((scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(1))
+    : null;
+  const modeCounts = new Map();
+  recentRecords.forEach((record) => {
+    const label = getOptionLabel(trainingModes, record.trainingMode) || record.modeDisplayName || '未知模式';
+    modeCounts.set(label, (modeCounts.get(label) || 0) + 1);
+  });
+  const frequentModes = [...modeCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([label]) => label);
+  const dimensionBuckets = new Map();
+
+  recentRecords.forEach((record) => {
+    const reviewData = normalizeStructuredReview(record);
+    const dimensions = Array.isArray(reviewData?.dimensionScores) ? reviewData.dimensionScores : [];
+    dimensions.forEach((dimension) => {
+      const score = Number(dimension?.score);
+      if (!dimension?.name || !Number.isFinite(score)) return;
+      const current = dimensionBuckets.get(dimension.name) || { total: 0, count: 0 };
+      current.total += score;
+      current.count += 1;
+      dimensionBuckets.set(dimension.name, current);
+    });
+  });
+
+  const weakDimensions = [...dimensionBuckets.entries()]
+    .map(([name, bucket]) => ({ name, average: bucket.total / bucket.count }))
+    .sort((a, b) => a.average - b.average)
+    .slice(0, 3)
+    .map((item) => item.name);
+  const recurringProblems = inferRecurringProblems(weakDimensions);
+  const latestRecord = recentRecords[0];
+  const latestReview = normalizeStructuredReview(latestRecord);
+  const recommendedFocus = buildRecommendedFocus(weakDimensions, frequentModes);
+
+  return {
+    recentTrainingCount: recentRecords.length,
+    frequentModes,
+    averageScore,
+    scoreTrend: getRecentScoreTrend(scores),
+    weakDimensions,
+    recurringProblems,
+    latestRecordSummary: {
+      topic: latestRecord.topic || '未命名辩题',
+      mode: getOptionLabel(trainingModes, latestRecord.trainingMode) || latestRecord.modeDisplayName || '未知模式',
+      difficulty: getOptionLabel(difficulties, latestRecord.difficulty) || latestRecord.difficulty || '',
+      score: Number.isFinite(Number(latestRecord.score)) ? Number(latestRecord.score) : null,
+      scoreLevel: latestRecord.scoreLevel || latestReview?.scoreLevel || '',
+      userSide: getOptionLabel(sides, latestRecord.userSide) || '',
+      aiSide: getOptionLabel(sides, latestRecord.aiSide) || '',
+      battlefield: latestRecord.battlefield || latestReview?.battlefield || '',
+      reviewSummary: summarizeText(latestReview?.mainWeakness || latestReview?.reviewText || latestRecord.review, 220),
+      createdAt: latestRecord.createdAt || ''
+    },
+    recommendedFocus
+  };
+}
+
+function inferRecurringProblems(weakDimensions = []) {
+  const problems = [];
+  const text = weakDimensions.join(' ');
+  if (/战场|控制|识别|主线/.test(text)) problems.push('容易被对方问题带走，需要先练战场识别');
+  if (/表达|节奏|时间|稳定/.test(text)) problems.push('回答容易变长，落点不够清楚，需要练表达压缩');
+  if (/防守|回应|切割|陷阱|反压/.test(text)) problems.push('防守时需要先处理问题预设，再回到己方标准');
+  if (/追问|问题|质询|漏洞|压迫/.test(text)) problems.push('攻辩问题还需要形成连续问题链');
+  if (/论据|例证|数据|论证|逻辑/.test(text)) problems.push('论据和结论之间还需要补足推理链');
+  if (/价值|升华|整合|收束|结算/.test(text)) problems.push('结尾需要更清楚地完成胜负比较和价值收束');
+  return problems.slice(0, 4);
+}
+
+function buildRecommendedFocus(weakDimensions = [], frequentModes = []) {
+  const text = weakDimensions.join(' ');
+  if (/切割|防守|回应|陷阱/.test(text)) return '先练防守切割，再练反压一句';
+  if (/战场|控制|识别/.test(text)) return '先练战场识别，再练自由辩追问链';
+  if (/表达|节奏|时间/.test(text)) return '先练三句话压缩表达';
+  if (/追问|质询|问题/.test(text)) return '先练攻辩问题链设计';
+  if (/价值|升华|整合|收束/.test(text)) return '先练战场整合和结辩终局感';
+  if (frequentModes.includes('自由辩论')) return '先稳定自由辩战场，再提升反击效率';
+  return '先练一个小目标：判断战场、压缩表达、明确落点';
+}
+
+function getRecentScoreTrend(scores = []) {
+  if (scores.length < 3) return '暂无足够趋势';
+  const latest = scores.slice(0, Math.ceil(scores.length / 2));
+  const earlier = scores.slice(Math.ceil(scores.length / 2));
+  const latestAverage = latest.reduce((sum, score) => sum + score, 0) / latest.length;
+  const earlierAverage = earlier.reduce((sum, score) => sum + score, 0) / earlier.length;
+  const delta = latestAverage - earlierAverage;
+  const spread = Math.max(...scores) - Math.min(...scores);
+  if (spread >= 18) return '波动较大';
+  if (delta >= 3) return '略有上升';
+  if (delta <= -3) return '略有回落';
+  return '整体稳定';
+}
+
+function summarizeText(text, maxLength = 220) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= maxLength) return clean;
+  return `${clean.slice(0, maxLength)}…`;
+}
+
 function WeaknessVideoRecommendations({ dimensions }) {
   const weakestDimensions = getWeakestDimensions(dimensions, 2);
 
@@ -4588,16 +4720,31 @@ function WeaknessVideoRecommendations({ dimensions }) {
   );
 }
 
-function DebateExperienceChat() {
-  const quickQuestions = [
-    '自由辩总是插不进去怎么办？',
-    '攻辩被对方绕进去怎么办？',
-    '结辩怎么做出终局感？',
-    '赛前准备一个辩题该怎么做？',
-    '上场紧张怎么办？',
-    '如何练战场意识？'
+function DebateExperienceChat({ trainingProfile }) {
+  const quickQuestionGroups = [
+    {
+      title: '个人训练方向',
+      questions: [
+        '根据我最近的训练，我最该练什么？',
+        '我最近反复出现的问题是什么？',
+        '我适合先练自由辩还是防守？',
+        '帮我安排一个三天训练计划。',
+        '我最近有没有进步？'
+      ]
+    },
+    {
+      title: '赛场经验与状态',
+      questions: [
+        '上场前怎么稳住？',
+        '自由辩总被带跑怎么办？',
+        '攻辩怎么设计问题链？',
+        '被对面问懵了怎么办？',
+        '结辩怎么做出终局感？'
+      ]
+    }
   ];
   const openingMessage = '我是林婉，我是你的辩论助手。\n接下来，我会陪你拆论点、练攻防、复盘表达，也会在你乱掉的时候提醒你先把战场找回来。';
+  const hasTrainingProfile = Number(trainingProfile?.recentTrainingCount || 0) > 0;
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState([{ role: 'assistant', content: openingMessage }]);
   const [isSending, setIsSending] = useState(false);
@@ -4619,7 +4766,8 @@ function DebateExperienceChat() {
     try {
       const data = await postJson('/api/debate-experience-chat', {
         question: cleanQuestion,
-        chatHistory: historyForRequest
+        chatHistory: historyForRequest,
+        userTrainingProfile: trainingProfile || null
       });
       setMessages([...nextMessages, { role: 'assistant', content: data.answer || '我暂时没有整理好回答，你可以换个问法再试一次。' }]);
     } catch {
@@ -4634,26 +4782,35 @@ function DebateExperienceChat() {
       <div className="panel-header">
         <div>
           <p className="eyebrow">辩手经验室</p>
-          <h2>辩论场上经验谈</h2>
-          <p>像请教一位经验丰富的辩手一样，问问备赛、攻防和赛场心态。</p>
+          <h2>林婉 · 个人训练顾问</h2>
+          <p>林婉会参考你的近期训练表现，帮你判断下一阶段该怎么练。她不负责替你逃避问题，只负责把你拉回战场。</p>
         </div>
       </div>
+
+      <TrainingProfileCard profile={trainingProfile} />
 
       <article className="experience-opening-card">
         <span>林婉</span>
         <p>{openingMessage}</p>
       </article>
 
-      <div className="assistant-quick-questions experience-quick-questions">
-        {quickQuestions.map((item) => (
-          <button
-            type="button"
-            key={item}
-            disabled={isSending}
-            onClick={() => sendExperienceQuestion(item)}
-          >
-            {item}
-          </button>
+      <div className="experience-quick-groups">
+        {quickQuestionGroups.map((group) => (
+          <section className="experience-quick-group" key={group.title}>
+            <h3>{group.title}</h3>
+            <div className="assistant-quick-questions experience-quick-questions">
+              {group.questions.map((item) => (
+                <button
+                  type="button"
+                  key={item}
+                  disabled={isSending}
+                  onClick={() => sendExperienceQuestion(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </section>
         ))}
       </div>
 
@@ -4674,7 +4831,7 @@ function DebateExperienceChat() {
           value={question}
           disabled={isSending}
           onChange={(event) => setQuestion(event.target.value)}
-          placeholder="例如：自由辩总是插不进去怎么办？这段反驳为什么没打到点上？"
+          placeholder={hasTrainingProfile ? '例如：我最近最该练什么？帮我安排三天训练计划。' : '例如：自由辩总被带跑怎么办？赛前准备一个辩题该怎么做？'}
           rows={3}
         />
         <button type="button" disabled={isSending || !question.trim()} onClick={() => sendExperienceQuestion()}>
@@ -4682,6 +4839,52 @@ function DebateExperienceChat() {
         </button>
       </div>
     </section>
+  );
+}
+
+function TrainingProfileCard({ profile }) {
+  const hasProfile = Number(profile?.recentTrainingCount || 0) > 0;
+
+  if (!hasProfile) {
+    return (
+      <article className="training-profile-card empty">
+        <div>
+          <span>近期训练画像</span>
+          <h3>暂无足够训练记录</h3>
+        </div>
+        <p>林婉将先按通用赛场经验回答。完成几轮训练后，她会更了解你的训练状态。</p>
+      </article>
+    );
+  }
+
+  return (
+    <article className="training-profile-card">
+      <div className="training-profile-heading">
+        <div>
+          <span>近期训练画像</span>
+          <h3>当前训练状态</h3>
+        </div>
+        <strong>{profile.recentTrainingCount} 次</strong>
+      </div>
+      <div className="training-profile-grid">
+        <div>
+          <span>常练模式</span>
+          <strong>{profile.frequentModes?.length ? profile.frequentModes.join('、') : '暂无明显集中模式'}</strong>
+        </div>
+        <div>
+          <span>最近均分</span>
+          <strong>{profile.averageScore !== null && profile.averageScore !== undefined ? `${profile.averageScore} / 100` : '暂无稳定均分'}</strong>
+        </div>
+        <div>
+          <span>反复短板</span>
+          <strong>{profile.weakDimensions?.length ? profile.weakDimensions.join('、') : '暂未形成稳定短板'}</strong>
+        </div>
+        <div>
+          <span>当前建议</span>
+          <strong>{profile.recommendedFocus || '先保持训练，再观察稳定问题'}</strong>
+        </div>
+      </div>
+    </article>
   );
 }
 

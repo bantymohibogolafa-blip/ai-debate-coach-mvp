@@ -1250,10 +1250,44 @@ function validateDebateExperienceChatPayload(body = {}) {
         .filter((item) => item.content)
     : [];
 
-  return { question, chatHistory };
+  return {
+    question,
+    chatHistory,
+    userTrainingProfile: normalizeDebateExperienceProfile(body.userTrainingProfile || body.context || null)
+  };
 }
 
-function buildDebateExperienceMessages({ question, chatHistory }) {
+function normalizeDebateExperienceProfile(profile) {
+  if (!profile || typeof profile !== 'object') return null;
+  const latest = profile.latestRecordSummary && typeof profile.latestRecordSummary === 'object'
+    ? profile.latestRecordSummary
+    : {};
+
+  return {
+    recentTrainingCount: clampNumber(Number(profile.recentTrainingCount || 0), 0, 10),
+    frequentModes: normalizeStringList(profile.frequentModes, 4, 40),
+    averageScore: Number.isFinite(Number(profile.averageScore)) ? clampNumber(Number(profile.averageScore), 0, 100) : null,
+    scoreTrend: limitLength(normalizeText(profile.scoreTrend), 40),
+    weakDimensions: normalizeStringList(profile.weakDimensions, 5, 60),
+    recurringProblems: normalizeStringList(profile.recurringProblems, 6, 120),
+    latestRecordSummary: {
+      topic: limitLength(normalizeText(latest.topic), 120),
+      mode: limitLength(normalizeText(latest.mode), 40),
+      difficulty: limitLength(normalizeText(latest.difficulty), 40),
+      score: Number.isFinite(Number(latest.score)) ? clampNumber(Number(latest.score), 0, 100) : null,
+      scoreLevel: limitLength(normalizeText(latest.scoreLevel), 60),
+      userSide: limitLength(normalizeText(latest.userSide), 20),
+      aiSide: limitLength(normalizeText(latest.aiSide), 20),
+      battlefield: limitLength(normalizeText(latest.battlefield), 180),
+      reviewSummary: limitLength(normalizeText(latest.reviewSummary), 260),
+      createdAt: limitLength(normalizeText(latest.createdAt), 40)
+    },
+    recommendedFocus: limitLength(normalizeText(profile.recommendedFocus), 120)
+  };
+}
+
+function buildDebateExperienceMessages({ question, chatHistory, userTrainingProfile }) {
+  const profileContext = formatDebateExperienceProfile(userTrainingProfile);
   return [
     {
       role: 'system',
@@ -1261,13 +1295,31 @@ function buildDebateExperienceMessages({ question, chatHistory }) {
 林婉
 
 【身份定位】
-林婉是一位优秀的辩手，也是锋辩系统中的人格化辩论经验助手。
+林婉是一位优秀的辩手，也是锋辩系统中的人格化辩论经验助手。她的定位是：有赛场经验的长期辩论训练顾问 + 清醒克制的辩论同伴。
 
 她不是现实中的具体真人，不拥有真实身份、学校、班级、家庭、联系方式或私人经历。她是一个用于辩论训练和经验交流的 AI 人格。
 
 她思路清楚、表达克制、逻辑敏锐，有真实赛场经验感。她不会空泛鼓励用户，也不会居高临下训人，而是像一位可靠的辩论同伴一样，帮助用户拆解论点、发现漏洞、整理表达、复盘训练，并在用户紧张、卡壳或失误时，把用户拉回辩论本身。
 
 她重视逻辑、战场、定义、判准、攻防效率和表达落点。她说话有分寸，直接但不伤人，清醒但不冷漠。她不会盲目夸奖用户，而是会指出真正的问题，并给出可以立刻执行的改法。
+
+【核心任务】
+复盘助手：修这一轮。
+林婉：带这个人。
+
+你不是单条训练记录的复盘助手。复盘助手负责解释某一轮训练、某段回答、某个具体分数。你的核心任务是基于用户近期训练画像，判断用户的长期短板、训练阶段和下一步训练路线。
+
+你主要回答：
+- 我最近最该练什么；
+- 我为什么总是被对方带跑；
+- 我适合先练自由辩还是防守；
+- 我这个阶段怎么备赛；
+- 我最近有没有进步；
+- 我应该怎么形成自己的辩论风格；
+- 我最近反复出现的问题是什么；
+- 帮我安排一个三天训练计划。
+
+如果用户询问某一轮具体复盘细节，例如“这段回答怎么改”“为什么这轮扣分”“这条复盘是什么意思”，你可以简要回应，但要提醒用户：“这类问题更适合在该记录下使用复盘助手深入追问。”
 
 【开场白】
 我是林婉，我是你的辩论助手。
@@ -1405,10 +1457,16 @@ function buildDebateExperienceMessages({ question, chatHistory }) {
 “这个问题可能不太属于辩论训练范围。如果你愿意，我们可以把它转化成一个表达、论证或攻防问题来处理。”
 
 【当前功能边界】
-你只基于当前页面临时对话回答。你不能读取数据库，不能读取用户历史训练记录，不能保存聊天记录，也不能声称自己看到了这些内容。
+你只基于当前页面临时对话和系统提供的轻量训练画像回答。你不能读取数据库，不能保存聊天记录，也不能声称自己看到了完整历史记录、完整复盘或完整对话。
+
+如果系统提供了用户近期训练画像，你应优先结合它判断用户长期短板和训练方向，但不要逐条复述原始数据，不要暴露原始 JSON，也不要编造画像中没有的信息。如果没有训练画像，就按通用赛场经验回答。
 
 【输出要求】
 默认回答 300-600 字。先给判断，再拆原因，最后给可执行动作。不要重新评分。不要声称自己是真人。`
+    },
+    {
+      role: 'user',
+      content: `以下是用户近期训练画像摘要。请把它转化成长期训练判断，不要逐条复述，不要暴露原始数据：\n${profileContext}`
     },
     ...chatHistory.map((item) => ({
       role: item.role === 'assistant' ? 'assistant' : 'user',
@@ -1419,6 +1477,25 @@ function buildDebateExperienceMessages({ question, chatHistory }) {
       content: question
     }
   ];
+}
+
+function formatDebateExperienceProfile(profile) {
+  if (!profile || !profile.recentTrainingCount) {
+    return '暂无足够训练记录。请按通用赛场经验回答，并提醒用户完成几轮训练后你会更能判断训练路线。';
+  }
+
+  const latest = profile.latestRecordSummary || {};
+  return [
+    `最近训练次数：${profile.recentTrainingCount}`,
+    `常练模式：${profile.frequentModes.join('、') || '暂无明显集中模式'}`,
+    `最近平均分：${profile.averageScore === null ? '暂无稳定均分' : `${profile.averageScore} / 100`}`,
+    `分数趋势：${profile.scoreTrend || '暂无足够趋势'}`,
+    `反复较弱维度：${profile.weakDimensions.join('、') || '暂未形成稳定短板'}`,
+    `反复问题：${profile.recurringProblems.join('；') || '暂未形成稳定问题'}`,
+    `最近一次训练：${latest.topic || '未提供'} / ${latest.mode || '未提供'} / ${latest.difficulty || '未提供'} / ${latest.score === null ? '未提供分数' : `${latest.score} / 100`}`,
+    `最近一次核心战场或问题：${latest.battlefield || latest.reviewSummary || '未提供'}`,
+    `当前建议重点：${profile.recommendedFocus || '未提供'}`
+  ].join('\n');
 }
 
 function formatAssistantDimensions(dimensions) {

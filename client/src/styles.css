@@ -2251,6 +2251,100 @@ textarea:focus {
   word-break: normal;
 }
 
+.training-profile-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #eadfd6;
+  border-left: 5px solid #c8502d;
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: #fffaf6;
+  box-shadow: 0 10px 24px rgba(200, 80, 45, 0.08);
+}
+
+.training-profile-card.empty {
+  border-color: #d8e8e8;
+  border-left-color: #2f7375;
+  background: #f8fbfc;
+  box-shadow: 0 10px 24px rgba(31, 111, 111, 0.06);
+}
+
+.training-profile-card span {
+  color: #687982;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.training-profile-card h3,
+.training-profile-card p {
+  margin: 0;
+}
+
+.training-profile-card h3 {
+  color: #13232b;
+  font-size: 18px;
+}
+
+.training-profile-card p {
+  color: #52636c;
+  line-height: 1.7;
+  font-weight: 800;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.training-profile-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.training-profile-heading strong {
+  flex: 0 0 auto;
+  color: #245e62;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.training-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.training-profile-grid div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #eadfd6;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.training-profile-grid strong {
+  color: #263942;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.experience-quick-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.experience-quick-group {
+  display: grid;
+  gap: 8px;
+}
+
+.experience-quick-group h3 {
+  margin: 0;
+  color: #245e62;
+  font-size: 15px;
+}
+
 .experience-chat-list {
   padding-top: 2px;
 }
@@ -3587,6 +3681,24 @@ textarea:focus {
   .review-assistant-header button,
   .assistant-input-row button {
     width: 100%;
+  }
+
+  .training-profile-heading {
+    display: grid;
+  }
+
+  .training-profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .experience-quick-questions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .experience-quick-questions button {
+    flex: 0 0 auto;
   }
 
   .weakness-video-header,
