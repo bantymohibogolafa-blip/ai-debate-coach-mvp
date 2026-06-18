@@ -345,6 +345,7 @@ function App() {
   const [activeMemberActionId, setActiveMemberActionId] = useState('');
   const [teamSettingsForm, setTeamSettingsForm] = useState({ teamName: '', currentPassword: '', nextPassword: '' });
   const [activeTab, setActiveTab] = useState('training');
+  const [isFunctionPanelOpen, setIsFunctionPanelOpen] = useState(false);
   const [personalRecords, setPersonalRecords] = useState([]);
   const [teamMemberRecords, setTeamMemberRecords] = useState([]);
   const [teamRecords, setTeamRecords] = useState([]);
@@ -2057,57 +2058,164 @@ function App() {
     });
   }
 
+  const functionGroups = [
+    {
+      title: '训练',
+      items: [
+        { label: '训练区', value: 'training' },
+        { label: '经验谈', value: 'experience' }
+      ]
+    },
+    {
+      title: '数据',
+      items: [
+        { label: '我的记录', value: 'mine' },
+        { label: '能力估测', value: 'ability' }
+      ]
+    },
+    {
+      title: '团队',
+      items: [
+        { label: '我的团队', value: 'teams' },
+        { label: '团队数据', value: 'team', disabled: !isTeamSpace, hint: '切换到团队空间后可用' }
+      ]
+    }
+  ];
+  const functionTabs = functionGroups.flatMap((group) => group.items);
+  const activeTabLabel = functionTabs.find((item) => item.value === activeTab)?.label || '训练区';
+
+  function switchFunctionTab(tab) {
+    if (tab.disabled) return;
+    logDataStateDebug(tab.value);
+    setActiveTab(tab.value);
+    setSelectedRecord(null);
+    setIsFunctionPanelOpen(false);
+  }
+
   return (
     <main className={`app-shell ${hasSessionContent ? 'session-active' : ''}`}>
-      <section className="team-topbar" aria-label="训练空间选择器">
-        <div>
-          <span>当前训练空间：{currentSpaceLabel}</span>
-          <strong>当前用户：{currentNickname}</strong>
+      <section className="team-topbar compact-topbar" aria-label="当前状态与功能区">
+        <div className="topbar-brand">
+          <strong>锋辩</strong>
+          <span>当前：{currentSpaceLabel} / {currentNickname}</span>
         </div>
-        <div className="auth-status-card">
-          {isLoggedIn ? (
-            <>
-              <span>已登录：{currentUser.displayName}</span>
-              <strong>{currentUser.username}</strong>
-              <button type="button" onClick={logout}>退出登录</button>
-            </>
-          ) : (
-            <>
-              <span>当前为游客模式。登录后可跨设备保存训练记录、团队身份和任务进度。</span>
-              <div className="auth-actions">
-                <button type="button" onClick={() => { setAuthMode('login'); setAuthError(''); setIsAuthModalOpen(true); }}>登录</button>
-                <button type="button" onClick={() => { setAuthMode('register'); setAuthError(''); setIsAuthModalOpen(true); }}>注册</button>
-              </div>
-            </>
-          )}
+        <div className="topbar-current">
+          <span>当前功能</span>
+          <strong>{activeTabLabel}</strong>
         </div>
-        <label className="space-selector">
-          <span>切换空间</span>
-          <select
-            value={currentSpaceValue}
-            onChange={(event) => selectTrainingSpace(event.target.value)}
-            disabled={isBusy || isRecording || isTeamsLoading}
-          >
-            <option value="personal">个人模式</option>
-            {joinedTeams.map((team) => (
-              <option key={team.teamCode} value={`team:${team.teamCode}`}>
-                {team.teamName || team.teamCode}
-              </option>
-            ))}
-            <option value="join">+ 加入 / 创建团队</option>
-          </select>
-        </label>
-        <button type="button" className="onboarding-entry-button" onClick={() => setShowOnboarding(true)}>
-          新手指南
-        </button>
-        <button type="button" className="onboarding-entry-button" onClick={() => setShowPwaHint(true)}>
-          安装到桌面
+        <button
+          type="button"
+          className="function-panel-trigger"
+          onClick={() => setIsFunctionPanelOpen(true)}
+          aria-expanded={isFunctionPanelOpen}
+        >
+          ☰ 功能区
         </button>
       </section>
 
       <OnboardingGuide open={showOnboarding} onClose={closeOnboarding} onStart={startFromOnboarding} />
 
       <InstallPwaHint open={showPwaHint} onDismiss={dismissPwaHint} />
+
+      {isFunctionPanelOpen && (
+        <div
+          className="function-panel-backdrop"
+          role="presentation"
+          onClick={() => setIsFunctionPanelOpen(false)}
+        >
+          <section
+            className="function-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="功能区"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="function-panel-header">
+              <div>
+                <span>锋辩</span>
+                <h2>功能区</h2>
+              </div>
+              <button type="button" onClick={() => setIsFunctionPanelOpen(false)} aria-label="关闭功能区">
+                ×
+              </button>
+            </div>
+
+            <div className="function-panel-groups">
+              {functionGroups.map((group) => (
+                <section className="function-panel-group" key={group.title}>
+                  <h3>{group.title}</h3>
+                  <div className="function-panel-buttons">
+                    {group.items.map((item) => (
+                      <button
+                        type="button"
+                        key={item.value}
+                        className={activeTab === item.value ? 'active' : ''}
+                        disabled={item.disabled}
+                        onClick={() => switchFunctionTab(item)}
+                        title={item.hint || item.label}
+                      >
+                        <span>{item.label}</span>
+                        {item.hint && <small>{item.hint}</small>}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+
+              <section className="function-panel-group account-space-group">
+                <h3>账号与空间</h3>
+                <div className="function-info-card">
+                  <span>当前用户</span>
+                  <strong>{isLoggedIn ? `${currentUser.displayName}（${currentUser.username}）` : `游客模式 / ${currentNickname}`}</strong>
+                  {!isLoggedIn && <p>登录后可跨设备保存训练记录、团队身份和任务进度。</p>}
+                </div>
+                <label className="space-selector function-space-selector">
+                  <span>切换空间</span>
+                  <select
+                    value={currentSpaceValue}
+                    onChange={(event) => {
+                      selectTrainingSpace(event.target.value);
+                      setSelectedRecord(null);
+                      setIsFunctionPanelOpen(false);
+                    }}
+                    disabled={isBusy || isRecording || isTeamsLoading}
+                  >
+                    <option value="personal">个人模式</option>
+                    {joinedTeams.map((team) => (
+                      <option key={team.teamCode} value={`team:${team.teamCode}`}>
+                        {team.teamName || team.teamCode}
+                      </option>
+                    ))}
+                    <option value="join">+ 加入 / 创建团队</option>
+                  </select>
+                </label>
+                <div className="function-panel-actions">
+                  <button type="button" onClick={() => { setShowOnboarding(true); setIsFunctionPanelOpen(false); }}>
+                    新手指南
+                  </button>
+                  <button type="button" onClick={() => { setShowPwaHint(true); setIsFunctionPanelOpen(false); }}>
+                    安装到桌面
+                  </button>
+                  {isLoggedIn ? (
+                    <button type="button" className="danger" onClick={() => { setIsFunctionPanelOpen(false); logout(); }}>
+                      退出登录
+                    </button>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => { setAuthMode('login'); setAuthError(''); setIsAuthModalOpen(true); setIsFunctionPanelOpen(false); }}>
+                        登录
+                      </button>
+                      <button type="button" onClick={() => { setAuthMode('register'); setAuthError(''); setIsAuthModalOpen(true); setIsFunctionPanelOpen(false); }}>
+                        注册
+                      </button>
+                    </>
+                  )}
+                </div>
+              </section>
+            </div>
+          </section>
+        </div>
+      )}
 
       {authStatus && <div className="history-status">{authStatus}</div>}
       {joinSuccess && <div className="history-status">{joinSuccess}</div>}
@@ -2620,30 +2728,6 @@ function App() {
           </section>
         </div>
       )}
-
-      <nav className="main-tabs" aria-label="功能分区">
-        {[
-          { label: '训练区', value: 'training' },
-          { label: '我的记录', value: 'mine' },
-          { label: '能力估测', value: 'ability' },
-          { label: '我的团队', value: 'teams' },
-          { label: '经验谈', value: 'experience' },
-          ...(isTeamSpace ? [{ label: '团队数据', value: 'team' }] : [])
-        ].map((tab) => (
-          <button
-            type="button"
-            key={tab.value}
-            className={activeTab === tab.value ? 'active' : ''}
-            onClick={() => {
-              logDataStateDebug(tab.value);
-              setActiveTab(tab.value);
-              setSelectedRecord(null);
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
 
       {activeTab === 'training' && (
       <>
