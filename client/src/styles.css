@@ -459,6 +459,29 @@ textarea:disabled {
   font-size: 16px;
 }
 
+.password-input-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.password-input-wrap input {
+  min-width: 0;
+}
+
+.password-input-wrap button {
+  min-height: 44px;
+  border: 1px solid #bdd6d8;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #245e62;
+  background: #eef8f7;
+  font-size: 14px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .link-button {
   min-height: 44px;
   color: #245e62;
@@ -3758,6 +3781,7 @@ textarea:focus {
 @media (max-width: 620px) {
   .app-shell {
     width: min(100% - 16px, 520px);
+    padding-top: 0;
     padding-bottom: 28px;
   }
 
@@ -3877,28 +3901,68 @@ textarea:focus {
 
   .compact-topbar {
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand current"
+      "brand trigger";
     align-items: center;
-    top: 8px;
-    padding: 10px 12px;
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    margin: 0 -8px 12px;
+    border-width: 0 0 1px;
+    border-radius: 0 0 8px 8px;
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px;
+    background: #f8fbfc;
+    box-shadow: 0 6px 18px rgba(24, 36, 43, 0.08);
+  }
+
+  .topbar-brand {
+    grid-area: brand;
   }
 
   .topbar-current {
-    display: none;
+    grid-area: current;
+    display: grid;
+    min-width: 0;
+    justify-items: end;
+    line-height: 1.2;
+  }
+
+  .topbar-brand strong {
+    font-size: 19px;
+  }
+
+  .topbar-brand span,
+  .topbar-current span {
+    max-width: 52vw;
+    font-size: 12px;
+  }
+
+  .topbar-current strong {
+    max-width: 34vw;
+    overflow: hidden;
+    color: #245e62;
+    font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .function-panel-trigger {
+    grid-area: trigger;
     width: auto !important;
-    min-height: 40px;
-    padding: 0 12px;
+    min-height: 34px;
+    margin-top: 4px;
+    padding: 0 10px;
+    font-size: 13px;
   }
 
   .function-panel-backdrop {
-    align-items: end;
-    padding: 10px;
+    align-items: start;
+    padding: calc(62px + env(safe-area-inset-top, 0px)) 10px 10px;
   }
 
   .function-panel {
-    max-height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 84px - env(safe-area-inset-top, 0px));
     padding: 16px;
   }
 
@@ -3913,6 +3977,11 @@ textarea:focus {
 
   .team-topbar button {
     width: 100%;
+  }
+
+  .compact-topbar .function-panel-trigger {
+    justify-self: end;
+    width: auto !important;
   }
 
   .onboarding-backdrop {

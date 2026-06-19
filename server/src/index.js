@@ -249,6 +249,12 @@ app.post('/api/team/join', requireAuth, async (req, res, next) => {
       teams
     });
   } catch (error) {
+    if (error.code === 'SUPABASE_REQUEST_FAILED') {
+      const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
+      if (/team_members|role|team_members_role_check|schema cache|column/i.test(detailText)) {
+        return next(httpError(500, '加入团队失败：团队成员表结构尚未更新，请先执行 supabase-team-admin-roles.sql。'));
+      }
+    }
     next(error);
   }
 });
@@ -2131,12 +2137,16 @@ async function joinTeam({ teamCode, teamPassword, nickname, localUserId, appUser
     });
     member = createdMembers[0];
   } else {
+    const preservedRole = isTeamOwnerRole(member.role) || member.role === 'admin'
+      ? normalizeTeamRole(member.role)
+      : 'member';
     const updatedMembers = await supabaseRequest(
       `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&app_user_id=eq.${encodeURIComponent(appUserId)}`,
       {
         method: 'PATCH',
         body: {
           nickname,
+          role: preservedRole,
           status: 'active',
           left_at: null,
           last_seen_at: new Date().toISOString()

@@ -332,6 +332,7 @@ function App() {
   const [joinedTeamPrompt, setJoinedTeamPrompt] = useState(null);
   const [isJoiningTeam, setIsJoiningTeam] = useState(false);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+  const [isJoinPasswordVisible, setIsJoinPasswordVisible] = useState(false);
   const [isTeamsLoading, setIsTeamsLoading] = useState(false);
   const [leaveTarget, setLeaveTarget] = useState(null);
   const [leaveError, setLeaveError] = useState('');
@@ -344,6 +345,8 @@ function App() {
   const [memberActionStatus, setMemberActionStatus] = useState('');
   const [activeMemberActionId, setActiveMemberActionId] = useState('');
   const [teamSettingsForm, setTeamSettingsForm] = useState({ teamName: '', currentPassword: '', nextPassword: '' });
+  const [isCurrentTeamPasswordVisible, setIsCurrentTeamPasswordVisible] = useState(false);
+  const [isNextTeamPasswordVisible, setIsNextTeamPasswordVisible] = useState(false);
   const [activeTab, setActiveTab] = useState('training');
   const [isFunctionPanelOpen, setIsFunctionPanelOpen] = useState(false);
   const [personalRecords, setPersonalRecords] = useState([]);
@@ -717,7 +720,10 @@ function App() {
       }
       setJoinForm({ teamCode: '', teamName: '', teamPassword: '', nickname: nextNickname });
     } catch (requestError) {
-      setJoinError(getFriendlyError(requestError));
+      const friendlyMessage = getFriendlyError(requestError);
+      setJoinError(friendlyMessage.includes('历史记录') || friendlyMessage.includes('AI ')
+        ? '加入团队失败，请确认团队码、团队密码和数据库角色迁移已完成。'
+        : friendlyMessage);
     } finally {
       setIsJoiningTeam(false);
     }
@@ -2381,14 +2387,24 @@ function App() {
 
                 <label className="field">
                   <span>团队密码</span>
-                  <input
-                    type="password"
-                    value={joinForm.teamPassword}
-                    disabled={isJoiningTeam}
-                    onChange={(event) => setJoinForm({ ...joinForm, teamPassword: event.target.value })}
-                    placeholder="请输入团队密码"
-                    autoComplete="off"
-                  />
+                  <div className="password-input-wrap">
+                    <input
+                      type={isJoinPasswordVisible ? 'text' : 'password'}
+                      value={joinForm.teamPassword}
+                      disabled={isJoiningTeam}
+                      onChange={(event) => setJoinForm({ ...joinForm, teamPassword: event.target.value })}
+                      placeholder="请输入团队密码"
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setIsJoinPasswordVisible((current) => !current)}
+                      disabled={isJoiningTeam || !joinForm.teamPassword}
+                      aria-label={isJoinPasswordVisible ? '隐藏密码' : '显示密码'}
+                    >
+                      {isJoinPasswordVisible ? '隐藏' : '显示'}
+                    </button>
+                  </div>
                 </label>
 
                 <label className="field">
@@ -2397,7 +2413,7 @@ function App() {
                     value={joinForm.nickname}
                     disabled={isJoiningTeam}
                     onChange={(event) => setJoinForm({ ...joinForm, nickname: event.target.value })}
-                    placeholder="例如：党梓豪"
+                    placeholder="例如：林婉"
                     maxLength={20}
                   />
                 </label>
@@ -2486,23 +2502,43 @@ function App() {
                 <div className="team-settings-row password-row">
                   <label className="field">
                     <span>当前密码</span>
-                    <input
-                      type="password"
-                      value={teamSettingsForm.currentPassword}
-                      disabled={Boolean(activeMemberActionId)}
-                      onChange={(event) => setTeamSettingsForm({ ...teamSettingsForm, currentPassword: event.target.value })}
-                      autoComplete="off"
-                    />
+                    <div className="password-input-wrap">
+                      <input
+                        type={isCurrentTeamPasswordVisible ? 'text' : 'password'}
+                        value={teamSettingsForm.currentPassword}
+                        disabled={Boolean(activeMemberActionId)}
+                        onChange={(event) => setTeamSettingsForm({ ...teamSettingsForm, currentPassword: event.target.value })}
+                        autoComplete="off"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setIsCurrentTeamPasswordVisible((current) => !current)}
+                        disabled={Boolean(activeMemberActionId) || !teamSettingsForm.currentPassword}
+                        aria-label={isCurrentTeamPasswordVisible ? '隐藏当前密码' : '显示当前密码'}
+                      >
+                        {isCurrentTeamPasswordVisible ? '隐藏' : '显示'}
+                      </button>
+                    </div>
                   </label>
                   <label className="field">
                     <span>新密码</span>
-                    <input
-                      type="password"
-                      value={teamSettingsForm.nextPassword}
-                      disabled={Boolean(activeMemberActionId)}
-                      onChange={(event) => setTeamSettingsForm({ ...teamSettingsForm, nextPassword: event.target.value })}
-                      autoComplete="off"
-                    />
+                    <div className="password-input-wrap">
+                      <input
+                        type={isNextTeamPasswordVisible ? 'text' : 'password'}
+                        value={teamSettingsForm.nextPassword}
+                        disabled={Boolean(activeMemberActionId)}
+                        onChange={(event) => setTeamSettingsForm({ ...teamSettingsForm, nextPassword: event.target.value })}
+                        autoComplete="off"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setIsNextTeamPasswordVisible((current) => !current)}
+                        disabled={Boolean(activeMemberActionId) || !teamSettingsForm.nextPassword}
+                        aria-label={isNextTeamPasswordVisible ? '隐藏新密码' : '显示新密码'}
+                      >
+                        {isNextTeamPasswordVisible ? '隐藏' : '显示'}
+                      </button>
+                    </div>
                   </label>
                   <button
                     type="button"
@@ -3803,6 +3839,8 @@ function TeamDataPanel({
 
 function AuthModal({ mode, form, error, isLoading, onSubmit, onChange, onModeChange, onClose }) {
   const isRegister = mode === 'register';
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [isConfirmPasswordVisible, setIsConfirmPasswordVisible] = useState(false);
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -3842,27 +3880,47 @@ function AuthModal({ mode, form, error, isLoading, onSubmit, onChange, onModeCha
 
           <label>
             密码
-            <input
-              type="password"
-              value={form.password}
-              onChange={(event) => onChange({ ...form, password: event.target.value })}
-              placeholder="至少 6 位"
-              autoComplete={isRegister ? 'new-password' : 'current-password'}
-              disabled={isLoading}
-            />
+            <div className="password-input-wrap">
+              <input
+                type={isPasswordVisible ? 'text' : 'password'}
+                value={form.password}
+                onChange={(event) => onChange({ ...form, password: event.target.value })}
+                placeholder="至少 6 位"
+                autoComplete={isRegister ? 'new-password' : 'current-password'}
+                disabled={isLoading}
+              />
+              <button
+                type="button"
+                onClick={() => setIsPasswordVisible((current) => !current)}
+                disabled={isLoading || !form.password}
+                aria-label={isPasswordVisible ? '隐藏密码' : '显示密码'}
+              >
+                {isPasswordVisible ? '隐藏' : '显示'}
+              </button>
+            </div>
           </label>
 
           {isRegister && (
             <label>
               确认密码
-              <input
-                type="password"
-                value={form.confirmPassword}
-                onChange={(event) => onChange({ ...form, confirmPassword: event.target.value })}
-                placeholder="再次输入密码"
-                autoComplete="new-password"
-                disabled={isLoading}
-              />
+              <div className="password-input-wrap">
+                <input
+                  type={isConfirmPasswordVisible ? 'text' : 'password'}
+                  value={form.confirmPassword}
+                  onChange={(event) => onChange({ ...form, confirmPassword: event.target.value })}
+                  placeholder="再次输入密码"
+                  autoComplete="new-password"
+                  disabled={isLoading}
+                />
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmPasswordVisible((current) => !current)}
+                  disabled={isLoading || !form.confirmPassword}
+                  aria-label={isConfirmPasswordVisible ? '隐藏确认密码' : '显示确认密码'}
+                >
+                  {isConfirmPasswordVisible ? '隐藏' : '显示'}
+                </button>
+              </div>
             </label>
           )}
 
