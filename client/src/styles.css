@@ -3238,6 +3238,116 @@ textarea:focus {
   color: #c8502d;
 }
 
+.team-insight-section,
+.task-recommendation-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d8e3e8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fbfc;
+}
+
+.team-insight-section h3,
+.team-insight-section p,
+.task-recommendation-panel h3,
+.task-recommendation-panel p {
+  margin: 0;
+}
+
+.team-insight-section h3,
+.task-recommendation-panel h3 {
+  color: #13232b;
+  font-size: 18px;
+}
+
+.team-insight-section > div > p,
+.task-recommendation-panel > div > p {
+  margin-top: 4px;
+  color: #687982;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+.member-profile-grid,
+.common-problem-grid,
+.task-recommendation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.member-profile-card,
+.common-problem-card,
+.task-recommendation-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dbe8ea;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.member-profile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.member-profile-header strong,
+.common-problem-card strong,
+.task-recommendation-card strong {
+  color: #13232b;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.member-profile-header span,
+.common-problem-card span,
+.task-recommendation-panel span,
+.task-recommendation-card span {
+  color: #2d7f7a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.member-profile-meta {
+  display: grid;
+  gap: 4px;
+  color: #687982;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.member-profile-card p,
+.common-problem-card p,
+.task-recommendation-card p,
+.task-recommendation-card em {
+  margin: 0;
+  color: #52636c;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.task-recommendation-card em {
+  font-style: normal;
+  color: #8f4d26;
+  font-weight: 800;
+}
+
+.task-recommendation-card button {
+  justify-self: start;
+  min-height: 38px;
+  border: 1px solid #bdd6d8;
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #245e62;
+  background: #eef8f7;
+  font-weight: 900;
+}
+
 .task-create-modal {
   max-width: 820px;
 }

@@ -919,6 +919,37 @@ function App() {
     }
   }
 
+  async function updateTeamMemberRole(member, role) {
+    if (!memberModalTeam || activeMemberActionId) return;
+    if (!isLoggedIn) {
+      requestLogin();
+      return;
+    }
+    const actionText = role === 'admin' ? '设为管理员' : '取消管理员';
+    const confirmed = window.confirm(`确认将「${member.nickname || '该成员'}」${actionText}吗？`);
+    if (!confirmed) return;
+
+    setActiveMemberActionId(`role:${member.localUserId}:${role}`);
+    setMemberActionError('');
+    setMemberActionStatus('');
+
+    try {
+      const data = await postJson('/api/team/member/role', {
+        teamCode: memberModalTeam.teamCode,
+        memberUserId: member.appUserId || member.localUserId,
+        role
+      });
+      setTeamMembers(Array.isArray(data.members) ? data.members : []);
+      setMemberActionStatus(role === 'admin'
+        ? `已将「${member.nickname || '该成员'}」设为管理员。`
+        : `已取消「${member.nickname || '该成员'}」的管理员权限。`);
+    } catch (requestError) {
+      setMemberActionError(getFriendlyError(requestError) || '操作失败，请稍后重试。');
+    } finally {
+      setActiveMemberActionId('');
+    }
+  }
+
   async function updateTeamName() {
     if (!memberModalTeam || activeMemberActionId) return;
     if (!isLoggedIn) {
@@ -1271,6 +1302,21 @@ function App() {
     } finally {
       setIsTaskActionLoading(false);
     }
+  }
+
+  function applyTaskRecommendation(recommendation) {
+    if (!recommendation) return;
+    setTaskForm((current) => ({
+      ...current,
+      title: recommendation.title || current.title,
+      topic: current.topic || config.topic || '',
+      mode: recommendation.mode || current.mode,
+      description: recommendation.goal || recommendation.reason || current.description,
+      assignmentType: recommendation.assignmentType || current.assignmentType,
+      assignedUserIds: Array.isArray(recommendation.assignedUserIds)
+        ? recommendation.assignedUserIds
+        : current.assignedUserIds
+    }));
   }
 
   async function openTaskDetail(task) {
@@ -2417,7 +2463,7 @@ function App() {
             {memberActionError && <div className="error-box">{memberActionError}</div>}
             {memberActionStatus && <div className="history-status">{memberActionStatus}</div>}
 
-            {['owner', 'captain'].includes(teamMembersRequester?.role) && (
+            {isTeamLeaderRole(teamMembersRequester?.role) && (
               <div className="team-settings-card">
                 <div className="team-settings-row">
                   <label className="field">
@@ -2478,8 +2524,9 @@ function App() {
                 {teamMembers.map((member) => {
                   const selfIdentityId = currentUser?.id || localUserId;
                   const isSelf = member.localUserId === selfIdentityId || member.appUserId === currentUser?.id;
-                  const isOwner = ['owner', 'captain'].includes(member.role);
-                  const canManage = ['owner', 'captain'].includes(teamMembersRequester?.role) && !isSelf && !isOwner;
+                  const isLeader = isTeamLeaderRole(member.role);
+                  const requesterIsLeader = isTeamLeaderRole(teamMembersRequester?.role);
+                  const canManage = requesterIsLeader && !isSelf && !isLeader && Boolean(member.appUserId);
                   return (
                     <article className="member-list-item" key={member.localUserId}>
                       <div>
@@ -2488,6 +2535,23 @@ function App() {
                       </div>
                       {canManage && (
                         <div className="member-actions">
+                          {member.role === 'admin' ? (
+                            <button
+                              type="button"
+                              onClick={() => updateTeamMemberRole(member, 'member')}
+                              disabled={Boolean(activeMemberActionId)}
+                            >
+                              {activeMemberActionId === `role:${member.localUserId}:member` ? '取消中...' : '取消管理员'}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => updateTeamMemberRole(member, 'admin')}
+                              disabled={Boolean(activeMemberActionId)}
+                            >
+                              {activeMemberActionId === `role:${member.localUserId}:admin` ? '设置中...' : '设为管理员'}
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => transferTeamOwner(member)}
@@ -2551,6 +2615,11 @@ function App() {
               </p>
             </div>
 
+            <TaskRecommendationPanel
+              recommendations={teamStats?.taskRecommendations}
+              onApply={applyTaskRecommendation}
+            />
+
             <form className="task-form" onSubmit={createTeamTask}>
               <div className="task-assignment-box">
                 <span className="task-assignment-title">任务对象</span>
@@ -2594,7 +2663,7 @@ function App() {
                               }}
                             />
                             <span>{member.nickname || member.localUserId}</span>
-                            <em>{member.role === 'owner' || member.role === 'captain' ? '队长' : '成员'}</em>
+                            <em>{getTeamRoleLabel(member.role)}</em>
                           </label>
                         );
                       })
@@ -3598,7 +3667,7 @@ function TeamDataPanel({
   const memberStats = Array.isArray(stats?.memberStats) ? stats.memberStats : [];
   const countRanking = [...memberStats].sort((a, b) => b.count - a.count);
   const scoreRanking = [...memberStats].sort((a, b) => (b.averageScore || 0) - (a.averageScore || 0));
-  const isOwner = team?.role === 'owner' || team?.role === 'captain';
+  const isManager = isTeamManagerRole(team?.role);
 
   return (
     <section className="panel team-data-panel">
@@ -3653,6 +3722,9 @@ function TeamDataPanel({
         <RankingList title="成员训练次数排行" items={countRanking} metric={(item) => `${item.count} 次`} />
         <RankingList title="成员平均分排行" items={scoreRanking} metric={(item) => `${formatNullableNumber(item.averageScore)} 分`} />
       </div>
+
+      <TeamMemberProfiles profiles={stats?.memberProfiles || []} />
+      <TeamCommonProblems problems={stats?.commonProblems || []} />
 
       <div className="team-recent-section">
         <h3>最近训练记录</h3>
@@ -3714,7 +3786,7 @@ function TeamDataPanel({
       ) : (
         <TeamTasksPanel
           tasks={tasks}
-          isOwner={isOwner}
+          isOwner={isManager}
           selectedTaskDetail={selectedTaskDetail}
           isTaskDetailLoading={isTaskDetailLoading}
           taskDetailError={taskDetailError}
@@ -4404,6 +4476,125 @@ function RankingList({ title, items, metric }) {
         </ol>
       )}
     </div>
+  );
+}
+
+function TeamMemberProfiles({ profiles = [] }) {
+  return (
+    <section className="team-insight-section">
+      <div>
+        <h3>成员能力画像</h3>
+        <p>基于当前团队训练记录生成摘要，不展示完整对话和复盘正文。</p>
+      </div>
+      {profiles.length === 0 ? (
+        <div className="history-empty">暂无足够团队训练记录，完成几轮训练后会生成能力画像。</div>
+      ) : (
+        <div className="member-profile-grid">
+          {profiles.map((profile) => (
+            <article className="member-profile-card" key={profile.appUserId || profile.localUserId || profile.nickname}>
+              <div className="member-profile-header">
+                <strong>{profile.nickname || '未命名成员'}</strong>
+                <span>{getTeamRoleLabel(profile.role)}</span>
+              </div>
+              <div className="member-profile-meta">
+                <span>最近训练：{profile.recentCount || 0} 次</span>
+                <span>最近均分：{formatNullableNumber(profile.averageScore)}</span>
+                <span>常练模式：{profile.frequentModes?.length ? profile.frequentModes.join('、') : '暂无'}</span>
+              </div>
+              {profile.recentCount ? (
+                <>
+                  <p><b>优势：</b>{profile.strengths?.length ? profile.strengths.join('、') : '暂未形成稳定优势'}</p>
+                  <p><b>薄弱：</b>{profile.weaknesses?.length ? profile.weaknesses.join('、') : '暂未形成稳定短板'}</p>
+                  <p><b>建议：</b>{profile.suggestion || '继续完成团队训练，积累更多样本。'}</p>
+                </>
+              ) : (
+                <p>暂无足够团队训练记录，完成几轮训练后会生成能力画像。</p>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TeamCommonProblems({ problems = [] }) {
+  return (
+    <section className="team-insight-section">
+      <div>
+        <h3>全队共性问题</h3>
+        <p>从近期团队训练的低分维度中提取，用于辅助队长和管理员布置任务。</p>
+      </div>
+      {problems.length === 0 ? (
+        <div className="history-empty">团队训练数据不足，完成更多团队训练后可生成更准确推荐。</div>
+      ) : (
+        <div className="common-problem-grid">
+          {problems.map((problem) => (
+            <article className="common-problem-card" key={problem.title}>
+              <span>{getOptionLabel(trainingModes, problem.recommendedMode) || '专项训练'}</span>
+              <strong>{problem.title}</strong>
+              <p>{problem.description}</p>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TaskRecommendationPanel({ recommendations, onApply }) {
+  const teamRecommendation = recommendations?.teamRecommendation || null;
+  const personalRecommendations = Array.isArray(recommendations?.personalRecommendations)
+    ? recommendations.personalRecommendations
+    : [];
+
+  if (!recommendations?.hasEnoughData && !teamRecommendation && !personalRecommendations.length) {
+    return (
+      <section className="task-recommendation-panel">
+        <div>
+          <span>任务推荐</span>
+          <h3>团队训练数据不足</h3>
+          <p>完成更多团队训练后，系统会基于全队共性问题和成员个人短板生成更准确的任务推荐。</p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="task-recommendation-panel">
+      <div>
+        <span>任务推荐</span>
+        <h3>可采纳后再修改发布</h3>
+      </div>
+
+      {teamRecommendation && (
+        <article className="task-recommendation-card">
+          <span>全队共性任务</span>
+          <strong>{teamRecommendation.title}</strong>
+          <p>{teamRecommendation.reason}</p>
+          <em>{teamRecommendation.goal}</em>
+          <button type="button" onClick={() => onApply(teamRecommendation)}>
+            采纳推荐
+          </button>
+        </article>
+      )}
+
+      {personalRecommendations.length > 0 && (
+        <div className="task-recommendation-grid">
+          {personalRecommendations.map((item) => (
+            <article className="task-recommendation-card" key={`${item.memberName}-${item.title}`}>
+              <span>个人推荐 · {item.memberName}</span>
+              <strong>{item.title}</strong>
+              <p>{item.reason}</p>
+              <em>{item.goal}</em>
+              <button type="button" onClick={() => onApply(item)}>
+                采纳推荐
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -5213,8 +5404,17 @@ function getOptionLabel(options, value) {
 }
 
 function getTeamRoleLabel(role) {
-  if (role === 'owner' || role === 'captain') return '队长';
+  if (isTeamLeaderRole(role)) return '队长';
+  if (role === 'admin') return '管理员';
   return '成员';
+}
+
+function isTeamLeaderRole(role) {
+  return ['owner', 'captain', 'leader'].includes(role || 'member');
+}
+
+function isTeamManagerRole(role) {
+  return isTeamLeaderRole(role) || role === 'admin';
 }
 
 function getLatestMessage(history, role) {

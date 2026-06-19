@@ -315,6 +315,17 @@ app.post('/api/team/member/remove', requireAuth, async (req, res, next) => {
   }
 });
 
+app.post('/api/team/member/role', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validateTeamMemberRolePayload(req.body, req.user);
+    await updateTeamMemberRole(payload);
+    const members = await fetchTeamMembers(payload.teamCode);
+    res.json({ success: true, members: members.map(mapTeamMemberFromDb) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/team/transfer-owner', requireAuth, async (req, res, next) => {
   try {
     const payload = validateTeamMemberActionPayload(req.body, req.user);
@@ -489,11 +500,15 @@ app.get('/api/training-records/team', requireAuth, async (req, res, next) => {
       return res.status(400).json({ message: '团队码无效，请重新加入团队。' });
     }
 
-    await requireActiveMembership(teamCode, req.user.id);
+    const viewer = await requireActiveMembership(teamCode, req.user.id);
     const page = parseRecordPageQuery(req.query);
     const allRecords = await fetchTeamTrainingRecords(teamCode, 1000, { ...page, offset: 0 });
-    const records = (await filterRecordsByActiveMembers(teamCode, allRecords))
-      .slice(page.offset, page.offset + page.limit + 1);
+    const activeRecords = await filterRecordsByActiveMembers(teamCode, allRecords);
+    const records = sanitizeTeamRecordsForViewer(
+      activeRecords.slice(page.offset, page.offset + page.limit + 1),
+      viewer,
+      req.user.id
+    );
     res.json(buildRecordPageResponse(records, page));
   } catch (error) {
     next(error);
@@ -943,6 +958,38 @@ function validateTeamMemberActionPayload(body, authUser) {
   }
 
   return { teamCode, localUserId, targetLocalUserId };
+}
+
+function normalizeTeamRole(value) {
+  const role = normalizeText(value);
+  if (role === 'leader' || role === 'captain' || role === 'owner') return 'leader';
+  if (role === 'admin') return 'admin';
+  return 'member';
+}
+
+function validateTeamMemberRolePayload(body, authUser) {
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const localUserId = authUser?.id;
+  const targetLocalUserId = normalizeText(body.memberUserId || body.member_user_id || body.targetAppUserId || body.target_app_user_id);
+  const role = normalizeTeamRole(body.role);
+
+  if (!isValidTeamCode(teamCode)) {
+    throw badRequest('团队码无效，请重新选择团队。');
+  }
+
+  if (!isUuid(localUserId)) {
+    throw httpError(401, '登录状态已过期，请重新登录。');
+  }
+
+  if (!isUuid(targetLocalUserId)) {
+    throw badRequest('目标成员身份无效，请刷新成员列表后重试。');
+  }
+
+  if (!['admin', 'member'].includes(role)) {
+    throw badRequest('队长只能将成员设为管理员或普通成员。');
+  }
+
+  return { teamCode, localUserId, targetLocalUserId, role };
 }
 
 function validateTeamUpdateNamePayload(body, authUser) {
@@ -2136,7 +2183,7 @@ async function createTeam({ teamCode, teamName, teamPassword, nickname, localUse
       local_user_id: localUserId,
       app_user_id: appUserId,
       nickname,
-      role: 'captain',
+      role: 'leader',
       status: 'active',
       joined_at: new Date().toISOString(),
       last_seen_at: new Date().toISOString()
@@ -2204,7 +2251,21 @@ async function requireTeamOwner(teamCode, localUserId) {
 }
 
 function isTeamOwnerRole(role) {
-  return ['owner', 'captain'].includes(role || 'member');
+  return ['owner', 'captain', 'leader'].includes(role || 'member');
+}
+
+function isTeamManagerRole(role) {
+  return isTeamOwnerRole(role) || role === 'admin';
+}
+
+async function requireTeamManager(teamCode, localUserId) {
+  const member = await requireActiveMembership(teamCode, localUserId);
+
+  if (!isTeamManagerRole(member.role)) {
+    throw httpError(403, '只有队长或管理员可以管理团队训练任务。');
+  }
+
+  return member;
 }
 
 async function removeTeamMember({ teamCode, localUserId, targetLocalUserId }) {
@@ -2226,6 +2287,32 @@ async function removeTeamMember({ teamCode, localUserId, targetLocalUserId }) {
       body: {
         status: 'removed',
         left_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    }
+  );
+}
+
+async function updateTeamMemberRole({ teamCode, localUserId, targetLocalUserId, role }) {
+  await requireTeamOwner(teamCode, localUserId);
+
+  if (localUserId === targetLocalUserId) {
+    throw badRequest('不能修改自己的团队角色。');
+  }
+
+  const targetMember = await requireActiveMembership(teamCode, targetLocalUserId);
+  if (isTeamOwnerRole(targetMember.role)) {
+    throw badRequest('不能修改队长权限。');
+  }
+
+  await supabaseRequest(
+    `${teamMembersTable}?team_code=eq.${encodeURIComponent(teamCode)}&app_user_id=eq.${encodeURIComponent(targetLocalUserId)}`,
+    {
+      method: 'PATCH',
+      body: {
+        role,
+        status: 'active',
+        left_at: null
       },
       prefer: 'return=representation'
     }
@@ -2274,7 +2361,7 @@ async function transferTeamOwner({ teamCode, localUserId, targetLocalUserId }) {
       {
         method: 'PATCH',
         body: {
-          role: 'captain',
+          role: 'leader',
           status: 'active',
           left_at: null
         },
@@ -2287,7 +2374,7 @@ async function transferTeamOwner({ teamCode, localUserId, targetLocalUserId }) {
       {
         method: 'PATCH',
         body: {
-          role: 'captain',
+          role: 'leader',
           status: 'active'
         },
         prefer: 'return=representation'
@@ -2344,7 +2431,7 @@ async function updateTeamPassword({ teamCode, localUserId, currentPassword, next
 }
 
 async function createTeamTask(payload) {
-  await requireTeamOwner(payload.teamCode, payload.localUserId);
+  await requireTeamManager(payload.teamCode, payload.localUserId);
   const activeMembers = await fetchTeamMembers(payload.teamCode);
   const assignableMembers = activeMembers.filter((member) => member.status === 'active' && member.app_user_id);
   const assigneeIds = payload.assignmentType === 'selected'
@@ -2406,7 +2493,7 @@ async function createTeamTask(payload) {
 
 async function fetchTeamTasksWithProgress(teamCode, localUserId) {
   const viewer = await requireActiveMembership(teamCode, localUserId);
-  const isOwner = isTeamOwnerRole(viewer.role);
+  const isManager = isTeamManagerRole(viewer.role);
   const tasks = await supabaseRequest(
     `${teamTasksTable}?${new URLSearchParams({
       select: '*',
@@ -2414,7 +2501,7 @@ async function fetchTeamTasksWithProgress(teamCode, localUserId) {
       order: 'created_at.desc'
     }).toString()}`
   );
-  const visibleTasks = await filterVisibleTasksForUser(tasks, teamCode, localUserId, isOwner);
+  const visibleTasks = await filterVisibleTasksForUser(tasks, teamCode, localUserId, isManager);
 
   return Promise.all(visibleTasks.map(async (task) => {
     const completedCount = await fetchTaskCompletedCount(task.id, teamCode, localUserId);
@@ -2448,7 +2535,7 @@ async function requireTeamTask(taskId, teamCode) {
 }
 
 async function closeTeamTask({ taskId, teamCode, localUserId }) {
-  await requireTeamOwner(teamCode, localUserId);
+  await requireTeamManager(teamCode, localUserId);
   await requireTeamTask(taskId, teamCode);
   const endedAt = new Date().toISOString();
   let updatedTasks;
@@ -2526,8 +2613,8 @@ async function fetchTaskAssignments(taskId, teamCode) {
   }
 }
 
-async function filterVisibleTasksForUser(tasks, teamCode, localUserId, isOwner) {
-  if (isOwner) return tasks;
+async function filterVisibleTasksForUser(tasks, teamCode, localUserId, isManager) {
+  if (isManager) return tasks;
   const visible = [];
 
   for (const task of tasks) {
@@ -2577,7 +2664,7 @@ async function requireTaskAssignedToUser(task, appUserId) {
 }
 
 async function requireTaskVisibleToUser(task, member, appUserId) {
-  if (isTeamOwnerRole(member?.role)) return true;
+  if (isTeamManagerRole(member?.role)) return true;
   return requireTaskAssignedToUser(task, appUserId);
 }
 
@@ -2892,8 +2979,27 @@ async function filterRecordsByActiveMembers(teamCode, records = []) {
   });
 }
 
+function sanitizeTeamRecordsForViewer(records = [], viewer = {}, viewerAppUserId = '') {
+  if (isTeamManagerRole(viewer.role)) return records;
+
+  return records.map((record) => {
+    if ((record.app_user_id || '') === viewerAppUserId) return record;
+    return {
+      ...record,
+      messages: [],
+      review: '',
+      battlefield: '',
+      dimension_scores: []
+    };
+  });
+}
+
 async function fetchTeamStats(teamCode) {
-  const records = await filterRecordsByActiveMembers(teamCode, await fetchAllTeamRecordsForStats(teamCode));
+  const [members, filteredRecords] = await Promise.all([
+    fetchTeamMembers(teamCode),
+    filterRecordsByActiveMembers(teamCode, await fetchAllTeamRecordsForStats(teamCode))
+  ]);
+  const records = filteredRecords;
   const scoredRecords = records.filter((record) => Number.isFinite(Number(record.score)));
   const memberMap = new Map();
   const recentRecords = records
@@ -2941,8 +3047,161 @@ async function fetchTeamStats(teamCode) {
       ? Math.max(...scoredRecords.map((record) => Number(record.score)))
       : null,
     memberStats,
+    memberProfiles: buildTeamMemberProfiles(members, records),
+    commonProblems: buildTeamCommonProblems(records),
+    taskRecommendations: buildTeamTaskRecommendations(members, records),
     recentRecords
   };
+}
+
+function buildTeamMemberProfiles(members = [], records = []) {
+  return members
+    .filter((member) => member.status === 'active')
+    .map((member) => {
+      const memberId = member.app_user_id || member.local_user_id;
+      const memberRecords = records
+        .filter((record) => (record.app_user_id || record.local_user_id) === memberId)
+        .slice(0, 10);
+      const scored = memberRecords.map((record) => Number(record.score)).filter(Number.isFinite);
+      const dimensionSummary = summarizeRecordDimensions(memberRecords);
+      const frequentModes = getFrequentTrainingModes(memberRecords);
+
+      return {
+        appUserId: member.app_user_id || null,
+        localUserId: memberId || '',
+        nickname: member.nickname || '未命名成员',
+        role: member.role || 'member',
+        recentCount: memberRecords.length,
+        averageScore: scored.length ? roundToOne(scored.reduce((sum, score) => sum + score, 0) / scored.length) : null,
+        frequentModes,
+        strengths: dimensionSummary.strong.slice(0, 2),
+        weaknesses: dimensionSummary.weak.slice(0, 2),
+        suggestion: buildMemberTrainingSuggestion(dimensionSummary.weak, frequentModes)
+      };
+    });
+}
+
+function summarizeRecordDimensions(records = []) {
+  const buckets = new Map();
+  records.forEach((record) => {
+    const dimensions = Array.isArray(record.dimension_scores) ? record.dimension_scores : [];
+    dimensions.forEach((dimension) => {
+      const name = normalizeText(dimension?.name);
+      const score = Number(dimension?.score);
+      if (!name || !Number.isFinite(score)) return;
+      const current = buckets.get(name) || { total: 0, count: 0 };
+      current.total += score;
+      current.count += 1;
+      buckets.set(name, current);
+    });
+  });
+
+  const ranked = [...buckets.entries()]
+    .map(([name, item]) => ({ name, average: item.total / item.count }))
+    .sort((a, b) => a.average - b.average);
+
+  return {
+    weak: ranked.slice(0, 3).map((item) => item.name),
+    strong: ranked.slice(-3).reverse().map((item) => item.name)
+  };
+}
+
+function getFrequentTrainingModes(records = []) {
+  const counts = new Map();
+  records.forEach((record) => {
+    const mode = normalizeTrainingMode(record.training_mode || 'free_debate');
+    const label = getTrainingModeLabel(mode);
+    counts.set(label, (counts.get(label) || 0) + 1);
+  });
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([label]) => label);
+}
+
+function buildMemberTrainingSuggestion(weakDimensions = [], frequentModes = []) {
+  const weakText = weakDimensions.join(' ');
+  if (/战场|控制|识别/.test(weakText)) return '先练自由辩或防守训练，把回答拉回己方战场。';
+  if (/防守|回应|切割|陷阱/.test(weakText)) return '先练防守切割：正面回应一句、切前提一句、回战场一句。';
+  if (/追问|质询|问题|漏洞/.test(weakText)) return '先练攻辩问题链，围绕一个漏洞连续追问。';
+  if (/表达|节奏|时间/.test(weakText)) return '先练 30 秒压缩表达，确保每段回答有明确落点。';
+  if (/价值|升华|整合|收束|结算/.test(weakText)) return '先练结辩收束，用一句话说清本方赢在哪里。';
+  if (frequentModes.length) return `继续围绕${frequentModes[0]}做稳定训练。`;
+  return '暂无足够训练记录，先完成 3-5 次团队训练形成画像。';
+}
+
+function buildTeamCommonProblems(records = []) {
+  if (records.length < 3) return [];
+  const summary = summarizeRecordDimensions(records.slice(0, 30));
+  const weak = summary.weak.slice(0, 3);
+  return weak.map((name) => ({
+    title: name,
+    description: buildCommonProblemDescription(name),
+    recommendedMode: getRecommendedModeForWeakDimension(name)
+  }));
+}
+
+function buildCommonProblemDescription(name = '') {
+  if (/战场|控制|识别/.test(name)) return '最近多名成员容易被对方问题带走，需要更快判断本轮交锋应归属哪个战场。';
+  if (/防守|回应|切割|陷阱/.test(name)) return '团队能回应问题，但对问题预设和关键前提的切割还不够稳定。';
+  if (/表达|节奏|时间/.test(name)) return '多数回答偏长，结论落点不够清楚，影响评委接收。';
+  if (/追问|质询|问题|漏洞/.test(name)) return '攻辩问题还比较散，需要围绕同一个核心漏洞形成连续追问。';
+  if (/价值|升华|整合|收束|结算/.test(name)) return '结尾容易复述观点，但胜负比较和价值收束还不够清楚。';
+  return '该维度在近期团队训练中相对偏弱，建议安排专项训练。';
+}
+
+function getRecommendedModeForWeakDimension(name = '') {
+  if (/防守|回应|切割|陷阱/.test(name)) return 'defense';
+  if (/追问|质询|问题|漏洞/.test(name)) return 'attack';
+  if (/价值|升华|整合|收束|结算/.test(name)) return 'closing';
+  if (/战场|控制|识别|表达|节奏/.test(name)) return 'free_debate';
+  return 'defense';
+}
+
+function buildTeamTaskRecommendations(members = [], records = []) {
+  const commonProblems = buildTeamCommonProblems(records);
+  const teamRecommendation = commonProblems[0]
+    ? {
+        type: 'team',
+        title: `全队专项：${commonProblems[0].title}`,
+        mode: commonProblems[0].recommendedMode,
+        assignmentType: 'all',
+        reason: commonProblems[0].description,
+        goal: '每轮回答做到“回应问题、切开前提、回到战场”。'
+      }
+    : null;
+
+  const profiles = buildTeamMemberProfiles(members, records);
+  const personalRecommendations = profiles
+    .filter((profile) => profile.recentCount >= 1)
+    .slice(0, 6)
+    .map((profile) => {
+      const weakName = profile.weaknesses[0] || '表达落点';
+      return {
+        type: 'personal',
+        memberAppUserId: profile.appUserId,
+        memberName: profile.nickname,
+        title: `${profile.nickname}专项：${weakName}`,
+        mode: getRecommendedModeForWeakDimension(weakName),
+        assignmentType: 'selected',
+        assignedUserIds: profile.appUserId ? [profile.appUserId] : [],
+        reason: profile.suggestion,
+        goal: buildRecommendationGoal(weakName)
+      };
+    });
+
+  return {
+    hasEnoughData: records.length >= 3,
+    teamRecommendation,
+    personalRecommendations
+  };
+}
+
+function buildRecommendationGoal(name = '') {
+  if (/追问|质询|问题|漏洞/.test(name)) return '围绕一个核心漏洞连续追问 3 个问题。';
+  if (/价值|升华|整合|收束|结算/.test(name)) return '用一句话明确本方赢在哪里，再完成价值收束。';
+  if (/表达|节奏|时间/.test(name)) return '30 秒内完成“回应—判断—落点”。';
+  return '完成“正面回应一句、切前提一句、回到己方战场一句”。';
 }
 
 async function fetchAllTeamRecordsForStats(teamCode) {
