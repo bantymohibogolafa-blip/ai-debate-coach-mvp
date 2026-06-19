@@ -3285,11 +3285,41 @@ textarea:focus {
 }
 
 .team-insight-section > div > p,
-.task-recommendation-panel > div > p {
+.task-recommendation-heading p {
   margin-top: 4px;
   color: #687982;
   font-weight: 800;
   line-height: 1.6;
+}
+
+.task-recommendation-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-recommendation-heading button {
+  min-height: 40px;
+  border: 1px solid #bdd6d8;
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #245e62;
+  background: #eef8f7;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.task-recommendation-body,
+.task-recommendation-section {
+  display: grid;
+  gap: 12px;
+}
+
+.task-recommendation-section h4 {
+  margin: 0;
+  color: #245e62;
+  font-size: 15px;
 }
 
 .member-profile-grid,
@@ -3309,6 +3339,10 @@ textarea:focus {
   border-radius: 8px;
   padding: 12px;
   background: #ffffff;
+}
+
+.task-recommendation-card.muted {
+  background: #f7f9fa;
 }
 
 .member-profile-header {
@@ -3360,7 +3394,26 @@ textarea:focus {
   font-weight: 800;
 }
 
-.task-recommendation-card button {
+.task-recommendation-meta,
+.recommendation-tags,
+.recommendation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.task-recommendation-meta em,
+.recommendation-tags span {
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #f3f8f7;
+  color: #245e62;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.task-recommendation-card button,
+.recommendation-actions button {
   justify-self: start;
   min-height: 38px;
   border: 1px solid #bdd6d8;
@@ -3369,6 +3422,11 @@ textarea:focus {
   color: #245e62;
   background: #eef8f7;
   font-weight: 900;
+}
+
+.recommendation-actions .ghost {
+  color: #687982;
+  background: #fff;
 }
 
 .task-create-modal {
@@ -3969,6 +4027,20 @@ textarea:focus {
   .function-panel-buttons,
   .function-panel-actions {
     grid-template-columns: 1fr;
+  }
+
+  .task-recommendation-heading {
+    display: grid;
+  }
+
+  .task-recommendation-heading button,
+  .recommendation-actions button {
+    width: 100%;
+  }
+
+  .task-recommendation-meta,
+  .recommendation-actions {
+    display: grid;
   }
 
   .space-selector {

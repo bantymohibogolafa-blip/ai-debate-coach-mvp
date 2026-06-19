@@ -1312,12 +1312,24 @@ function App() {
 
   function applyTaskRecommendation(recommendation) {
     if (!recommendation) return;
+    const tags = Array.isArray(recommendation.recommendedReasonTags)
+      ? recommendation.recommendedReasonTags.join('、')
+      : '';
+    const description = [
+      recommendation.taskDescription || '',
+      recommendation.goal ? `训练目标：${recommendation.goal}` : '',
+      recommendation.reason ? `推荐原因：${recommendation.reason}` : '',
+      tags ? `问题标签：${tags}` : ''
+    ].filter(Boolean).join('\n');
+
     setTaskForm((current) => ({
       ...current,
       title: recommendation.title || current.title,
       topic: current.topic || config.topic || '',
       mode: recommendation.mode || current.mode,
-      description: recommendation.goal || recommendation.reason || current.description,
+      difficulty: recommendation.difficulty || current.difficulty,
+      description: description || current.description,
+      deadline: current.deadline || getDateTimeLocalAfterDays(3),
       assignmentType: recommendation.assignmentType || current.assignmentType,
       assignedUserIds: Array.isArray(recommendation.assignedUserIds)
         ? recommendation.assignedUserIds
@@ -4601,17 +4613,30 @@ function TeamCommonProblems({ problems = [] }) {
 }
 
 function TaskRecommendationPanel({ recommendations, onApply }) {
-  const teamRecommendation = recommendations?.teamRecommendation || null;
+  const [isOpen, setIsOpen] = useState(false);
+  const [ignoredKeys, setIgnoredKeys] = useState([]);
+  const teamRecommendations = Array.isArray(recommendations?.teamRecommendations)
+    ? recommendations.teamRecommendations
+    : (recommendations?.teamRecommendation ? [recommendations.teamRecommendation] : []);
   const personalRecommendations = Array.isArray(recommendations?.personalRecommendations)
     ? recommendations.personalRecommendations
     : [];
+  const visibleTeamRecommendations = teamRecommendations.filter((item, index) => !ignoredKeys.includes(getRecommendationKey(item, index, 'team')));
+  const visiblePersonalRecommendations = personalRecommendations.filter((item, index) => !ignoredKeys.includes(getRecommendationKey(item, index, 'personal')));
+  const visibleCount = visibleTeamRecommendations.length + visiblePersonalRecommendations.length;
 
-  if (!recommendations?.hasEnoughData && !teamRecommendation && !personalRecommendations.length) {
+  function ignoreRecommendation(item, index, scope) {
+    setIgnoredKeys((current) => [...current, getRecommendationKey(item, index, scope)]);
+  }
+
+  if (!recommendations?.hasEnoughData && visibleCount === 0) {
     return (
       <section className="task-recommendation-panel">
-        <div>
-          <span>任务推荐</span>
-          <h3>团队训练数据不足</h3>
+        <div className="task-recommendation-heading">
+          <div>
+            <span>智能任务推荐</span>
+            <h3>团队训练数据不足</h3>
+          </div>
           <p>完成更多团队训练后，系统会基于全队共性问题和成员个人短板生成更准确的任务推荐。</p>
         </div>
       </section>
@@ -4620,40 +4645,100 @@ function TaskRecommendationPanel({ recommendations, onApply }) {
 
   return (
     <section className="task-recommendation-panel">
-      <div>
-        <span>任务推荐</span>
-        <h3>可采纳后再修改发布</h3>
+      <div className="task-recommendation-heading">
+        <div>
+          <span>智能任务推荐</span>
+          <h3>推荐不会自动发布，采纳后仍可修改</h3>
+          <p>系统只基于当前团队空间训练数据生成建议，不展示完整对话和复盘全文。</p>
+        </div>
+        <button type="button" onClick={() => setIsOpen((current) => !current)}>
+          {isOpen ? '收起推荐' : `查看推荐任务（${visibleCount}）`}
+        </button>
       </div>
 
-      {teamRecommendation && (
-        <article className="task-recommendation-card">
-          <span>全队共性任务</span>
-          <strong>{teamRecommendation.title}</strong>
-          <p>{teamRecommendation.reason}</p>
-          <em>{teamRecommendation.goal}</em>
-          <button type="button" onClick={() => onApply(teamRecommendation)}>
-            采纳推荐
-          </button>
-        </article>
-      )}
+      {isOpen && (
+        <div className="task-recommendation-body">
+          {visibleTeamRecommendations.length > 0 && (
+            <div className="task-recommendation-section">
+              <h4>全队共性任务</h4>
+              <div className="task-recommendation-grid">
+                {visibleTeamRecommendations.map((item, index) => (
+                  <RecommendationCard
+                    item={item}
+                    key={getRecommendationKey(item, index, 'team')}
+                    label="全队推荐"
+                    onApply={onApply}
+                    onIgnore={() => ignoreRecommendation(item, index, 'team')}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
-      {personalRecommendations.length > 0 && (
-        <div className="task-recommendation-grid">
-          {personalRecommendations.map((item) => (
-            <article className="task-recommendation-card" key={`${item.memberName}-${item.title}`}>
-              <span>个人推荐 · {item.memberName}</span>
-              <strong>{item.title}</strong>
-              <p>{item.reason}</p>
-              <em>{item.goal}</em>
-              <button type="button" onClick={() => onApply(item)}>
-                采纳推荐
-              </button>
-            </article>
-          ))}
+          {visiblePersonalRecommendations.length > 0 && (
+            <div className="task-recommendation-section">
+              <h4>成员个性化任务</h4>
+              <div className="task-recommendation-grid">
+                {visiblePersonalRecommendations.map((item, index) => (
+                  <RecommendationCard
+                    item={item}
+                    key={getRecommendationKey(item, index, 'personal')}
+                    label={`个人推荐 · ${item.memberName || '成员'}`}
+                    onApply={onApply}
+                    onIgnore={() => ignoreRecommendation(item, index, 'personal')}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>
   );
+}
+
+function RecommendationCard({ item, label, onApply, onIgnore }) {
+  if (item.insufficientData) {
+    return (
+      <article className="task-recommendation-card muted">
+        <span>{label}</span>
+        <strong>{item.memberName || '成员'}：数据不足</strong>
+        <p>{item.reason || '该成员团队空间训练记录不足，暂不生成个性化推荐。'}</p>
+      </article>
+    );
+  }
+
+  const tags = Array.isArray(item.recommendedReasonTags) ? item.recommendedReasonTags : [];
+  return (
+    <article className="task-recommendation-card">
+      <span>{label}</span>
+      <strong>{item.title}</strong>
+      <div className="task-recommendation-meta">
+        <em>{item.assignmentType === 'selected' ? `对象：${item.memberName || item.targetMembers || '指定成员'}` : '对象：全体成员'}</em>
+        <em>模式：{item.trainingMode || getOptionLabel(trainingModes, item.mode) || '专项训练'}</em>
+        <em>难度：{item.difficultyLabel || getOptionLabel(difficulties, item.difficulty) || '校赛'}</em>
+      </div>
+      <p>{item.reason}</p>
+      <p><b>训练目标：</b>{item.goal}</p>
+      {tags.length > 0 && (
+        <div className="recommendation-tags">
+          {tags.map((tag) => <span key={tag}>{tag}</span>)}
+        </div>
+      )}
+      <div className="recommendation-actions">
+        <button type="button" onClick={() => onApply(item)}>
+          采纳推荐
+        </button>
+        <button type="button" className="ghost" onClick={onIgnore}>
+          忽略
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function getRecommendationKey(item, index, scope) {
+  return `${scope}-${item.memberAppUserId || item.title || item.memberName || 'item'}-${index}`;
 }
 
 function DimensionScoreChart({ dimensions }) {
@@ -5459,6 +5544,14 @@ function OptionGroup({ label, options, value, onChange, disabled, className = ''
 
 function getOptionLabel(options, value) {
   return options.find((option) => option.value === value)?.label || '';
+}
+
+function getDateTimeLocalAfterDays(days = 3) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  date.setHours(20, 0, 0, 0);
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 16);
 }
 
 function getTeamRoleLabel(role) {

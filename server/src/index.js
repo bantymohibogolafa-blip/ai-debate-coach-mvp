@@ -529,8 +529,8 @@ app.get('/api/team/stats', requireAuth, async (req, res, next) => {
       return res.status(400).json({ message: '团队码无效，请重新加入团队。' });
     }
 
-    await requireActiveMembership(teamCode, req.user.id);
-    const stats = await fetchTeamStats(teamCode);
+    const viewer = await requireActiveMembership(teamCode, req.user.id);
+    const stats = await fetchTeamStats(teamCode, viewer);
     if (process.env.NODE_ENV !== 'production') {
       console.debug('[data-sync] team stats query', {
         teamCode,
@@ -3004,7 +3004,7 @@ function sanitizeTeamRecordsForViewer(records = [], viewer = {}, viewerAppUserId
   });
 }
 
-async function fetchTeamStats(teamCode) {
+async function fetchTeamStats(teamCode, viewer = null) {
   const [members, filteredRecords] = await Promise.all([
     fetchTeamMembers(teamCode),
     filterRecordsByActiveMembers(teamCode, await fetchAllTeamRecordsForStats(teamCode))
@@ -3059,7 +3059,7 @@ async function fetchTeamStats(teamCode) {
     memberStats,
     memberProfiles: buildTeamMemberProfiles(members, records),
     commonProblems: buildTeamCommonProblems(records),
-    taskRecommendations: buildTeamTaskRecommendations(members, records),
+    taskRecommendations: isTeamManagerRole(viewer?.role) ? buildTeamTaskRecommendations(members, records) : null,
     recentRecords
   };
 }
@@ -3142,13 +3142,22 @@ function buildMemberTrainingSuggestion(weakDimensions = [], frequentModes = []) 
 
 function buildTeamCommonProblems(records = []) {
   if (records.length < 3) return [];
-  const summary = summarizeRecordDimensions(records.slice(0, 30));
+  const summary = summarizeRecordDimensions(getRecentRecommendationRecords(records));
   const weak = summary.weak.slice(0, 3);
   return weak.map((name) => ({
     title: name,
     description: buildCommonProblemDescription(name),
     recommendedMode: getRecommendedModeForWeakDimension(name)
   }));
+}
+
+function getRecentRecommendationRecords(records = []) {
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const recent30Days = records.filter((record) => {
+    const time = new Date(record.created_at || 0).getTime();
+    return Number.isFinite(time) && time >= cutoff;
+  });
+  return (recent30Days.length >= 3 ? recent30Days : records).slice(0, 50);
 }
 
 function buildCommonProblemDescription(name = '') {
@@ -3169,42 +3178,115 @@ function getRecommendedModeForWeakDimension(name = '') {
 }
 
 function buildTeamTaskRecommendations(members = [], records = []) {
-  const commonProblems = buildTeamCommonProblems(records);
-  const teamRecommendation = commonProblems[0]
-    ? {
-        type: 'team',
-        title: `全队专项：${commonProblems[0].title}`,
-        mode: commonProblems[0].recommendedMode,
-        assignmentType: 'all',
-        reason: commonProblems[0].description,
-        goal: '每轮回答做到“回应问题、切开前提、回到战场”。'
-      }
-    : null;
+  const recommendationRecords = getRecentRecommendationRecords(records);
+  const commonProblems = buildTeamCommonProblems(recommendationRecords);
+  const scored = recommendationRecords.map((record) => Number(record.score)).filter(Number.isFinite);
+  const averageScore = scored.length ? roundToOne(scored.reduce((sum, score) => sum + score, 0) / scored.length) : null;
+  const lowMode = getLowestAverageMode(recommendationRecords);
+  const teamRecommendations = commonProblems.slice(0, 3).map((problem, index) => {
+    const mode = problem.recommendedMode || lowMode || 'defense';
+    const tags = buildRecommendationTags(problem.title, mode);
+    return buildTaskRecommendation({
+      type: 'team_common',
+      title: index === 0 ? `全队专项：${problem.title}` : `全队补强：${problem.title}`,
+      assignmentType: 'all',
+      targetMembers: 'all',
+      mode,
+      difficulty: averageScore !== null && averageScore >= 82 ? 'city' : 'campus',
+      reason: `${problem.description}${lowMode ? ` 低分较集中的训练模式是${getTrainingModeLabel(lowMode)}。` : ''}`,
+      goal: buildRecommendationGoal(problem.title),
+      tags
+    });
+  });
 
-  const profiles = buildTeamMemberProfiles(members, records);
+  const profiles = buildTeamMemberProfiles(members, recommendationRecords);
   const personalRecommendations = profiles
-    .filter((profile) => profile.recentCount >= 1)
-    .slice(0, 6)
+    .filter((profile) => profile.appUserId)
+    .slice(0, 8)
     .map((profile) => {
       const weakName = profile.weaknesses[0] || '表达落点';
+      if (profile.recentCount < 2) {
+        return {
+          type: 'personalized',
+          memberAppUserId: profile.appUserId,
+          memberName: profile.nickname,
+          insufficientData: true,
+          reason: '该成员团队空间训练记录少于 2 条，暂不生成个性化任务。'
+        };
+      }
+      const mode = getRecommendedModeForWeakDimension(weakName);
       return {
-        type: 'personal',
+        ...buildTaskRecommendation({
+          type: 'personalized',
+          title: `${profile.nickname}专项：${weakName}`,
+          assignmentType: 'selected',
+          targetMembers: profile.nickname,
+          mode,
+          difficulty: profile.averageScore !== null && profile.averageScore >= 82 ? 'city' : 'campus',
+          reason: `${profile.nickname} 最近团队训练中「${weakName}」相对偏弱。${profile.suggestion}`,
+          goal: buildRecommendationGoal(weakName),
+          tags: buildRecommendationTags(weakName, mode)
+        }),
         memberAppUserId: profile.appUserId,
         memberName: profile.nickname,
-        title: `${profile.nickname}专项：${weakName}`,
-        mode: getRecommendedModeForWeakDimension(weakName),
-        assignmentType: 'selected',
-        assignedUserIds: profile.appUserId ? [profile.appUserId] : [],
-        reason: profile.suggestion,
-        goal: buildRecommendationGoal(weakName)
+        assignedUserIds: [profile.appUserId]
       };
     });
 
   return {
-    hasEnoughData: records.length >= 3,
-    teamRecommendation,
+    hasEnoughData: recommendationRecords.length >= 3,
+    teamRecommendation: teamRecommendations[0] || null,
+    teamRecommendations,
     personalRecommendations
   };
+}
+
+function buildTaskRecommendation({ type, title, assignmentType, targetMembers, mode, difficulty, reason, goal, tags }) {
+  const taskDescription = `${goal} 本任务重点不是追求一次高分，而是要求每轮都完成一个清楚、可检查的动作。`;
+  return {
+    type,
+    title,
+    targetMembers,
+    mode,
+    trainingMode: getTrainingModeLabel(mode),
+    difficulty,
+    difficultyLabel: getDifficultyLabel(difficulty),
+    assignmentType,
+    reason,
+    goal,
+    taskDescription,
+    recommendedReasonTags: tags,
+    suggestedDeadline: '3天内'
+  };
+}
+
+function getLowestAverageMode(records = []) {
+  const buckets = new Map();
+  records.forEach((record) => {
+    const mode = normalizeTrainingMode(record.training_mode || 'free_debate');
+    const score = Number(record.score);
+    if (!Number.isFinite(score)) return;
+    const current = buckets.get(mode) || { total: 0, count: 0 };
+    current.total += score;
+    current.count += 1;
+    buckets.set(mode, current);
+  });
+  return [...buckets.entries()]
+    .filter(([, item]) => item.count >= 1)
+    .map(([mode, item]) => ({ mode, average: item.total / item.count }))
+    .sort((a, b) => a.average - b.average)[0]?.mode || '';
+}
+
+function buildRecommendationTags(name = '', mode = '') {
+  const tags = [];
+  if (/战场|控制|识别/.test(name)) tags.push('战场识别', '回到己方战场');
+  if (/防守|回应|切割|陷阱/.test(name)) tags.push('防守切割', '问题预设');
+  if (/追问|质询|问题|漏洞/.test(name)) tags.push('问题链', '连续追问');
+  if (/表达|节奏|时间/.test(name)) tags.push('表达压缩', '明确落点');
+  if (/价值|升华|整合|收束|结算/.test(name)) tags.push('终局判断', '价值收束');
+  const modeLabel = getTrainingModeLabel(mode);
+  if (modeLabel && !tags.includes(modeLabel)) tags.push(modeLabel);
+  return [...new Set(tags)].slice(0, 4);
 }
 
 function buildRecommendationGoal(name = '') {
