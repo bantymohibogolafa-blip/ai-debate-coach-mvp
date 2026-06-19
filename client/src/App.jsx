@@ -2067,7 +2067,7 @@ function App() {
       title: '训练',
       items: [
         { label: '训练区', value: 'training' },
-        { label: '经验谈', value: 'experience' }
+        { label: '辩论顾问', value: 'experience' }
       ]
     },
     {
@@ -4721,12 +4721,17 @@ function WeaknessVideoRecommendations({ dimensions }) {
 }
 
 function DebateExperienceChat({ trainingProfile }) {
+  const featuredQuickQuestions = [
+    '我最近最该练什么？',
+    '我反复出现的问题是什么？',
+    '帮我安排一个三天训练计划'
+  ];
   const quickQuestionGroups = [
     {
       title: '个人训练方向',
       questions: [
-        '根据我最近的训练，我最该练什么？',
-        '我最近反复出现的问题是什么？',
+        '我最近最该练什么？',
+        '我反复出现的问题是什么？',
         '我适合先练自由辩还是防守？',
         '帮我安排一个三天训练计划。',
         '我最近有没有进步？'
@@ -4743,12 +4748,13 @@ function DebateExperienceChat({ trainingProfile }) {
       ]
     }
   ];
-  const openingMessage = '我是林婉，我是你的辩论助手。\n接下来，我会陪你拆论点、练攻防、复盘表达，也会在你乱掉的时候提醒你先把战场找回来。';
+  const openingMessage = '我是林婉，你的辩论顾问，也是你的辩论搭子。\n\n我会参考你最近的训练状态，不局限于某一场比赛，综合分析你的问题，提出我的建议。\n\n另外，我也有许多大赛经验。赛前准备、攻防设计、临场心态这些问题，都可以拿来问我，我会把能用的经验讲给你听。\n\n辩论赛的准备过程是痛苦且艰辛的，但没事，有我在，我们慢慢来。';
   const hasTrainingProfile = Number(trainingProfile?.recentTrainingCount || 0) > 0;
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState([{ role: 'assistant', content: openingMessage }]);
   const [isSending, setIsSending] = useState(false);
   const [chatError, setChatError] = useState('');
+  const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
 
   async function sendExperienceQuestion(nextQuestion = question) {
     const cleanQuestion = String(nextQuestion || '').trim();
@@ -4777,13 +4783,17 @@ function DebateExperienceChat({ trainingProfile }) {
     }
   }
 
+  function handleQuickQuestion(item) {
+    sendExperienceQuestion(item);
+    setShowAllQuickQuestions(false);
+  }
+
   return (
     <section className="panel experience-panel">
       <div className="panel-header">
         <div>
           <p className="eyebrow">辩手经验室</p>
-          <h2>林婉 · 个人训练顾问</h2>
-          <p>林婉会参考你的近期训练表现，帮你判断下一阶段该怎么练。她不负责替你逃避问题，只负责把你拉回战场。</p>
+          <h2>林婉 · 辩论顾问</h2>
         </div>
       </div>
 
@@ -4794,25 +4804,53 @@ function DebateExperienceChat({ trainingProfile }) {
         <p>{openingMessage}</p>
       </article>
 
-      <div className="experience-quick-groups">
-        {quickQuestionGroups.map((group) => (
-          <section className="experience-quick-group" key={group.title}>
-            <h3>{group.title}</h3>
-            <div className="assistant-quick-questions experience-quick-questions">
-              {group.questions.map((item) => (
-                <button
-                  type="button"
-                  key={item}
-                  disabled={isSending}
-                  onClick={() => sendExperienceQuestion(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
+      <p className="experience-boundary-note">林婉更关注你的近期训练状态和长期训练方向。单轮细节问题，可以在对应记录下问复盘助手。</p>
+
+      <section className="experience-quick-panel" aria-label="快捷问题">
+        <div className="experience-featured-questions">
+          {featuredQuickQuestions.map((item) => (
+            <button
+              type="button"
+              key={item}
+              disabled={isSending}
+              onClick={() => handleQuickQuestion(item)}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          className="experience-more-questions"
+          onClick={() => setShowAllQuickQuestions((value) => !value)}
+          aria-expanded={showAllQuickQuestions}
+        >
+          {showAllQuickQuestions ? '收起问题' : '查看更多问题'}
+        </button>
+
+        {showAllQuickQuestions && (
+          <div className="experience-quick-groups">
+            {quickQuestionGroups.map((group) => (
+              <section className="experience-quick-group" key={group.title}>
+                <h3>{group.title}</h3>
+                <div className="assistant-quick-questions experience-quick-questions">
+                  {group.questions.map((item) => (
+                    <button
+                      type="button"
+                      key={item}
+                      disabled={isSending}
+                      onClick={() => handleQuickQuestion(item)}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+      </section>
 
       <div className="assistant-chat-list experience-chat-list">
         {messages.map((item, index) => (

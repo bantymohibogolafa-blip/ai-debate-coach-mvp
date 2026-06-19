@@ -2251,6 +2251,14 @@ textarea:focus {
   word-break: normal;
 }
 
+.experience-boundary-note {
+  margin: -4px 0 0;
+  color: #687982;
+  font-size: 13px;
+  line-height: 1.7;
+  font-weight: 800;
+}
+
 .training-profile-card {
   display: grid;
   gap: 12px;
@@ -2327,6 +2335,48 @@ textarea:focus {
   line-height: 1.5;
   overflow-wrap: break-word;
   word-break: normal;
+}
+
+.experience-quick-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #dbe8ea;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbfc;
+}
+
+.experience-featured-questions,
+.experience-quick-questions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.experience-featured-questions button,
+.experience-quick-questions button {
+  min-height: 40px;
+  border: 1px solid #bdd6d8;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #245e62;
+  background: #eef8f7;
+  font-size: 14px;
+  font-weight: 900;
+  text-align: left;
+  line-height: 1.45;
+}
+
+.experience-more-questions {
+  justify-self: start;
+  min-height: 36px;
+  border: 1px solid #d7e3e5;
+  border-radius: 999px;
+  padding: 0 13px;
+  color: #52636c;
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .experience-quick-groups {
@@ -3692,13 +3742,13 @@ textarea:focus {
   }
 
   .experience-quick-questions {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 4px;
+    grid-template-columns: 1fr;
+    overflow-x: visible;
+    padding-bottom: 0;
   }
 
   .experience-quick-questions button {
-    flex: 0 0 auto;
+    width: 100%;
   }
 
   .weakness-video-header,
