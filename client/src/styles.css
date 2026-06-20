@@ -3960,36 +3960,34 @@ textarea:focus {
   }
 
   .team-topbar {
-    display: grid;
+    display: flex;
   }
 
   .compact-topbar {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "brand current"
-      "brand trigger";
+    display: flex;
     align-items: center;
-    position: sticky;
-    top: 0;
-    z-index: 1000;
+    justify-content: space-between;
+    gap: 8px;
+    position: relative;
+    z-index: 5;
     width: 100%;
     margin: 0 0 12px;
     border-width: 0 0 1px;
     border-radius: 0;
-    padding: 8px 14px;
+    padding: 10px 12px;
     background: #f8fbfc;
-    box-shadow: 0 4px 14px rgba(24, 36, 43, 0.06);
+    box-shadow: 0 3px 10px rgba(24, 36, 43, 0.05);
   }
 
   .topbar-brand {
-    grid-area: brand;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .topbar-current {
-    grid-area: current;
-    display: grid;
-    min-width: 0;
-    justify-items: end;
+    flex: 0 1 auto;
+    min-width: 58px;
+    text-align: right;
     line-height: 1.2;
   }
 
@@ -3999,12 +3997,13 @@ textarea:focus {
 
   .topbar-brand span,
   .topbar-current span {
-    max-width: 52vw;
+    max-width: 42vw;
     font-size: 12px;
   }
 
   .topbar-current strong {
-    max-width: 34vw;
+    display: block;
+    max-width: 20vw;
     overflow: hidden;
     color: #245e62;
     font-size: 14px;
@@ -4013,17 +4012,17 @@ textarea:focus {
   }
 
   .function-panel-trigger {
-    grid-area: trigger;
+    flex: 0 0 auto;
     width: auto !important;
-    min-height: 34px;
-    margin-top: 4px;
-    padding: 0 10px;
+    min-height: 36px;
+    margin-top: 0;
+    padding: 0 12px;
     font-size: 13px;
   }
 
   .function-panel-backdrop {
     align-items: start;
-    padding: calc(62px + env(safe-area-inset-top, 0px)) 10px 10px;
+    padding: 10px;
   }
 
   .function-panel {
@@ -4055,7 +4054,7 @@ textarea:focus {
   }
 
   .team-topbar button {
-    width: 100%;
+    width: auto;
   }
 
   .compact-topbar .function-panel-trigger {
