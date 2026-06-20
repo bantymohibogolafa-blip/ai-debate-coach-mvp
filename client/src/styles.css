@@ -3838,9 +3838,15 @@ textarea:focus {
 
 @media (max-width: 620px) {
   .app-shell {
-    width: min(100% - 16px, 520px);
+    width: 100%;
     padding-top: 0;
     padding-bottom: 28px;
+  }
+
+  .app-shell > :not(.compact-topbar):not(.function-panel-backdrop):not(.modal-backdrop):not(.onboarding-backdrop):not(.install-pwa-backdrop) {
+    width: min(calc(100% - 16px), 520px);
+    margin-right: auto;
+    margin-left: auto;
   }
 
   .arena-hero {
@@ -3966,12 +3972,13 @@ textarea:focus {
     position: sticky;
     top: 0;
     z-index: 1000;
-    margin: 0 -8px 12px;
+    width: 100%;
+    margin: 0 0 12px;
     border-width: 0 0 1px;
-    border-radius: 0 0 8px 8px;
-    padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px;
+    border-radius: 0;
+    padding: 8px 14px;
     background: #f8fbfc;
-    box-shadow: 0 6px 18px rgba(24, 36, 43, 0.08);
+    box-shadow: 0 4px 14px rgba(24, 36, 43, 0.06);
   }
 
   .topbar-brand {
