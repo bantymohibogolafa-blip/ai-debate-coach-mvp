@@ -1994,8 +1994,9 @@ async function requestXiaomiTts({ apiUrl, apiKey, body, attemptLabel }) {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
+        'api-key': apiKey,
         'Content-Type': 'application/json',
-        Accept: 'audio/mpeg,application/json'
+        Accept: 'audio/wav,audio/mpeg,application/json'
       },
       body: JSON.stringify(body)
     });
@@ -2023,7 +2024,7 @@ async function requestXiaomiTts({ apiUrl, apiKey, body, attemptLabel }) {
     throw error;
   }
 
-  return parseTtsResponse(response);
+  return parseTtsResponse(response, body?.audio?.format);
 }
 
 function buildXiaomiTtsAttempts({ apiUrl, model, voice, text }) {
@@ -2061,51 +2062,9 @@ function buildXiaomiTtsAttempts({ apiUrl, model, voice, text }) {
     }
 
     attempts.push({
-      label: `${endpoint.label}-chat-voice-design`,
+      label: `${endpoint.label}-official-tts`,
       apiUrl: endpoint.url,
-      body: buildChatCompletionTtsBody({ model, voice: voiceValue, text })
-    });
-
-    attempts.push({
-      label: `${endpoint.label}-chat-voice-design-stream-false`,
-      apiUrl: endpoint.url,
-      body: buildChatCompletionTtsBody({ model, voice: voiceValue, text, stream: false })
-    });
-
-    attempts.push({
-      label: `${endpoint.label}-chat-voice-prompt`,
-      apiUrl: endpoint.url,
-      body: buildChatCompletionTtsBody({ model, voice: voiceValue, text, voiceField: 'voice_prompt' })
-    });
-
-    attempts.push({
-      label: `${endpoint.label}-chat-style-prompt`,
-      apiUrl: endpoint.url,
-      body: buildChatCompletionTtsBody({ model, voice: voiceValue, text, voiceField: 'style_prompt' })
-    });
-
-    attempts.push({
-      label: `${endpoint.label}-chat-content-array`,
-      apiUrl: endpoint.url,
-      body: buildChatCompletionContentArrayBody({ model, voice: voiceValue, text })
-    });
-
-    attempts.push({
-      label: `${endpoint.label}-chat-audio-object`,
-      apiUrl: endpoint.url,
-      body: buildChatCompletionAudioBody({ model, voice: voiceValue, text })
-    });
-
-    attempts.push({
-      label: `${endpoint.label}-chat-plain`,
-      apiUrl: endpoint.url,
-      body: buildChatCompletionTtsBody({ model, text })
-    });
-
-    attempts.push({
-      label: `${endpoint.label}-chat-speech-body`,
-      apiUrl: endpoint.url,
-      body: buildSpeechTtsBody({ model, voice: voiceValue, text, includeStylePrompt: true })
+      body: buildOfficialChatTtsBody({ model, voice: voiceValue, text })
     });
   }
 
@@ -2153,65 +2112,35 @@ function isRecoverableXiaomiTtsAttemptError(error) {
 }
 
 function resolveXiaomiTtsVoice({ model, voice }) {
+  if (/voicedesign/i.test(model)) return '';
   if (voice) return voice;
-  return /voicedesign/i.test(model) ? linWanTtsStylePrompt : '';
+  return 'mimo_default';
 }
 
-function buildChatCompletionTtsBody({ model, voice, text, stream, voiceField = 'voice' }) {
+function buildOfficialChatTtsBody({ model, voice, text }) {
+  const isVoiceDesign = /voicedesign/i.test(model);
   const body = {
     model,
     messages: [
       {
         role: 'user',
-        content: text
-      }
-    ]
-  };
-
-  if (voice && voiceField) body[voiceField] = voice;
-  if (typeof stream === 'boolean') body.stream = stream;
-
-  return body;
-}
-
-function buildChatCompletionContentArrayBody({ model, voice, text }) {
-  const body = {
-    model,
-    messages: [
+        content: linWanTtsStylePrompt
+      },
       {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text
-          }
-        ]
-      }
-    ]
-  };
-
-  if (voice) body.voice = voice;
-
-  return body;
-}
-
-function buildChatCompletionAudioBody({ model, voice, text }) {
-  const body = {
-    model,
-    messages: [
-      {
-        role: 'user',
+        role: 'assistant',
         content: text
       }
     ],
-    modalities: ['text', 'audio'],
     audio: {
-      format: 'mp3'
-    },
-    stream: false
+      format: 'wav'
+    }
   };
 
-  if (voice) body.audio.voice = voice;
+  if (isVoiceDesign) {
+    body.audio.optimize_text_preview = true;
+  } else if (voice) {
+    body.audio.voice = voice;
+  }
 
   return body;
 }
@@ -2244,8 +2173,9 @@ function uniqueXiaomiTtsAttempts(attempts) {
   });
 }
 
-async function parseTtsResponse(response) {
+async function parseTtsResponse(response, requestedAudioFormat = '') {
   const contentType = response.headers.get('content-type') || '';
+  const fallbackMimeType = getTtsMimeTypeFromFormat(requestedAudioFormat);
 
   if (/application\/json/i.test(contentType)) {
     const data = await response.json().catch(() => ({}));
@@ -2301,7 +2231,7 @@ async function parseTtsResponse(response) {
         || parsedMessageContent?.mime_type
         || outputAudio?.audio?.mimeType
         || outputAudio?.audio?.mime_type
-      ) || 'audio/mpeg'
+      ) || fallbackMimeType
     };
   }
 
@@ -2315,8 +2245,15 @@ async function parseTtsResponse(response) {
 
   return {
     audioBase64: audioBuffer.toString('base64'),
-    mimeType: contentType.includes('audio/') ? contentType.split(';')[0] : 'audio/mpeg'
+    mimeType: contentType.includes('audio/') ? contentType.split(';')[0] : fallbackMimeType
   };
+}
+
+function getTtsMimeTypeFromFormat(format) {
+  const cleanFormat = normalizeText(format).toLowerCase();
+  if (cleanFormat === 'wav' || cleanFormat === 'pcm16') return 'audio/wav';
+  if (cleanFormat === 'mp3' || cleanFormat === 'mpeg') return 'audio/mpeg';
+  return 'audio/wav';
 }
 
 function parseJsonLikeContent(content) {
