@@ -2231,7 +2231,8 @@ textarea:focus {
 }
 
 .assistant-loading,
-.assistant-error {
+.assistant-error,
+.assistant-memory-status {
   border-radius: 8px;
   padding: 10px 12px;
   color: #245e62;
@@ -2244,9 +2245,30 @@ textarea:focus {
   background: #fff1ea;
 }
 
+.assistant-memory-status {
+  color: #52636c;
+  background: #f5faf9;
+}
+
 .experience-panel {
   display: grid;
   gap: 16px;
+}
+
+.memory-clear-button {
+  min-height: 38px;
+  border: 1px solid #d8e6e7;
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #52636c;
+  background: #fff;
+  font-weight: 900;
+}
+
+.memory-clear-button:hover:not(:disabled) {
+  border-color: #b8d2d4;
+  color: #245e62;
+  background: #f5faf9;
 }
 
 .experience-opening-card {
@@ -4186,6 +4208,7 @@ textarea:focus {
   }
 
   .panel-header .badge,
+  .memory-clear-button,
   .compact-reset-button {
     width: 100%;
   }

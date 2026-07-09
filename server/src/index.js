@@ -44,6 +44,8 @@ const teamMembersTable = process.env.SUPABASE_TEAM_MEMBERS_TABLE || 'team_member
 const teamTasksTable = process.env.SUPABASE_TEAM_TASKS_TABLE || 'team_tasks';
 const teamTaskAssignmentsTable = process.env.SUPABASE_TEAM_TASK_ASSIGNMENTS_TABLE || 'team_task_assignments';
 const appUsersTable = process.env.SUPABASE_APP_USERS_TABLE || 'app_users';
+const linWanMessagesTable = process.env.SUPABASE_LINWAN_MESSAGES_TABLE || 'linwan_messages';
+const linWanMemoryTable = process.env.SUPABASE_LINWAN_MEMORY_TABLE || 'linwan_memory';
 const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '30d';
 const aliyunTokenCache = {
   token: '',
@@ -227,14 +229,42 @@ app.post('/api/review-assistant', async (req, res, next) => {
   }
 });
 
-app.post('/api/debate-experience-chat', async (req, res, next) => {
+app.post('/api/debate-experience-chat', optionalAuth, async (req, res, next) => {
   try {
     const payload = validateDebateExperienceChatPayload(req.body);
-    const messages = buildDebateExperienceMessages(payload);
+    const linWanUserId = req.user?.id || '';
+    const context = await loadLinWanContextSafe(linWanUserId, payload.chatHistory);
+    const messages = buildDebateExperienceMessages({
+      ...payload,
+      memorySummary: context.memorySummary,
+      recentMessages: context.recentMessages
+    });
     const rawAnswer = await callDeepSeek(messages, { maxTokens: 900, temperature: 0.55 });
     const answer = cleanLinWanReply(rawAnswer);
 
-    res.json({ answer });
+    if (linWanUserId) {
+      persistLinWanExchange(linWanUserId, {
+        question: payload.question,
+        answer,
+        memorySummary: context.memorySummary,
+        memoryUpdatedAt: context.memoryUpdatedAt,
+        recentMessages: context.recentMessages,
+        trainingProfile: payload.userTrainingProfile
+      }).catch((error) => {
+        console.error('Failed to persist Lin Wan context', error);
+      });
+    }
+
+    res.json({ answer, memoryEnabled: Boolean(linWanUserId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/debate-experience-memory/clear', requireAuth, async (req, res, next) => {
+  try {
+    await clearLinWanMemory(req.user.id);
+    res.json({ message: '林婉记忆已清空。' });
   } catch (error) {
     next(error);
   }
@@ -1340,8 +1370,15 @@ function normalizeDebateExperienceProfile(profile) {
   };
 }
 
-function buildDebateExperienceMessages({ question, chatHistory, userTrainingProfile }) {
+function buildDebateExperienceMessages({
+  question,
+  userTrainingProfile,
+  memorySummary = '',
+  recentMessages = []
+}) {
   const profileContext = formatDebateExperienceProfile(userTrainingProfile);
+  const memoryContext = memorySummary || '暂无稳定长期观察。';
+  const recentContext = formatLinWanRecentMessages(recentMessages);
   return [
     {
       role: 'system',
@@ -1515,9 +1552,13 @@ function buildDebateExperienceMessages({ question, chatHistory, userTrainingProf
 
 如果系统提供了用户近期训练画像，你应优先结合它判断用户长期短板和训练方向，但不要逐条复述原始数据，不要暴露原始 JSON，也不要编造画像中没有的信息。如果没有训练画像，就按通用赛场经验回答。
 
+如果系统提供了长期观察和最近对话，你可以自然使用其中的训练重点和上下文，但不要直接说“根据长期记忆”“根据训练画像显示”“系统记录显示”。
+
 【输出要求】
 默认回答 300-600 字。先给判断，再拆原因，最后给可执行动作。不要重新评分。不要声称自己是真人。
 
+每次最多指出 1 到 2 个关键问题。
+必须给出一个可以马上练的动作、句式或任务。
 禁止使用 Markdown 格式。
 禁止使用 **内容** 这种星号加粗。
 禁止使用 # 标题、- 列表、> 引用、代码块。
@@ -1533,17 +1574,329 @@ function buildDebateExperienceMessages({ question, chatHistory, userTrainingProf
     },
     {
       role: 'user',
-      content: `以下是用户近期训练画像摘要。请把它转化成长期训练判断，不要逐条复述，不要暴露原始数据：\n${profileContext}`
-    },
-    ...chatHistory.map((item) => ({
-      role: item.role === 'assistant' ? 'assistant' : 'user',
-      content: item.content
-    })),
-    {
-      role: 'user',
-      content: question
+      content: `长期观察：
+${memoryContext}
+
+最近训练画像：
+${profileContext}
+
+最近对话：
+${recentContext}
+
+当前用户问题：
+${question}
+
+请像熟悉用户训练状态的辩论顾问一样回答。不要写报告，不要逐条复述后台上下文。`
     }
   ];
+}
+
+async function loadLinWanContextSafe(userId, fallbackMessages = []) {
+  const localMessages = normalizeLinWanMessages(fallbackMessages, 10);
+  if (!isUuid(userId)) {
+    return {
+      memorySummary: '',
+      memoryUpdatedAt: '',
+      recentMessages: localMessages
+    };
+  }
+
+  let memorySummary = '';
+  let memoryUpdatedAt = '';
+  let storedMessages = [];
+
+  try {
+    const memory = await fetchLinWanMemory(userId);
+    memorySummary = sanitizeLinWanMemorySummary(memory?.memory_summary || '');
+    memoryUpdatedAt = normalizeText(memory?.updated_at);
+  } catch (error) {
+    console.error('Failed to load Lin Wan memory', error);
+  }
+
+  try {
+    storedMessages = await fetchLinWanRecentMessages(userId, 10);
+  } catch (error) {
+    console.error('Failed to load Lin Wan recent messages', error);
+  }
+
+  return {
+    memorySummary,
+    memoryUpdatedAt,
+    recentMessages: mergeLinWanMessages(storedMessages, localMessages).slice(-10)
+  };
+}
+
+async function fetchLinWanMemory(userId) {
+  if (!isUuid(userId)) return null;
+
+  return getSingleByQuery(
+    linWanMemoryTable,
+    new URLSearchParams({
+      select: 'id,user_id,memory_summary,updated_at',
+      user_id: `eq.${userId}`,
+      limit: '1'
+    })
+  );
+}
+
+async function fetchLinWanRecentMessages(userId, limit = 10) {
+  if (!isUuid(userId)) return [];
+
+  const rows = await supabaseRequest(
+    `${linWanMessagesTable}?${new URLSearchParams({
+      select: 'id,user_id,role,content,created_at',
+      user_id: `eq.${userId}`,
+      order: 'created_at.desc',
+      limit: String(limit)
+    }).toString()}`
+  );
+
+  return normalizeLinWanMessages(rows.reverse(), limit);
+}
+
+function normalizeLinWanMessages(messages = [], limit = 10) {
+  if (!Array.isArray(messages)) return [];
+
+  return messages
+    .map((item) => ({
+      role: item?.role === 'assistant' ? 'assistant' : 'user',
+      content: limitLength(redactSensitiveText(item?.content), 1200),
+      createdAt: normalizeText(item?.created_at || item?.createdAt)
+    }))
+    .filter((item) => item.content && ['user', 'assistant'].includes(item.role))
+    .slice(-limit);
+}
+
+function mergeLinWanMessages(storedMessages = [], localMessages = []) {
+  const merged = [];
+  const seen = new Set();
+
+  [...storedMessages, ...localMessages].forEach((item) => {
+    const role = item?.role === 'assistant' ? 'assistant' : 'user';
+    const content = limitLength(redactSensitiveText(item?.content), 1200);
+    if (!content) return;
+
+    const key = `${role}:${content}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push({ role, content });
+  });
+
+  return merged;
+}
+
+function formatLinWanRecentMessages(messages = []) {
+  const normalized = normalizeLinWanMessages(messages, 10);
+  if (!normalized.length) return '暂无最近对话。';
+
+  return normalized
+    .map((item) => `${item.role === 'assistant' ? '林婉' : '用户'}：${item.content}`)
+    .join('\n\n');
+}
+
+async function persistLinWanExchange(userId, {
+  question,
+  answer,
+  memorySummary,
+  memoryUpdatedAt,
+  recentMessages = [],
+  trainingProfile
+}) {
+  if (!isUuid(userId)) return;
+
+  const userMessage = {
+    user_id: userId,
+    role: 'user',
+    content: limitLength(redactSensitiveText(question), 1200)
+  };
+  const assistantMessage = {
+    user_id: userId,
+    role: 'assistant',
+    content: limitLength(redactSensitiveText(answer), 2400)
+  };
+
+  if (!userMessage.content || !assistantMessage.content) return;
+
+  await supabaseRequest(linWanMessagesTable, {
+    method: 'POST',
+    body: [userMessage, assistantMessage]
+  });
+
+  await pruneLinWanMessages(userId, 30);
+
+  const nextRecentMessages = normalizeLinWanMessages([
+    ...recentMessages,
+    { role: 'user', content: question },
+    { role: 'assistant', content: answer }
+  ], 10);
+
+  const shouldUpdateMemory = await shouldUpdateLinWanMemory(userId, {
+    question,
+    memoryUpdatedAt,
+    trainingProfile
+  });
+
+  if (!shouldUpdateMemory) return;
+
+  await updateLinWanMemorySummary(userId, {
+    oldMemorySummary: memorySummary,
+    recentMessages: nextRecentMessages,
+    trainingProfile
+  });
+}
+
+async function pruneLinWanMessages(userId, maxMessages = 30) {
+  if (!isUuid(userId)) return;
+
+  const oldMessages = await supabaseRequest(
+    `${linWanMessagesTable}?${new URLSearchParams({
+      select: 'id',
+      user_id: `eq.${userId}`,
+      order: 'created_at.desc',
+      offset: String(maxMessages)
+    }).toString()}`
+  );
+  const ids = oldMessages.map((item) => item.id).filter(isUuid);
+  if (!ids.length) return;
+
+  await supabaseRequest(
+    `${linWanMessagesTable}?user_id=eq.${encodeURIComponent(userId)}&id=in.(${ids.join(',')})`,
+    { method: 'DELETE' }
+  );
+}
+
+async function shouldUpdateLinWanMemory(userId, { question, memoryUpdatedAt, trainingProfile }) {
+  if (isExplicitLinWanMemoryRequest(question)) return true;
+  if (hasTrainingProfileAfterMemory(trainingProfile, memoryUpdatedAt)) return true;
+
+  try {
+    const userMessageCount = await countLinWanUserMessagesSince(userId, memoryUpdatedAt);
+    return userMessageCount >= 5;
+  } catch (error) {
+    console.error('Failed to count Lin Wan messages for memory update', error);
+    return false;
+  }
+}
+
+function isExplicitLinWanMemoryRequest(question) {
+  const text = normalizeText(question);
+  if (!text || /不要记|别记|不用记/i.test(text)) return false;
+
+  return /记住|记一下|记下来|帮我记|以后提醒我|训练重点/.test(text);
+}
+
+function hasTrainingProfileAfterMemory(trainingProfile, memoryUpdatedAt) {
+  const latestAt = normalizeText(trainingProfile?.latestRecordSummary?.createdAt);
+  if (!latestAt) return false;
+
+  const latestTime = new Date(latestAt).getTime();
+  if (!Number.isFinite(latestTime)) return false;
+  if (!memoryUpdatedAt) return true;
+
+  const memoryTime = new Date(memoryUpdatedAt).getTime();
+  return Number.isFinite(memoryTime) ? latestTime > memoryTime : true;
+}
+
+async function countLinWanUserMessagesSince(userId, since = '') {
+  if (!isUuid(userId)) return 0;
+
+  const query = new URLSearchParams({
+    select: 'id',
+    user_id: `eq.${userId}`,
+    role: 'eq.user',
+    limit: '30'
+  });
+  if (since) {
+    query.set('created_at', `gt.${since}`);
+  }
+
+  const rows = await supabaseRequest(`${linWanMessagesTable}?${query.toString()}`);
+  return rows.length;
+}
+
+async function updateLinWanMemorySummary(userId, {
+  oldMemorySummary = '',
+  recentMessages = [],
+  trainingProfile
+}) {
+  if (!isUuid(userId)) return;
+
+  const messages = buildLinWanMemoryUpdateMessages({
+    oldMemorySummary,
+    recentMessages,
+    trainingProfile
+  });
+  const rawSummary = await callDeepSeek(messages, { maxTokens: 450, temperature: 0.2 });
+  const memorySummary = sanitizeLinWanMemorySummary(rawSummary);
+  if (!memorySummary) return;
+
+  await supabaseRequest(`${linWanMemoryTable}?on_conflict=user_id`, {
+    method: 'POST',
+    body: {
+      user_id: userId,
+      memory_summary: memorySummary,
+      updated_at: new Date().toISOString()
+    },
+    prefer: 'resolution=merge-duplicates,return=representation'
+  });
+}
+
+function buildLinWanMemoryUpdateMessages({ oldMemorySummary, recentMessages, trainingProfile }) {
+  return [
+    {
+      role: 'system',
+      content: `你负责更新“林婉”对用户的轻量辩论训练观察摘要。
+
+只保留长期有用的辩论训练信息。
+不记录无关闲聊、私人情绪、人际关系细节和敏感信息。
+重点记录：反复短板、当前训练重点、适合的训练动作、用户偏好的反馈风格。
+不超过 300 字。
+新摘要应覆盖旧摘要，不要无限追加。
+语气客观、简洁。
+禁止 Markdown 格式。`
+    },
+    {
+      role: 'user',
+      content: `旧的长期观察摘要：
+${oldMemorySummary || '暂无。'}
+
+最近林婉对话：
+${formatLinWanRecentMessages(recentMessages)}
+
+最近训练画像：
+${formatDebateExperienceProfile(trainingProfile)}
+
+请输出新的长期观察摘要。`
+    }
+  ];
+}
+
+async function clearLinWanMemory(userId) {
+  if (!isUuid(userId)) {
+    throw httpError(401, '该功能需要登录后使用。');
+  }
+
+  await supabaseRequest(
+    `${linWanMessagesTable}?user_id=eq.${encodeURIComponent(userId)}`,
+    { method: 'DELETE' }
+  );
+  await supabaseRequest(
+    `${linWanMemoryTable}?user_id=eq.${encodeURIComponent(userId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+function sanitizeLinWanMemorySummary(text) {
+  return limitLength(redactSensitiveText(cleanLinWanReply(text)), 300);
+}
+
+function redactSensitiveText(text) {
+  return normalizeText(text)
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[已省略邮箱]')
+    .replace(/https?:\/\/\S+/gi, '[已省略链接]')
+    .replace(/\b(?:\+?\d[\d\s-]{8,}\d)\b/g, '[已省略号码]')
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,}|[A-Za-z0-9_-]{32,})\b/g, '[已省略敏感串]')
+    .replace(/((?:api[_ -]?key|secret|token|password|密码|密钥|数据库连接|connection string)\s*[:：=]\s*)\S+/gi, '$1[已省略]');
 }
 
 function cleanLinWanReply(text) {
@@ -1715,6 +2068,9 @@ function getPublicErrorMessage(error) {
 
   if (error.code === 'SUPABASE_REQUEST_FAILED') {
     const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
+    if (/linwan_messages|linwan_memory/i.test(detailText)) {
+      return '林婉记忆表尚未配置，请先在 Supabase 执行 supabase-linwan-memory.sql。';
+    }
     if (/app_users|app_user_id|created_by_app_user_id/i.test(detailText)) {
       return '账号系统数据库表结构尚未更新，请先在 Supabase 执行 supabase-auth-1.sql。';
     }

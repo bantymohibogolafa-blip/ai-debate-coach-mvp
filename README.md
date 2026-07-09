@@ -13,6 +13,7 @@ ai-debate-coach-mvp/
 ├─ supabase-auth-1.sql
 ├─ supabase-team-spaces.sql
 ├─ supabase-team-admin-roles.sql
+├─ supabase-linwan-memory.sql
 ├─ supabase-team-task-4.sql
 ├─ supabase-scoring-rubrics.sql
 ├─ client/
@@ -62,6 +63,8 @@ SUPABASE_TEAM_MEMBERS_TABLE=team_members
 SUPABASE_TEAM_TASKS_TABLE=team_tasks
 SUPABASE_TEAM_TASK_ASSIGNMENTS_TABLE=team_task_assignments
 SUPABASE_APP_USERS_TABLE=app_users
+SUPABASE_LINWAN_MESSAGES_TABLE=linwan_messages
+SUPABASE_LINWAN_MEMORY_TABLE=linwan_memory
 JWT_SECRET=replace-with-a-long-random-secret-at-least-32-chars
 JWT_EXPIRES_IN=30d
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
@@ -83,11 +86,12 @@ PORT=3001
 supabase-team-spaces.sql
 supabase-team-admin-roles.sql
 supabase-auth-1.sql
+supabase-linwan-memory.sql
 supabase-team-task-4.sql
 supabase-scoring-rubrics.sql
 ```
 
-这些迁移会创建或更新当前后端默认使用的 `teams`、`team_members`、`training_records`、`app_users`、`team_tasks` 和 `team_task_assignments`。如果你已经建过旧版 `debate_training_records`，可以保留旧表；当前代码默认使用 `training_records`。后端使用 service role key 访问 Supabase REST API，因此前端不会接触 Supabase key。
+这些迁移会创建或更新当前后端默认使用的 `teams`、`team_members`、`training_records`、`app_users`、`team_tasks`、`team_task_assignments`、`linwan_messages` 和 `linwan_memory`。如果你已经建过旧版 `debate_training_records`，可以保留旧表；当前代码默认使用 `training_records`。后端使用 service role key 访问 Supabase REST API，因此前端不会接触 Supabase key。
 
 ## 本地运行步骤
 
@@ -167,6 +171,8 @@ SUPABASE_TEAM_MEMBERS_TABLE=team_members
 SUPABASE_TEAM_TASKS_TABLE=team_tasks
 SUPABASE_TEAM_TASK_ASSIGNMENTS_TABLE=team_task_assignments
 SUPABASE_APP_USERS_TABLE=app_users
+SUPABASE_LINWAN_MESSAGES_TABLE=linwan_messages
+SUPABASE_LINWAN_MEMORY_TABLE=linwan_memory
 JWT_SECRET=replace-with-a-long-random-secret-at-least-32-chars
 JWT_EXPIRES_IN=30d
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
@@ -199,11 +205,15 @@ Server running on http://localhost:3001
 
 API Key 错误、失效或账号权限不足。请重新生成 Key，并确认填在后端环境变量中。
 
-### 4. DeepSeek 返回 429
+### 4. 后端提示 Supabase 表结构尚未更新
+
+确认已经按顺序执行 `supabase-team-spaces.sql`、`supabase-team-admin-roles.sql`、`supabase-auth-1.sql`、`supabase-linwan-memory.sql`、`supabase-team-task-4.sql` 和 `supabase-scoring-rubrics.sql`。
+
+### 5. DeepSeek 返回 429
 
 请求过于频繁或额度不足。稍后重试，或检查 DeepSeek 控制台额度。
 
-### 5. 端口被占用
+### 6. 端口被占用
 
 后端端口可在 `server/.env` 中修改：
 
@@ -213,10 +223,10 @@ PORT=3002
 
 如果修改后端端口，也要同步修改 `client/vite.config.js` 的代理目标。
 
-### 6. Node 版本过低
+### 7. Node 版本过低
 
 建议使用 Node.js 18 或以上版本，因为后端使用内置 `fetch` 调用 DeepSeek API。
 
-### 7. Render 免费实例首次访问很慢
+### 8. Render 免费实例首次访问很慢
 
 Render 免费实例闲置后会休眠，第一次打开可能需要等待几十秒。看到服务恢复后再次刷新即可。

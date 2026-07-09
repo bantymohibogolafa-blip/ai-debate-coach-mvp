@@ -3494,7 +3494,7 @@ function App() {
       )}
 
       {activeTab === 'experience' && (
-        <DebateExperienceChat trainingProfile={linWanTrainingProfile} />
+        <DebateExperienceChat trainingProfile={linWanTrainingProfile} isLoggedIn={isLoggedIn} />
       )}
 
       {activeTab === 'teams' && (
@@ -5054,7 +5054,7 @@ function WeaknessVideoRecommendations({ dimensions }) {
   );
 }
 
-function DebateExperienceChat({ trainingProfile }) {
+function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
   const featuredQuickQuestions = [
     '我最近最该练什么？',
     '我反复出现的问题是什么？',
@@ -5088,6 +5088,8 @@ function DebateExperienceChat({ trainingProfile }) {
   const [messages, setMessages] = useState([{ role: 'assistant', content: openingMessage }]);
   const [isSending, setIsSending] = useState(false);
   const [chatError, setChatError] = useState('');
+  const [memoryStatus, setMemoryStatus] = useState('');
+  const [isClearingMemory, setIsClearingMemory] = useState(false);
   const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
 
   async function sendExperienceQuestion(nextQuestion = question) {
@@ -5122,6 +5124,29 @@ function DebateExperienceChat({ trainingProfile }) {
     setShowAllQuickQuestions(false);
   }
 
+  async function clearLinWanMemory() {
+    if (isClearingMemory) return;
+
+    if (!isLoggedIn) {
+      setMemoryStatus('登录后可以清空跨设备保存的林婉记忆。');
+      return;
+    }
+
+    setIsClearingMemory(true);
+    setMemoryStatus('');
+    setChatError('');
+
+    try {
+      const data = await postJson('/api/debate-experience-memory/clear', {});
+      setMessages([{ role: 'assistant', content: openingMessage }]);
+      setMemoryStatus(data.message || '林婉记忆已清空。');
+    } catch {
+      setMemoryStatus('林婉记忆暂时清空失败，请稍后再试。');
+    } finally {
+      setIsClearingMemory(false);
+    }
+  }
+
   return (
     <section className="panel experience-panel">
       <div className="panel-header">
@@ -5129,6 +5154,14 @@ function DebateExperienceChat({ trainingProfile }) {
           <p className="eyebrow">辩手经验室</p>
           <h2>林婉 · 辩论顾问</h2>
         </div>
+        <button
+          type="button"
+          className="memory-clear-button"
+          disabled={isSending || isClearingMemory}
+          onClick={clearLinWanMemory}
+        >
+          {isClearingMemory ? '清空中...' : '清空林婉记忆'}
+        </button>
       </div>
 
       <TrainingProfileCard profile={trainingProfile} />
@@ -5197,6 +5230,7 @@ function DebateExperienceChat({ trainingProfile }) {
 
       {isSending && <div className="assistant-loading">林婉正在整理思路...</div>}
       {chatError && <div className="assistant-error">{chatError}</div>}
+      {memoryStatus && <div className="assistant-memory-status">{memoryStatus}</div>}
 
       <div className="assistant-input-row experience-input-row">
         <textarea
