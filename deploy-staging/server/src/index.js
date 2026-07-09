@@ -1965,32 +1965,27 @@ async function synthesizeLinWanSpeech(text) {
     throw error;
   }
 
-  try {
-    return await requestXiaomiTts({
-      apiUrl,
-      apiKey,
-      model,
-      voice,
-      text,
-      includeStylePrompt: true
-    });
-  } catch (error) {
-    if (error.status !== 400 && error.code !== 'EMPTY_TTS_AUDIO') throw error;
+  const attempts = buildXiaomiTtsAttempts({ apiUrl, model, voice, text });
+  let lastError;
 
-    return requestXiaomiTts({
-      apiUrl,
-      apiKey,
-      model,
-      voice,
-      text,
-      includeStylePrompt: false
-    });
+  for (const attempt of attempts) {
+    try {
+      return await requestXiaomiTts({
+        apiUrl: attempt.apiUrl,
+        apiKey,
+        body: attempt.body,
+        attemptLabel: attempt.label
+      });
+    } catch (error) {
+      lastError = error;
+      if (error.status !== 400 && error.code !== 'EMPTY_TTS_AUDIO') throw error;
+    }
   }
+
+  throw lastError || new Error('TTS request failed.');
 }
 
-async function requestXiaomiTts({ apiUrl, apiKey, model, voice, text, includeStylePrompt }) {
-  const body = buildXiaomiTtsRequestBody({ apiUrl, model, voice, text, includeStylePrompt });
-
+async function requestXiaomiTts({ apiUrl, apiKey, body, attemptLabel }) {
   let response;
   try {
     response = await fetch(apiUrl, {
@@ -2013,6 +2008,7 @@ async function requestXiaomiTts({ apiUrl, apiKey, model, voice, text, includeSty
   if (!response.ok) {
     const detail = await readTtsErrorDetail(response);
     console.error('Xiaomi TTS request failed', {
+      attempt: attemptLabel,
       status: response.status,
       detail
     });
@@ -2021,43 +2017,156 @@ async function requestXiaomiTts({ apiUrl, apiKey, model, voice, text, includeSty
     error.code = 'TTS_REQUEST_FAILED';
     error.status = response.status;
     error.ttsMessage = detail;
+    error.ttsAttempt = attemptLabel;
     throw error;
   }
 
   return parseTtsResponse(response);
 }
 
-function buildXiaomiTtsRequestBody({ apiUrl, model, voice, text, includeStylePrompt }) {
+function buildXiaomiTtsAttempts({ apiUrl, model, voice, text }) {
+  const voiceValue = resolveXiaomiTtsVoice({ model, voice });
+  const attempts = [];
+
   if (/\/chat\/completions(?:\?|$)/i.test(apiUrl)) {
-    const content = includeStylePrompt
-      ? `请用下面的音色风格把文本合成为语音。\n\n音色风格：${linWanTtsStylePrompt}\n\n朗读文本：\n${text}`
-      : `请把下面文本合成为语音。\n\n朗读文本：\n${text}`;
-    const body = {
-      model,
-      messages: [
-        {
-          role: 'user',
-          content
-        }
-      ],
-      stream: false
-    };
+    attempts.push({
+      label: 'chat-voice-design',
+      apiUrl,
+      body: buildChatCompletionTtsBody({ model, voice: voiceValue, text })
+    });
 
-    if (voice) {
-      body.voice = voice;
-    }
+    attempts.push({
+      label: 'chat-voice-design-stream-false',
+      apiUrl,
+      body: buildChatCompletionTtsBody({ model, voice: voiceValue, text, stream: false })
+    });
 
-    return body;
+    attempts.push({
+      label: 'chat-voice-prompt',
+      apiUrl,
+      body: buildChatCompletionTtsBody({ model, voice: voiceValue, text, voiceField: 'voice_prompt' })
+    });
+
+    attempts.push({
+      label: 'chat-style-prompt',
+      apiUrl,
+      body: buildChatCompletionTtsBody({ model, voice: voiceValue, text, voiceField: 'style_prompt' })
+    });
+
+    attempts.push({
+      label: 'chat-content-array',
+      apiUrl,
+      body: buildChatCompletionContentArrayBody({ model, voice: voiceValue, text })
+    });
+
+    attempts.push({
+      label: 'chat-audio-object',
+      apiUrl,
+      body: buildChatCompletionAudioBody({ model, voice: voiceValue, text })
+    });
+
+    attempts.push({
+      label: 'chat-plain',
+      apiUrl,
+      body: buildChatCompletionTtsBody({ model, text })
+    });
+
+    attempts.push({
+      label: 'chat-speech-body',
+      apiUrl,
+      body: buildSpeechTtsBody({ model, voice: voiceValue, text, includeStylePrompt: true })
+    });
+
+    return uniqueXiaomiTtsAttempts(attempts);
   }
 
+  attempts.push({
+    label: 'speech-body',
+    apiUrl,
+    body: buildSpeechTtsBody({ model, voice: voiceValue, text, includeStylePrompt: true })
+  });
+
+  attempts.push({
+    label: 'speech-body-plain',
+    apiUrl,
+    body: buildSpeechTtsBody({ model, voice: voiceValue, text, includeStylePrompt: false })
+  });
+
+  return uniqueXiaomiTtsAttempts(attempts);
+}
+
+function resolveXiaomiTtsVoice({ model, voice }) {
+  if (voice) return voice;
+  return /voicedesign/i.test(model) ? linWanTtsStylePrompt : '';
+}
+
+function buildChatCompletionTtsBody({ model, voice, text, stream, voiceField = 'voice' }) {
+  const body = {
+    model,
+    messages: [
+      {
+        role: 'user',
+        content: text
+      }
+    ]
+  };
+
+  if (voice && voiceField) body[voiceField] = voice;
+  if (typeof stream === 'boolean') body.stream = stream;
+
+  return body;
+}
+
+function buildChatCompletionContentArrayBody({ model, voice, text }) {
+  const body = {
+    model,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text
+          }
+        ]
+      }
+    ]
+  };
+
+  if (voice) body.voice = voice;
+
+  return body;
+}
+
+function buildChatCompletionAudioBody({ model, voice, text }) {
+  const body = {
+    model,
+    messages: [
+      {
+        role: 'user',
+        content: text
+      }
+    ],
+    modalities: ['text', 'audio'],
+    audio: {
+      format: 'mp3'
+    },
+    stream: false
+  };
+
+  if (voice) body.audio.voice = voice;
+
+  return body;
+}
+
+function buildSpeechTtsBody({ model, voice, text, includeStylePrompt }) {
   const body = {
     model,
     input: text,
     response_format: 'mp3'
   };
-  if (voice) {
-    body.voice = voice;
-  }
+
+  if (voice) body.voice = voice;
 
   if (includeStylePrompt) {
     body.instructions = linWanTtsStylePrompt;
@@ -2066,6 +2175,16 @@ function buildXiaomiTtsRequestBody({ apiUrl, model, voice, text, includeStylePro
   }
 
   return body;
+}
+
+function uniqueXiaomiTtsAttempts(attempts) {
+  const seen = new Set();
+  return attempts.filter((attempt) => {
+    const key = `${attempt.apiUrl}\n${JSON.stringify(attempt.body)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 async function parseTtsResponse(response) {
