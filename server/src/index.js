@@ -1975,7 +1975,7 @@ async function synthesizeLinWanSpeech(text) {
       includeStylePrompt: true
     });
   } catch (error) {
-    if (error.status !== 400) throw error;
+    if (error.status !== 400 && error.code !== 'EMPTY_TTS_AUDIO') throw error;
 
     return requestXiaomiTts({
       apiUrl,
@@ -2034,7 +2034,12 @@ function buildXiaomiTtsRequestBody({ apiUrl, model, voice, text, includeStylePro
       : '请自然、清晰地朗读下面文本。';
     const body = {
       model,
+      modalities: ['text', 'audio'],
       messages: [
+        {
+          role: 'system',
+          content: '你是语音合成接口。请根据用户给出的朗读文本和音色要求生成音频，不要只返回文字。'
+        },
         {
           role: 'user',
           content: `${styleInstruction}\n\n朗读文本：\n${text}`
@@ -2079,6 +2084,8 @@ async function parseTtsResponse(response) {
     const firstAudio = Array.isArray(data.data) ? data.data[0] : data.data;
     const firstChoice = Array.isArray(data.choices) ? data.choices[0] : null;
     const messageAudio = firstChoice?.message?.audio || firstChoice?.message?.content?.audio;
+    const messageContent = firstChoice?.message?.content;
+    const parsedMessageContent = parseJsonLikeContent(messageContent);
     const outputAudio = Array.isArray(data.output) ? data.output.find((item) => item?.audio) : null;
     const audioBase64 = normalizeText(
       data.audioBase64
@@ -2092,6 +2099,11 @@ async function parseTtsResponse(response) {
       || messageAudio?.data
       || messageAudio?.audio
       || messageAudio?.b64_json
+      || parsedMessageContent?.audioBase64
+      || parsedMessageContent?.audio_base64
+      || parsedMessageContent?.audio
+      || parsedMessageContent?.b64_json
+      || parsedMessageContent?.data
       || outputAudio?.audio?.data
       || outputAudio?.audio?.b64_json
     );
@@ -2111,6 +2123,8 @@ async function parseTtsResponse(response) {
         || firstAudio?.mime_type
         || messageAudio?.mimeType
         || messageAudio?.mime_type
+        || parsedMessageContent?.mimeType
+        || parsedMessageContent?.mime_type
         || outputAudio?.audio?.mimeType
         || outputAudio?.audio?.mime_type
       ) || 'audio/mpeg'
@@ -2129,6 +2143,17 @@ async function parseTtsResponse(response) {
     audioBase64: audioBuffer.toString('base64'),
     mimeType: contentType.includes('audio/') ? contentType.split(';')[0] : 'audio/mpeg'
   };
+}
+
+function parseJsonLikeContent(content) {
+  if (!content) return null;
+  if (typeof content === 'object') return content;
+
+  try {
+    return JSON.parse(String(content));
+  } catch {
+    return null;
+  }
 }
 
 async function readTtsErrorDetail(response) {
