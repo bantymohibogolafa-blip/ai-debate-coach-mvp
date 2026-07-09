@@ -2029,32 +2029,22 @@ async function requestXiaomiTts({ apiUrl, apiKey, model, voice, text, includeSty
 
 function buildXiaomiTtsRequestBody({ apiUrl, model, voice, text, includeStylePrompt }) {
   if (/\/chat\/completions(?:\?|$)/i.test(apiUrl)) {
-    const styleInstruction = includeStylePrompt
-      ? `音色要求：${linWanTtsStylePrompt}\n语速中等偏慢，自然停顿，句尾稳定。`
-      : '请自然、清晰地朗读下面文本。';
+    const content = includeStylePrompt
+      ? `请用下面的音色风格把文本合成为语音。\n\n音色风格：${linWanTtsStylePrompt}\n\n朗读文本：\n${text}`
+      : `请把下面文本合成为语音。\n\n朗读文本：\n${text}`;
     const body = {
       model,
-      modalities: ['text', 'audio'],
       messages: [
         {
-          role: 'system',
-          content: '你是语音合成接口。请根据用户给出的朗读文本和音色要求生成音频，不要只返回文字。'
-        },
-        {
           role: 'user',
-          content: `${styleInstruction}\n\n朗读文本：\n${text}`
+          content
         }
       ],
-      stream: false,
-      voice_prompt: includeStylePrompt ? linWanTtsStylePrompt : undefined,
-      style_prompt: includeStylePrompt ? linWanTtsStylePrompt : undefined,
-      audio: {
-        format: 'mp3'
-      }
+      stream: false
     };
 
     if (voice) {
-      body.audio.voice = voice;
+      body.voice = voice;
     }
 
     return body;
@@ -2088,6 +2078,7 @@ async function parseTtsResponse(response) {
     const messageAudio = firstChoice?.message?.audio || firstChoice?.message?.content?.audio;
     const messageContent = firstChoice?.message?.content;
     const parsedMessageContent = parseJsonLikeContent(messageContent);
+    const messageContentAudio = extractAudioFromMessageContent(messageContent);
     const outputAudio = Array.isArray(data.output) ? data.output.find((item) => item?.audio) : null;
     const audioBase64 = normalizeText(
       data.audioBase64
@@ -2106,6 +2097,11 @@ async function parseTtsResponse(response) {
       || parsedMessageContent?.audio
       || parsedMessageContent?.b64_json
       || parsedMessageContent?.data
+      || messageContentAudio?.audioBase64
+      || messageContentAudio?.audio_base64
+      || messageContentAudio?.audio
+      || messageContentAudio?.b64_json
+      || messageContentAudio?.data
       || outputAudio?.audio?.data
       || outputAudio?.audio?.b64_json
     );
@@ -2156,6 +2152,30 @@ function parseJsonLikeContent(content) {
   } catch {
     return null;
   }
+}
+
+function extractAudioFromMessageContent(content) {
+  if (!content) return null;
+
+  if (Array.isArray(content)) {
+    const audioBlock = content.find((item) => item?.audio || item?.audio_url || item?.b64_json || item?.data);
+    if (!audioBlock) return null;
+    return audioBlock.audio || audioBlock.audio_url || audioBlock;
+  }
+
+  if (typeof content === 'object') {
+    return content.audio || content.audio_url || content;
+  }
+
+  const rawContent = normalizeText(content);
+  if (
+    /^data:audio\/[a-z0-9.+-]+;base64,/i.test(rawContent)
+    || /^[A-Za-z0-9+/=\s]{80,}$/.test(rawContent)
+  ) {
+    return { audio: rawContent };
+  }
+
+  return null;
 }
 
 async function readTtsErrorDetail(response) {
