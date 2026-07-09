@@ -1977,8 +1977,10 @@ async function synthesizeLinWanSpeech(text) {
         attemptLabel: attempt.label
       });
     } catch (error) {
-      lastError = error;
-      if (error.status !== 400 && error.code !== 'EMPTY_TTS_AUDIO') throw error;
+      if (!lastError || error.status !== 404) {
+        lastError = error;
+      }
+      if (!isRecoverableXiaomiTtsAttemptError(error)) throw error;
     }
   }
 
@@ -2132,18 +2134,22 @@ function resolveXiaomiTtsEndpoints(rawApiUrl) {
 
     if (/\/chat\/completions$/i.test(path)) {
       return [
-        { type: 'speech', label: 'derived-audio-speech', url: `${baseUrl}/audio/speech${query}` },
-        { type: 'chat', label: 'configured-chat-completions', url: cleanUrl }
+        { type: 'chat', label: 'configured-chat-completions', url: cleanUrl },
+        { type: 'speech', label: 'derived-audio-speech', url: `${baseUrl}/audio/speech${query}` }
       ];
     }
 
     return [
-      { type: 'speech', label: 'base-audio-speech', url: `${cleanUrl}/audio/speech` },
-      { type: 'chat', label: 'base-chat-completions', url: `${cleanUrl}/chat/completions` }
+      { type: 'chat', label: 'base-chat-completions', url: `${cleanUrl}/chat/completions` },
+      { type: 'speech', label: 'base-audio-speech', url: `${cleanUrl}/audio/speech` }
     ];
   } catch {
     return [{ type: 'speech', label: 'configured-url', url: cleanUrl }];
   }
+}
+
+function isRecoverableXiaomiTtsAttemptError(error) {
+  return error.code === 'EMPTY_TTS_AUDIO' || [400, 404, 415, 422].includes(error.status);
 }
 
 function resolveXiaomiTtsVoice({ model, voice }) {
