@@ -2046,6 +2046,8 @@ function buildXiaomiTtsRequestBody({ apiUrl, model, voice, text, includeStylePro
         }
       ],
       stream: false,
+      voice_prompt: includeStylePrompt ? linWanTtsStylePrompt : undefined,
+      style_prompt: includeStylePrompt ? linWanTtsStylePrompt : undefined,
       audio: {
         format: 'mp3'
       }
@@ -2343,6 +2345,10 @@ function getPublicErrorMessage(error) {
   }
 
   if (error.code === 'TTS_REQUEST_FAILED' || error.code === 'EMPTY_TTS_AUDIO') {
+    const detail = limitLength(redactSensitiveText(error.ttsMessage || ''), 180);
+    if (detail) {
+      return `语音生成失败，请稍后重试。状态 ${error.status || 502}：${detail}`;
+    }
     return '语音生成失败，请稍后重试。';
   }
 

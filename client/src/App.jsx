@@ -5093,6 +5093,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
   const [ttsLoadingKey, setTtsLoadingKey] = useState('');
   const [ttsPlayingKey, setTtsPlayingKey] = useState('');
   const [ttsErrorKey, setTtsErrorKey] = useState('');
+  const [ttsErrorMessage, setTtsErrorMessage] = useState('');
   const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
   const ttsAudioRef = useRef(null);
   const ttsCacheRef = useRef(new Map());
@@ -5183,6 +5184,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
 
     stopLinWanAudio();
     setTtsErrorKey('');
+    setTtsErrorMessage('');
 
     const cached = ttsCacheRef.current.get(key);
     if (cached?.url) {
@@ -5198,8 +5200,9 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
       const url = URL.createObjectURL(blob);
       ttsCacheRef.current.set(key, { url, mimeType: data.mimeType || 'audio/mpeg' });
       startLinWanAudio(url, key);
-    } catch {
+    } catch (error) {
       setTtsErrorKey(key);
+      setTtsErrorMessage(getFriendlyError(error) || '语音生成失败，请稍后重试。');
     } finally {
       setTtsLoadingKey('');
     }
@@ -5331,7 +5334,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
                     {getLinWanTtsButtonLabel(ttsKey)}
                   </button>
                   {ttsErrorKey === ttsKey && (
-                    <small className="linwan-tts-error">语音生成失败，请稍后重试。</small>
+                    <small className="linwan-tts-error">{ttsErrorMessage || '语音生成失败，请稍后重试。'}</small>
                   )}
                 </div>
               )}
@@ -6251,6 +6254,14 @@ function getFriendlyError(error) {
 
 function getServerErrorMessage(status, message) {
   if (message === 'AI 暂时没有返回内容，请重试。') {
+    return message;
+  }
+
+  if (typeof message === 'string' && message.startsWith('语音生成失败')) {
+    return message;
+  }
+
+  if (message === '语音服务暂未配置') {
     return message;
   }
 
