@@ -2217,6 +2217,36 @@ textarea:focus {
   word-break: normal;
 }
 
+.linwan-tts-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.linwan-tts-button {
+  min-height: 34px;
+  border: 1px solid #bdd6d8;
+  border-radius: 8px;
+  padding: 7px 11px;
+  color: #245e62;
+  background: #f7fbfa;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.linwan-tts-button:hover:not(:disabled) {
+  border-color: #8dbfc3;
+  background: #eef8f7;
+}
+
+.linwan-tts-error {
+  color: #9f2f20;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .assistant-input-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

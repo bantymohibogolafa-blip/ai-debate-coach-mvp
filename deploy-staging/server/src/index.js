@@ -47,6 +47,7 @@ const appUsersTable = process.env.SUPABASE_APP_USERS_TABLE || 'app_users';
 const linWanMessagesTable = process.env.SUPABASE_LINWAN_MESSAGES_TABLE || 'linwan_messages';
 const linWanMemoryTable = process.env.SUPABASE_LINWAN_MEMORY_TABLE || 'linwan_memory';
 const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '30d';
+const linWanTtsStylePrompt = '年轻高中辩论队学姐的声音，清亮柔和，稍微清冷克制，但带真诚和热情。语速中等偏慢，停顿自然，像在认真复盘和给建议，直接但不冷漠，不要客服腔、播音腔、机械朗读或过度甜美。';
 const aliyunTokenCache = {
   token: '',
   expireTime: 0
@@ -265,6 +266,21 @@ app.post('/api/debate-experience-memory/clear', requireAuth, async (req, res, ne
   try {
     await clearLinWanMemory(req.user.id);
     res.json({ message: '林婉记忆已清空。' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/linwan/tts', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validateLinWanTtsPayload(req.body);
+    const audio = await synthesizeLinWanSpeech(payload.text);
+
+    res.json({
+      audioBase64: audio.audioBase64,
+      mimeType: audio.mimeType,
+      truncated: payload.truncated
+    });
   } catch (error) {
     next(error);
   }
@@ -1341,6 +1357,22 @@ function validateDebateExperienceChatPayload(body = {}) {
   };
 }
 
+function validateLinWanTtsPayload(body = {}) {
+  const cleanText = cleanLinWanReply(normalizeText(body.text))
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleanText) {
+    throw httpError(400, '请先提供要朗读的林婉回复。');
+  }
+
+  const maxLength = 500;
+  return {
+    text: cleanText.slice(0, maxLength),
+    truncated: cleanText.length > maxLength
+  };
+}
+
 function normalizeDebateExperienceProfile(profile) {
   if (!profile || typeof profile !== 'object') return null;
   const latest = profile.latestRecordSummary && typeof profile.latestRecordSummary === 'object'
@@ -1916,6 +1948,203 @@ function cleanLinWanReply(text) {
     .trim();
 }
 
+async function synthesizeLinWanSpeech(text) {
+  const apiKey = normalizeText(process.env.XIAOMI_TTS_API_KEY || process.env.MIMO_API_KEY);
+  const model = normalizeText(process.env.XIAOMI_TTS_MODEL || process.env.MIMO_TTS_MODEL || 'mimo-v2.5-tts-voicedesign');
+  const voice = normalizeText(process.env.XIAOMI_TTS_VOICE || process.env.MIMO_TTS_VOICE);
+  const apiUrl = normalizeText(
+    process.env.XIAOMI_TTS_API_URL
+    || process.env.MIMO_TTS_API_URL
+    || 'https://api.xiaomimimo.com/v1/chat/completions'
+  );
+
+  if (!apiKey || !model || !apiUrl) {
+    const error = new Error('TTS is not configured.');
+    error.code = 'TTS_NOT_CONFIGURED';
+    error.status = 501;
+    throw error;
+  }
+
+  try {
+    return await requestXiaomiTts({
+      apiUrl,
+      apiKey,
+      model,
+      voice,
+      text,
+      includeStylePrompt: true
+    });
+  } catch (error) {
+    if (error.status !== 400) throw error;
+
+    return requestXiaomiTts({
+      apiUrl,
+      apiKey,
+      model,
+      voice,
+      text,
+      includeStylePrompt: false
+    });
+  }
+}
+
+async function requestXiaomiTts({ apiUrl, apiKey, model, voice, text, includeStylePrompt }) {
+  const body = buildXiaomiTtsRequestBody({ apiUrl, model, voice, text, includeStylePrompt });
+
+  let response;
+  try {
+    response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg,application/json'
+      },
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    const requestError = new Error('TTS request failed.');
+    requestError.code = 'TTS_REQUEST_FAILED';
+    requestError.status = 502;
+    requestError.cause = error;
+    throw requestError;
+  }
+
+  if (!response.ok) {
+    const detail = await readTtsErrorDetail(response);
+    console.error('Xiaomi TTS request failed', {
+      status: response.status,
+      detail
+    });
+
+    const error = new Error('TTS request failed.');
+    error.code = 'TTS_REQUEST_FAILED';
+    error.status = response.status;
+    error.ttsMessage = detail;
+    throw error;
+  }
+
+  return parseTtsResponse(response);
+}
+
+function buildXiaomiTtsRequestBody({ apiUrl, model, voice, text, includeStylePrompt }) {
+  if (/\/chat\/completions(?:\?|$)/i.test(apiUrl)) {
+    const styleInstruction = includeStylePrompt
+      ? `音色要求：${linWanTtsStylePrompt}\n语速中等偏慢，自然停顿，句尾稳定。`
+      : '请自然、清晰地朗读下面文本。';
+    const body = {
+      model,
+      messages: [
+        {
+          role: 'user',
+          content: `${styleInstruction}\n\n朗读文本：\n${text}`
+        }
+      ],
+      stream: false,
+      audio: {
+        format: 'mp3'
+      }
+    };
+
+    if (voice) {
+      body.audio.voice = voice;
+    }
+
+    return body;
+  }
+
+  const body = {
+    model,
+    input: text,
+    response_format: 'mp3'
+  };
+  if (voice) {
+    body.voice = voice;
+  }
+
+  if (includeStylePrompt) {
+    body.instructions = linWanTtsStylePrompt;
+    body.style_prompt = linWanTtsStylePrompt;
+    body.speed = 0.92;
+  }
+
+  return body;
+}
+
+async function parseTtsResponse(response) {
+  const contentType = response.headers.get('content-type') || '';
+
+  if (/application\/json/i.test(contentType)) {
+    const data = await response.json().catch(() => ({}));
+    const firstAudio = Array.isArray(data.data) ? data.data[0] : data.data;
+    const firstChoice = Array.isArray(data.choices) ? data.choices[0] : null;
+    const messageAudio = firstChoice?.message?.audio || firstChoice?.message?.content?.audio;
+    const outputAudio = Array.isArray(data.output) ? data.output.find((item) => item?.audio) : null;
+    const audioBase64 = normalizeText(
+      data.audioBase64
+      || data.audio_base64
+      || data.audio
+      || data.b64_json
+      || firstAudio?.audioBase64
+      || firstAudio?.audio_base64
+      || firstAudio?.audio
+      || firstAudio?.b64_json
+      || messageAudio?.data
+      || messageAudio?.audio
+      || messageAudio?.b64_json
+      || outputAudio?.audio?.data
+      || outputAudio?.audio?.b64_json
+    );
+    if (!audioBase64) {
+      const error = new Error('TTS returned empty audio.');
+      error.code = 'EMPTY_TTS_AUDIO';
+      error.status = 502;
+      throw error;
+    }
+
+    return {
+      audioBase64: stripDataUrlPrefix(audioBase64),
+      mimeType: normalizeText(
+        data.mimeType
+        || data.mime_type
+        || firstAudio?.mimeType
+        || firstAudio?.mime_type
+        || messageAudio?.mimeType
+        || messageAudio?.mime_type
+        || outputAudio?.audio?.mimeType
+        || outputAudio?.audio?.mime_type
+      ) || 'audio/mpeg'
+    };
+  }
+
+  const audioBuffer = Buffer.from(await response.arrayBuffer());
+  if (!audioBuffer.length) {
+    const error = new Error('TTS returned empty audio.');
+    error.code = 'EMPTY_TTS_AUDIO';
+    error.status = 502;
+    throw error;
+  }
+
+  return {
+    audioBase64: audioBuffer.toString('base64'),
+    mimeType: contentType.includes('audio/') ? contentType.split(';')[0] : 'audio/mpeg'
+  };
+}
+
+async function readTtsErrorDetail(response) {
+  const contentType = response.headers.get('content-type') || '';
+  if (/application\/json/i.test(contentType)) {
+    const data = await response.json().catch(() => ({}));
+    return normalizeText(data.message || data.error?.message || data.error || JSON.stringify(data));
+  }
+
+  return limitLength(normalizeText(await response.text().catch(() => '')), 300);
+}
+
+function stripDataUrlPrefix(value) {
+  return String(value || '').replace(/^data:audio\/[a-z0-9.+-]+;base64,/i, '');
+}
+
 function formatDebateExperienceProfile(profile) {
   if (!profile || !profile.recentTrainingCount) {
     return '暂无足够训练记录。请按通用赛场经验回答，并提醒用户完成几轮训练后你会更能判断训练路线。';
@@ -2038,6 +2267,10 @@ function getPublicStatus(error) {
     return 501;
   }
 
+  if (error.code === 'TTS_NOT_CONFIGURED') {
+    return 501;
+  }
+
   return 502;
 }
 
@@ -2056,6 +2289,10 @@ function getPublicErrorMessage(error) {
 
   if (error.code === 'ASR_NOT_CONFIGURED') {
     return '录音识别服务暂未配置，请先使用文字输入。';
+  }
+
+  if (error.code === 'TTS_NOT_CONFIGURED') {
+    return '语音服务暂未配置';
   }
 
   if (error.code === 'SUPABASE_NOT_CONFIGURED') {
@@ -2078,6 +2315,10 @@ function getPublicErrorMessage(error) {
       return '数据库表结构尚未更新，请先在 Supabase 执行 supabase-team-spaces.sql 和 supabase-team-task-4.sql。';
     }
     return '历史记录保存或读取失败，请稍后重试。';
+  }
+
+  if (error.code === 'TTS_REQUEST_FAILED' || error.code === 'EMPTY_TTS_AUDIO') {
+    return '语音生成失败，请稍后重试。';
   }
 
   if ([400, 401, 403, 404, 409].includes(error.status) && error.message) {

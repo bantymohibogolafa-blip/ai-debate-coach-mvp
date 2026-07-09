@@ -5090,7 +5090,22 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
   const [chatError, setChatError] = useState('');
   const [memoryStatus, setMemoryStatus] = useState('');
   const [isClearingMemory, setIsClearingMemory] = useState(false);
+  const [ttsLoadingKey, setTtsLoadingKey] = useState('');
+  const [ttsPlayingKey, setTtsPlayingKey] = useState('');
+  const [ttsErrorKey, setTtsErrorKey] = useState('');
   const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
+  const ttsAudioRef = useRef(null);
+  const ttsCacheRef = useRef(new Map());
+
+  useEffect(() => {
+    return () => {
+      stopLinWanAudio(false);
+      ttsCacheRef.current.forEach((item) => {
+        if (item?.url) URL.revokeObjectURL(item.url);
+      });
+      ttsCacheRef.current.clear();
+    };
+  }, []);
 
   async function sendExperienceQuestion(nextQuestion = question) {
     const cleanQuestion = String(nextQuestion || '').trim();
@@ -5145,6 +5160,83 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
     } finally {
       setIsClearingMemory(false);
     }
+  }
+
+  function stopLinWanAudio(updateState = true) {
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current.currentTime = 0;
+      ttsAudioRef.current = null;
+    }
+    if (updateState) {
+      setTtsPlayingKey('');
+    }
+  }
+
+  async function playLinWanReply(content, key) {
+    if (!content || ttsLoadingKey) return;
+
+    if (ttsPlayingKey === key) {
+      stopLinWanAudio();
+      return;
+    }
+
+    stopLinWanAudio();
+    setTtsErrorKey('');
+
+    const cached = ttsCacheRef.current.get(key);
+    if (cached?.url) {
+      startLinWanAudio(cached.url, key);
+      return;
+    }
+
+    setTtsLoadingKey(key);
+
+    try {
+      const data = await postJson('/api/linwan/tts', { text: content });
+      const blob = base64ToBlob(data.audioBase64, data.mimeType || 'audio/mpeg');
+      const url = URL.createObjectURL(blob);
+      ttsCacheRef.current.set(key, { url, mimeType: data.mimeType || 'audio/mpeg' });
+      startLinWanAudio(url, key);
+    } catch {
+      setTtsErrorKey(key);
+    } finally {
+      setTtsLoadingKey('');
+    }
+  }
+
+  function startLinWanAudio(url, key) {
+    const audio = new Audio(url);
+    ttsAudioRef.current = audio;
+    setTtsPlayingKey(key);
+
+    audio.onended = () => {
+      if (ttsAudioRef.current === audio) {
+        ttsAudioRef.current = null;
+        setTtsPlayingKey('');
+      }
+    };
+    audio.onerror = () => {
+      if (ttsAudioRef.current === audio) {
+        ttsAudioRef.current = null;
+        setTtsPlayingKey('');
+        setTtsErrorKey(key);
+      }
+    };
+
+    audio.play().catch(() => {
+      if (ttsAudioRef.current === audio) {
+        ttsAudioRef.current = null;
+        setTtsPlayingKey('');
+        setTtsErrorKey(key);
+      }
+    });
+  }
+
+  function getLinWanTtsButtonLabel(key) {
+    if (ttsLoadingKey === key) return '林婉正在说话...';
+    if (ttsPlayingKey === key) return '停止播放';
+    return '▶ 听林婉说';
   }
 
   return (
@@ -5220,12 +5312,32 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
       </section>
 
       <div className="assistant-chat-list experience-chat-list">
-        {messages.map((item, index) => (
-          <article className={`assistant-chat-message ${item.role}`} key={`${item.role}-${index}`}>
-            <span>{item.role === 'user' ? '我的问题' : '林婉'}</span>
-            <p>{item.content}</p>
-          </article>
-        ))}
+        {messages.map((item, index) => {
+          const ttsKey = getLinWanTtsKey(item.content, index);
+          const canPlayTts = item.role === 'assistant' && item.content !== openingMessage;
+
+          return (
+            <article className={`assistant-chat-message ${item.role}`} key={`${item.role}-${index}`}>
+              <span>{item.role === 'user' ? '我的问题' : '林婉'}</span>
+              <p>{item.content}</p>
+              {canPlayTts && (
+                <div className="linwan-tts-row">
+                  <button
+                    type="button"
+                    className="linwan-tts-button"
+                    disabled={Boolean(ttsLoadingKey && ttsLoadingKey !== ttsKey)}
+                    onClick={() => playLinWanReply(item.content, ttsKey)}
+                  >
+                    {getLinWanTtsButtonLabel(ttsKey)}
+                  </button>
+                  {ttsErrorKey === ttsKey && (
+                    <small className="linwan-tts-error">语音生成失败，请稍后重试。</small>
+                  )}
+                </div>
+              )}
+            </article>
+          );
+        })}
       </div>
 
       {isSending && <div className="assistant-loading">林婉正在整理思路...</div>}
@@ -5292,6 +5404,26 @@ function TrainingProfileCard({ profile }) {
       </div>
     </article>
   );
+}
+
+function getLinWanTtsKey(content, index) {
+  const text = String(content || '');
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+
+  return `linwan-${index}-${Math.abs(hash)}`;
+}
+
+function base64ToBlob(base64, mimeType = 'audio/mpeg') {
+  const binary = atob(String(base64 || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return new Blob([bytes], { type: mimeType });
 }
 
 function ReviewAssistant({ context }) {
