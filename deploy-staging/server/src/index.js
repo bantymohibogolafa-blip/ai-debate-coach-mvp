@@ -1955,7 +1955,7 @@ async function synthesizeLinWanSpeech(text) {
   const apiUrl = normalizeText(
     process.env.XIAOMI_TTS_API_URL
     || process.env.MIMO_TTS_API_URL
-    || 'https://api.xiaomimimo.com/v1/chat/completions'
+    || 'https://api.xiaomimimo.com/v1'
   );
 
   if (!apiKey || !model || !apiUrl) {
@@ -2026,73 +2026,124 @@ async function requestXiaomiTts({ apiUrl, apiKey, body, attemptLabel }) {
 
 function buildXiaomiTtsAttempts({ apiUrl, model, voice, text }) {
   const voiceValue = resolveXiaomiTtsVoice({ model, voice });
+  const endpoints = resolveXiaomiTtsEndpoints(apiUrl);
   const attempts = [];
 
-  if (/\/chat\/completions(?:\?|$)/i.test(apiUrl)) {
+  for (const endpoint of endpoints) {
+    if (endpoint.type === 'speech') {
+      attempts.push({
+        label: `${endpoint.label}-speech-body`,
+        apiUrl: endpoint.url,
+        body: buildSpeechTtsBody({ model, voice: voiceValue, text, includeStylePrompt: true })
+      });
+
+      attempts.push({
+        label: `${endpoint.label}-speech-body-plain`,
+        apiUrl: endpoint.url,
+        body: buildSpeechTtsBody({ model, voice: voiceValue, text, includeStylePrompt: false })
+      });
+
+      attempts.push({
+        label: `${endpoint.label}-speech-body-format`,
+        apiUrl: endpoint.url,
+        body: buildSpeechTtsBody({
+          model,
+          voice: voiceValue,
+          text,
+          includeStylePrompt: true,
+          formatField: 'format'
+        })
+      });
+
+      continue;
+    }
+
     attempts.push({
-      label: 'chat-voice-design',
-      apiUrl,
+      label: `${endpoint.label}-chat-voice-design`,
+      apiUrl: endpoint.url,
       body: buildChatCompletionTtsBody({ model, voice: voiceValue, text })
     });
 
     attempts.push({
-      label: 'chat-voice-design-stream-false',
-      apiUrl,
+      label: `${endpoint.label}-chat-voice-design-stream-false`,
+      apiUrl: endpoint.url,
       body: buildChatCompletionTtsBody({ model, voice: voiceValue, text, stream: false })
     });
 
     attempts.push({
-      label: 'chat-voice-prompt',
-      apiUrl,
+      label: `${endpoint.label}-chat-voice-prompt`,
+      apiUrl: endpoint.url,
       body: buildChatCompletionTtsBody({ model, voice: voiceValue, text, voiceField: 'voice_prompt' })
     });
 
     attempts.push({
-      label: 'chat-style-prompt',
-      apiUrl,
+      label: `${endpoint.label}-chat-style-prompt`,
+      apiUrl: endpoint.url,
       body: buildChatCompletionTtsBody({ model, voice: voiceValue, text, voiceField: 'style_prompt' })
     });
 
     attempts.push({
-      label: 'chat-content-array',
-      apiUrl,
+      label: `${endpoint.label}-chat-content-array`,
+      apiUrl: endpoint.url,
       body: buildChatCompletionContentArrayBody({ model, voice: voiceValue, text })
     });
 
     attempts.push({
-      label: 'chat-audio-object',
-      apiUrl,
+      label: `${endpoint.label}-chat-audio-object`,
+      apiUrl: endpoint.url,
       body: buildChatCompletionAudioBody({ model, voice: voiceValue, text })
     });
 
     attempts.push({
-      label: 'chat-plain',
-      apiUrl,
+      label: `${endpoint.label}-chat-plain`,
+      apiUrl: endpoint.url,
       body: buildChatCompletionTtsBody({ model, text })
     });
 
     attempts.push({
-      label: 'chat-speech-body',
-      apiUrl,
+      label: `${endpoint.label}-chat-speech-body`,
+      apiUrl: endpoint.url,
       body: buildSpeechTtsBody({ model, voice: voiceValue, text, includeStylePrompt: true })
     });
-
-    return uniqueXiaomiTtsAttempts(attempts);
   }
 
-  attempts.push({
-    label: 'speech-body',
-    apiUrl,
-    body: buildSpeechTtsBody({ model, voice: voiceValue, text, includeStylePrompt: true })
-  });
-
-  attempts.push({
-    label: 'speech-body-plain',
-    apiUrl,
-    body: buildSpeechTtsBody({ model, voice: voiceValue, text, includeStylePrompt: false })
-  });
-
   return uniqueXiaomiTtsAttempts(attempts);
+}
+
+function resolveXiaomiTtsEndpoints(rawApiUrl) {
+  const cleanUrl = String(rawApiUrl || '').trim().replace(/\/+$/, '');
+
+  try {
+    const parsedUrl = new URL(cleanUrl);
+    const basePath = parsedUrl.pathname
+      .replace(/\/chat\/completions\/?$/i, '')
+      .replace(/\/audio\/speech\/?$/i, '')
+      .replace(/\/+$/, '');
+    const baseUrl = `${parsedUrl.origin}${basePath}`;
+    const query = parsedUrl.search || '';
+    const path = parsedUrl.pathname.replace(/\/+$/, '');
+
+    if (/\/audio\/speech$/i.test(path)) {
+      return [
+        { type: 'speech', label: 'configured-audio-speech', url: cleanUrl },
+        { type: 'chat', label: 'derived-chat-completions', url: `${baseUrl}/chat/completions${query}` }
+      ];
+    }
+
+    if (/\/chat\/completions$/i.test(path)) {
+      return [
+        { type: 'speech', label: 'derived-audio-speech', url: `${baseUrl}/audio/speech${query}` },
+        { type: 'chat', label: 'configured-chat-completions', url: cleanUrl }
+      ];
+    }
+
+    return [
+      { type: 'speech', label: 'base-audio-speech', url: `${cleanUrl}/audio/speech` },
+      { type: 'chat', label: 'base-chat-completions', url: `${cleanUrl}/chat/completions` }
+    ];
+  } catch {
+    return [{ type: 'speech', label: 'configured-url', url: cleanUrl }];
+  }
 }
 
 function resolveXiaomiTtsVoice({ model, voice }) {
@@ -2159,13 +2210,13 @@ function buildChatCompletionAudioBody({ model, voice, text }) {
   return body;
 }
 
-function buildSpeechTtsBody({ model, voice, text, includeStylePrompt }) {
+function buildSpeechTtsBody({ model, voice, text, includeStylePrompt, formatField = 'response_format' }) {
   const body = {
     model,
-    input: text,
-    response_format: 'mp3'
+    input: text
   };
 
+  body[formatField] = 'mp3';
   if (voice) body.voice = voice;
 
   if (includeStylePrompt) {
@@ -2485,8 +2536,9 @@ function getPublicErrorMessage(error) {
 
   if (error.code === 'TTS_REQUEST_FAILED' || error.code === 'EMPTY_TTS_AUDIO') {
     const detail = limitLength(redactSensitiveText(error.ttsMessage || ''), 180);
+    const attempt = error.ttsAttempt ? `（${error.ttsAttempt}）` : '';
     if (detail) {
-      return `语音生成失败，请稍后重试。状态 ${error.status || 502}：${detail}`;
+      return `语音生成失败，请稍后重试。${attempt}状态 ${error.status || 502}：${detail}`;
     }
     return '语音生成失败，请稍后重试。';
   }
