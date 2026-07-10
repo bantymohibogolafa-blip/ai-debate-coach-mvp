@@ -47,7 +47,7 @@ const appUsersTable = process.env.SUPABASE_APP_USERS_TABLE || 'app_users';
 const linWanMessagesTable = process.env.SUPABASE_LINWAN_MESSAGES_TABLE || 'linwan_messages';
 const linWanMemoryTable = process.env.SUPABASE_LINWAN_MEMORY_TABLE || 'linwan_memory';
 const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '30d';
-const linWanTtsStylePrompt = '年轻高中辩论队学姐的声音，清亮柔和，稍微清冷克制，但带真诚和热情。语速中等偏慢，停顿自然，像在认真复盘和给建议，直接但不冷漠，不要客服腔、播音腔、机械朗读或过度甜美。';
+const linWanTtsStylePrompt = '年轻高中辩论队学姐的声音，清亮、自然、干净，语气清醒克制但不高冷，带一点真诚和热情。像在认真陪队友复盘、拆问题、给建议。说话要利落，节奏中等略快，停顿自然但不要拖长，句尾收得干净。指出问题时坚定直接，安抚用户时轻一点，但不要软绵绵。不要客服腔，不要播音腔，不要机械朗读，不要过度甜美，不要过度清冷。';
 const aliyunTokenCache = {
   token: '',
   expireTime: 0
@@ -2157,7 +2157,7 @@ function buildSpeechTtsBody({ model, voice, text, includeStylePrompt, formatFiel
   if (includeStylePrompt) {
     body.instructions = linWanTtsStylePrompt;
     body.style_prompt = linWanTtsStylePrompt;
-    body.speed = 0.92;
+    body.speed = 1.08;
   }
 
   return body;

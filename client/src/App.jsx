@@ -5210,6 +5210,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
 
   function startLinWanAudio(url, key) {
     const audio = new Audio(url);
+    audio.playbackRate = 1.08;
     ttsAudioRef.current = audio;
     setTtsPlayingKey(key);
 
@@ -5237,7 +5238,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
   }
 
   function getLinWanTtsButtonLabel(key) {
-    if (ttsLoadingKey === key) return '林婉正在说话...';
+    if (ttsLoadingKey === key) return '林婉正在开口...';
     if (ttsPlayingKey === key) return '停止播放';
     return '▶ 听林婉说';
   }
