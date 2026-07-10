@@ -2217,12 +2217,86 @@ textarea:focus {
   word-break: normal;
 }
 
-.linwan-tts-row {
+.linwan-voice-player {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-top: 10px;
+  max-width: 100%;
+  color: #52636c;
+  font-size: 12px;
+}
+
+.linwan-voice-player.preparing,
+.linwan-voice-player.active {
+  width: min(100%, 520px);
+  border: 1px solid #cfe1e1;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #f7fbfa;
+}
+
+.linwan-voice-player.preparing {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+}
+
+.linwan-voice-status-line,
+.linwan-voice-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.linwan-voice-status-line strong,
+.linwan-voice-controls strong {
+  color: #245e62;
+  font-size: 13px;
+}
+
+.linwan-voice-status-line > span:last-child,
+.linwan-voice-controls time {
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.linwan-voice-player small {
+  color: #78888f;
+  font-size: 12px;
+}
+
+.linwan-voice-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  width: 22px;
+  height: 16px;
+}
+
+.linwan-voice-loader i {
+  width: 3px;
+  height: 6px;
+  border-radius: 2px;
+  background: #2f7375;
+  animation: linwan-voice-pulse 0.9s ease-in-out infinite;
+}
+
+.linwan-voice-loader i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.linwan-voice-loader i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes linwan-voice-pulse {
+  0%, 100% { height: 5px; opacity: 0.55; }
+  50% { height: 14px; opacity: 1; }
 }
 
 .linwan-tts-button {
@@ -2241,10 +2315,39 @@ textarea:focus {
   background: #eef8f7;
 }
 
-.linwan-tts-error {
+.linwan-voice-player.error {
+  align-items: center;
   color: #9f2f20;
+}
+
+.linwan-voice-action {
+  min-width: 66px;
+  min-height: 32px;
+  border: 1px solid #a8cbcd;
+  border-radius: 7px;
+  padding: 5px 9px;
+  color: #245e62;
+  background: #ffffff;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 900;
+}
+
+.linwan-voice-action:hover {
+  border-color: #6fa9ad;
+  background: #edf7f6;
+}
+
+.linwan-voice-progress {
+  width: 100%;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: #2f7375;
+  cursor: pointer;
+}
+
+.linwan-voice-progress:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .assistant-input-row {
@@ -4346,6 +4449,26 @@ textarea:focus {
   .polish-option button {
     width: 100%;
     min-height: 42px;
+  }
+
+  .linwan-voice-player.preparing,
+  .linwan-voice-player.active {
+    width: 100%;
+    padding: 8px;
+  }
+
+  .linwan-voice-status-line,
+  .linwan-voice-controls {
+    flex-wrap: wrap;
+  }
+
+  .linwan-voice-status-line > span:last-child,
+  .linwan-voice-controls time {
+    margin-left: auto;
+  }
+
+  .linwan-voice-progress {
+    height: 28px;
   }
 }
 

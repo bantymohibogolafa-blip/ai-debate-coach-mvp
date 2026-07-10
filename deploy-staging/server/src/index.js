@@ -272,9 +272,18 @@ app.post('/api/debate-experience-memory/clear', requireAuth, async (req, res, ne
 });
 
 app.post('/api/linwan/tts', requireAuth, async (req, res, next) => {
+  const startedAt = Date.now();
+  let payload;
   try {
-    const payload = validateLinWanTtsPayload(req.body);
+    payload = validateLinWanTtsPayload(req.body);
     const audio = await synthesizeLinWanSpeech(payload.text);
+
+    console.info('[Linwan TTS]', {
+      mode: payload.mode,
+      textLength: payload.text.length,
+      durationMs: Date.now() - startedAt,
+      success: true
+    });
 
     res.json({
       audioBase64: audio.audioBase64,
@@ -282,6 +291,13 @@ app.post('/api/linwan/tts', requireAuth, async (req, res, next) => {
       truncated: payload.truncated
     });
   } catch (error) {
+    console.error('[Linwan TTS]', {
+      mode: payload?.mode || 'unknown',
+      textLength: payload?.text?.length || 0,
+      durationMs: Date.now() - startedAt,
+      success: false,
+      status: error.status || 502
+    });
     next(error);
   }
 });
@@ -1366,10 +1382,11 @@ function validateLinWanTtsPayload(body = {}) {
     throw httpError(400, '请先提供要朗读的林婉回复。');
   }
 
-  const maxLength = 500;
+  const maxLength = 6000;
   return {
     text: cleanText.slice(0, maxLength),
-    truncated: cleanText.length > maxLength
+    truncated: cleanText.length > maxLength,
+    mode: body.mode === 'pregenerate' ? 'pregenerate' : 'ondemand'
   };
 }
 
@@ -1989,6 +2006,8 @@ async function synthesizeLinWanSpeech(text) {
 
 async function requestXiaomiTts({ apiUrl, apiKey, body, attemptLabel }) {
   let response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
   try {
     response = await fetch(apiUrl, {
       method: 'POST',
@@ -1998,14 +2017,18 @@ async function requestXiaomiTts({ apiUrl, apiKey, body, attemptLabel }) {
         'Content-Type': 'application/json',
         Accept: 'audio/wav,audio/mpeg,application/json'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: controller.signal
     });
   } catch (error) {
     const requestError = new Error('TTS request failed.');
     requestError.code = 'TTS_REQUEST_FAILED';
-    requestError.status = 502;
+    requestError.status = error?.name === 'AbortError' ? 504 : 502;
+    requestError.ttsMessage = error?.name === 'AbortError' ? 'TTS request timed out.' : '';
     requestError.cause = error;
     throw requestError;
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!response.ok) {
@@ -2478,11 +2501,6 @@ function getPublicErrorMessage(error) {
   }
 
   if (error.code === 'TTS_REQUEST_FAILED' || error.code === 'EMPTY_TTS_AUDIO') {
-    const detail = limitLength(redactSensitiveText(error.ttsMessage || ''), 180);
-    const attempt = error.ttsAttempt ? `（${error.ttsAttempt}）` : '';
-    if (detail) {
-      return `语音生成失败，请稍后重试。${attempt}状态 ${error.status || 502}：${detail}`;
-    }
     return '语音生成失败，请稍后重试。';
   }
 

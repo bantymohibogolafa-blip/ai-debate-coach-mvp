@@ -4,6 +4,12 @@ import OnboardingGuide from './components/OnboardingGuide.jsx';
 import ReviewGeneratingCard from './components/ReviewGeneratingCard.jsx';
 import { getAbilityVideosForDimension } from './data/abilityVideoMap.js';
 
+const LINWAN_PLAYBACK_RATE = 1.08;
+const LINWAN_VOICE_VERSION = 'voicedesign-v1';
+const LINWAN_TTS_PREPARE_DELAY_MS = 700;
+const LINWAN_TTS_CACHE_LIMIT = 5;
+let linWanMessageSequence = 0;
+
 const sides = [
   { label: '正方', value: 'affirmative' },
   { label: '反方', value: 'negative' }
@@ -5085,28 +5091,112 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
   const openingMessage = '我是林婉，你的辩论顾问，也是你的辩论搭子。\n\n我会参考你最近的训练状态，不局限于某一场比赛，综合分析你的问题，提出我的建议。\n\n另外，我也有许多大赛经验。赛前准备、攻防设计、临场心态这些问题，都可以拿来问我，我会把能用的经验讲给你听。\n\n辩论赛的准备过程是痛苦且艰辛的，但没事，有我在，我们慢慢来。';
   const hasTrainingProfile = Number(trainingProfile?.recentTrainingCount || 0) > 0;
   const [question, setQuestion] = useState('');
-  const [messages, setMessages] = useState([{ role: 'assistant', content: openingMessage }]);
+  const [messages, setMessages] = useState(() => [createLinWanMessage('assistant', openingMessage, 'linwan-opening')]);
   const [isSending, setIsSending] = useState(false);
   const [chatError, setChatError] = useState('');
   const [memoryStatus, setMemoryStatus] = useState('');
   const [isClearingMemory, setIsClearingMemory] = useState(false);
-  const [ttsLoadingKey, setTtsLoadingKey] = useState('');
-  const [ttsPlayingKey, setTtsPlayingKey] = useState('');
-  const [ttsErrorKey, setTtsErrorKey] = useState('');
-  const [ttsErrorMessage, setTtsErrorMessage] = useState('');
+  const [ttsStates, setTtsStates] = useState({});
+  const [isPageVisible, setIsPageVisible] = useState(() => (
+    typeof document === 'undefined' || document.visibilityState === 'visible'
+  ));
   const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
   const ttsAudioRef = useRef(null);
   const ttsCacheRef = useRef(new Map());
+  const ttsRequestsRef = useRef(new Map());
+  const ttsFailedRef = useRef(new Set());
+  const latestVoiceKeyRef = useRef('');
+  const isLinWanMountedRef = useRef(false);
+
+  const latestSpeakableMessage = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const item = messages[index];
+      if (item.role === 'assistant' && item.content && item.id !== 'linwan-opening') {
+        return item;
+      }
+    }
+    return null;
+  }, [messages]);
+  const latestVoiceKey = latestSpeakableMessage ? getLinWanTtsKey(latestSpeakableMessage) : '';
+  const hasPreparingVoice = Object.values(ttsStates).some((item) => item?.status === 'preparing');
 
   useEffect(() => {
+    isLinWanMountedRef.current = true;
     return () => {
       stopLinWanAudio(false);
-      ttsCacheRef.current.forEach((item) => {
-        if (item?.url) URL.revokeObjectURL(item.url);
-      });
-      ttsCacheRef.current.clear();
+      isLinWanMountedRef.current = false;
+      ttsRequestsRef.current.forEach((request) => request.controller.abort());
+      ttsRequestsRef.current.clear();
+      clearLinWanAudioCache(false);
     };
   }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => setIsPageVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    if (!hasPreparingVoice) return undefined;
+
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setTtsStates((current) => {
+        let changed = false;
+        const next = { ...current };
+        Object.entries(current).forEach(([key, item]) => {
+          if (item?.status !== 'preparing' || !item.startedAt) return;
+          const elapsedSeconds = Math.max(0, Math.floor((now - item.startedAt) / 1000));
+          if (elapsedSeconds !== item.elapsedSeconds) {
+            next[key] = { ...item, elapsedSeconds };
+            changed = true;
+          }
+        });
+        return changed ? next : current;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [hasPreparingVoice]);
+
+  useEffect(() => {
+    latestVoiceKeyRef.current = latestVoiceKey;
+    if (
+      !latestSpeakableMessage
+      || !latestVoiceKey
+      || isSending
+      || !isLoggedIn
+      || !isPageVisible
+      || ttsCacheRef.current.has(latestVoiceKey)
+      || ttsRequestsRef.current.has(latestVoiceKey)
+      || ttsFailedRef.current.has(latestVoiceKey)
+    ) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (
+        !isLinWanMountedRef.current
+        || document.visibilityState !== 'visible'
+        || latestVoiceKeyRef.current !== latestVoiceKey
+      ) {
+        return;
+      }
+      void requestLinWanAudio(latestSpeakableMessage.content, latestVoiceKey, 'pregenerate');
+    }, LINWAN_TTS_PREPARE_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+      const request = ttsRequestsRef.current.get(latestVoiceKey);
+      if (request?.mode === 'pregenerate') request.controller.abort();
+    };
+  }, [latestVoiceKey, latestSpeakableMessage?.content, isSending, isLoggedIn, isPageVisible]);
+
+  useEffect(() => {
+    if (isLoggedIn) return;
+    resetLinWanVoiceSession();
+  }, [isLoggedIn]);
 
   async function sendExperienceQuestion(nextQuestion = question) {
     const cleanQuestion = String(nextQuestion || '').trim();
@@ -5115,7 +5205,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
     const historyForRequest = messages
       .filter((item) => item.content !== openingMessage)
       .slice(-10);
-    const nextMessages = [...messages, { role: 'user', content: cleanQuestion }];
+    const nextMessages = [...messages, createLinWanMessage('user', cleanQuestion)];
     setMessages(nextMessages);
     setQuestion('');
     setChatError('');
@@ -5127,7 +5217,10 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
         chatHistory: historyForRequest,
         userTrainingProfile: trainingProfile || null
       });
-      setMessages([...nextMessages, { role: 'assistant', content: data.answer || '我暂时没有整理好回答，你可以换个问法再试一次。' }]);
+      setMessages([
+        ...nextMessages,
+        createLinWanMessage('assistant', data.answer || '我暂时没有整理好回答，你可以换个问法再试一次。')
+      ]);
     } catch {
       setChatError('林婉暂时没有回应，请稍后再试。');
     } finally {
@@ -5154,7 +5247,8 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
 
     try {
       const data = await postJson('/api/debate-experience-memory/clear', {});
-      setMessages([{ role: 'assistant', content: openingMessage }]);
+      resetLinWanVoiceSession();
+      setMessages([createLinWanMessage('assistant', openingMessage, 'linwan-opening')]);
       setMemoryStatus(data.message || '林婉记忆已清空。');
     } catch {
       setMemoryStatus('林婉记忆暂时清空失败，请稍后再试。');
@@ -5163,84 +5257,270 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
     }
   }
 
-  function stopLinWanAudio(updateState = true) {
-    if (ttsAudioRef.current) {
-      ttsAudioRef.current.pause();
-      ttsAudioRef.current.currentTime = 0;
-      ttsAudioRef.current = null;
-    }
-    if (updateState) {
-      setTtsPlayingKey('');
-    }
+  function setLinWanTtsState(key, patch) {
+    if (!key || !isLinWanMountedRef.current) return;
+    setTtsStates((current) => ({
+      ...current,
+      [key]: {
+        status: 'idle',
+        currentTime: 0,
+        duration: null,
+        elapsedSeconds: 0,
+        ...current[key],
+        ...patch
+      }
+    }));
   }
 
-  async function playLinWanReply(content, key) {
-    if (!content || ttsLoadingKey) return;
-
-    if (ttsPlayingKey === key) {
-      stopLinWanAudio();
-      return;
-    }
-
-    stopLinWanAudio();
-    setTtsErrorKey('');
-    setTtsErrorMessage('');
-
-    const cached = ttsCacheRef.current.get(key);
-    if (cached?.url) {
-      startLinWanAudio(cached.url, key);
-      return;
-    }
-
-    setTtsLoadingKey(key);
-
-    try {
-      const data = await postJson('/api/linwan/tts', { text: content });
-      const blob = base64ToBlob(data.audioBase64, data.mimeType || 'audio/mpeg');
-      const url = URL.createObjectURL(blob);
-      ttsCacheRef.current.set(key, { url, mimeType: data.mimeType || 'audio/mpeg' });
-      startLinWanAudio(url, key);
-    } catch (error) {
-      setTtsErrorKey(key);
-      setTtsErrorMessage(getFriendlyError(error) || '语音生成失败，请稍后重试。');
-    } finally {
-      setTtsLoadingKey('');
-    }
-  }
-
-  function startLinWanAudio(url, key) {
-    const audio = new Audio(url);
-    audio.playbackRate = 1.08;
-    ttsAudioRef.current = audio;
-    setTtsPlayingKey(key);
-
-    audio.onended = () => {
-      if (ttsAudioRef.current === audio) {
-        ttsAudioRef.current = null;
-        setTtsPlayingKey('');
-      }
-    };
-    audio.onerror = () => {
-      if (ttsAudioRef.current === audio) {
-        ttsAudioRef.current = null;
-        setTtsPlayingKey('');
-        setTtsErrorKey(key);
-      }
-    };
-
-    audio.play().catch(() => {
-      if (ttsAudioRef.current === audio) {
-        ttsAudioRef.current = null;
-        setTtsPlayingKey('');
-        setTtsErrorKey(key);
-      }
+  function removeLinWanTtsState(key) {
+    if (!isLinWanMountedRef.current) return;
+    setTtsStates((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
     });
   }
 
-  function getLinWanTtsButtonLabel(key) {
-    if (ttsLoadingKey === key) return '林婉正在开口...';
-    if (ttsPlayingKey === key) return '停止播放';
-    return '▶ 听林婉说';
+  function stopLinWanAudio(updateState = true) {
+    const active = ttsAudioRef.current;
+    if (!active) return;
+
+    const item = ttsCacheRef.current.get(active.key);
+    if (item?.audio) {
+      item.suppressPause = true;
+      item.audio.pause();
+      item.audio.currentTime = 0;
+      item.suppressPause = false;
+    }
+    ttsAudioRef.current = null;
+    if (updateState) {
+      setLinWanTtsState(active.key, { status: 'ready', currentTime: 0 });
+    }
+  }
+
+  function releaseLinWanCacheEntry(key, updateState = true) {
+    const item = ttsCacheRef.current.get(key);
+    if (!item) return;
+
+    if (ttsAudioRef.current?.key === key) ttsAudioRef.current = null;
+    item.releasing = true;
+    if (item.audio) {
+      item.suppressPause = true;
+      item.audio.pause();
+      item.audio.removeAttribute('src');
+      item.audio.load();
+      item.audio = null;
+    }
+    if (item.url) URL.revokeObjectURL(item.url);
+    ttsCacheRef.current.delete(key);
+    if (updateState) removeLinWanTtsState(key);
+  }
+
+  function clearLinWanAudioCache(updateState = true) {
+    [...ttsCacheRef.current.keys()].forEach((key) => releaseLinWanCacheEntry(key, updateState));
+  }
+
+  function pruneLinWanAudioCache() {
+    while (ttsCacheRef.current.size > LINWAN_TTS_CACHE_LIMIT) {
+      const oldestKey = ttsCacheRef.current.keys().next().value;
+      if (!oldestKey) break;
+      releaseLinWanCacheEntry(oldestKey);
+    }
+  }
+
+  function resetLinWanVoiceSession() {
+    ttsRequestsRef.current.forEach((request) => request.controller.abort());
+    ttsRequestsRef.current.clear();
+    ttsFailedRef.current.clear();
+    stopLinWanAudio(false);
+    clearLinWanAudioCache(false);
+    setTtsStates({});
+  }
+
+  function ensureLinWanAudio(key) {
+    const item = ttsCacheRef.current.get(key);
+    if (!item) return null;
+    if (item.audio) return item.audio;
+
+    const audio = new Audio(item.url);
+    audio.preload = 'metadata';
+    audio.playbackRate = LINWAN_PLAYBACK_RATE;
+    item.audio = audio;
+
+    const updateDuration = () => {
+      if (ttsCacheRef.current.get(key) !== item) return;
+      const duration = Number.isFinite(audio.duration) ? audio.duration : null;
+      item.duration = duration;
+      setLinWanTtsState(key, { duration });
+    };
+
+    audio.addEventListener('loadedmetadata', updateDuration);
+    audio.addEventListener('durationchange', updateDuration);
+    audio.addEventListener('timeupdate', () => {
+      if (ttsCacheRef.current.get(key) !== item) return;
+      setLinWanTtsState(key, { currentTime: audio.currentTime || 0 });
+    });
+    audio.addEventListener('play', () => {
+      if (ttsCacheRef.current.get(key) !== item) return;
+      ttsAudioRef.current = { key, audio };
+      setLinWanTtsState(key, { status: 'playing' });
+    });
+    audio.addEventListener('pause', () => {
+      if (item.releasing || item.suppressPause || audio.ended || ttsCacheRef.current.get(key) !== item) return;
+      setLinWanTtsState(key, { status: 'paused', currentTime: audio.currentTime || 0 });
+    });
+    audio.addEventListener('ended', () => {
+      if (ttsCacheRef.current.get(key) !== item) return;
+      if (ttsAudioRef.current?.key === key) ttsAudioRef.current = null;
+      setLinWanTtsState(key, {
+        status: 'ended',
+        currentTime: Number.isFinite(audio.duration) ? audio.duration : audio.currentTime || 0
+      });
+    });
+    audio.addEventListener('error', () => {
+      if (item.releasing || ttsCacheRef.current.get(key) !== item) return;
+      releaseLinWanCacheEntry(key, false);
+      ttsFailedRef.current.add(key);
+      setLinWanTtsState(key, { status: 'error', errorMessage: '语音暂时没有准备好。' });
+    });
+
+    audio.load();
+    return audio;
+  }
+
+  async function requestLinWanAudio(content, key, mode = 'ondemand', playWhenReady = false) {
+    if (!content || !key || !isLoggedIn) return null;
+
+    const cached = ttsCacheRef.current.get(key);
+    if (cached) {
+      if (playWhenReady) void playLinWanCachedAudio(key);
+      return cached;
+    }
+
+    const existingRequest = ttsRequestsRef.current.get(key);
+    if (existingRequest) return existingRequest.promise;
+    if (mode === 'pregenerate' && ttsFailedRef.current.has(key)) return null;
+
+    ttsFailedRef.current.delete(key);
+    const controller = new AbortController();
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const startedAt = Date.now();
+    setLinWanTtsState(key, {
+      status: 'preparing',
+      startedAt,
+      elapsedSeconds: 0,
+      currentTime: 0,
+      duration: null,
+      errorMessage: ''
+    });
+
+    const promise = (async () => {
+      try {
+        const data = await postJson('/api/linwan/tts', { text: content, mode }, { signal: controller.signal });
+        const request = ttsRequestsRef.current.get(key);
+        const isStalePregeneration = mode === 'pregenerate' && (
+          latestVoiceKeyRef.current !== key || document.visibilityState !== 'visible'
+        );
+        if (
+          controller.signal.aborted
+          || !isLinWanMountedRef.current
+          || request?.id !== requestId
+          || isStalePregeneration
+        ) {
+          return null;
+        }
+
+        const blob = base64ToBlob(data.audioBase64, data.mimeType || 'audio/mpeg');
+        if (!blob.size) throw new Error('EMPTY_LINWAN_AUDIO');
+        const url = URL.createObjectURL(blob);
+        const item = {
+          url,
+          mimeType: data.mimeType || 'audio/mpeg',
+          duration: null,
+          createdAt: Date.now(),
+          audio: null,
+          suppressPause: false,
+          releasing: false
+        };
+        ttsCacheRef.current.set(key, item);
+        setLinWanTtsState(key, {
+          status: 'ready',
+          currentTime: 0,
+          duration: null,
+          elapsedSeconds: Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+        });
+        ensureLinWanAudio(key);
+        pruneLinWanAudioCache();
+        if (playWhenReady) await playLinWanCachedAudio(key);
+        return item;
+      } catch (error) {
+        if (error?.name === 'AbortError' || controller.signal.aborted) {
+          setLinWanTtsState(key, { status: 'idle', elapsedSeconds: 0, startedAt: 0 });
+          return null;
+        }
+        ttsFailedRef.current.add(key);
+        setLinWanTtsState(key, { status: 'error', errorMessage: '语音暂时没有准备好。' });
+        return null;
+      } finally {
+        if (ttsRequestsRef.current.get(key)?.id === requestId) {
+          ttsRequestsRef.current.delete(key);
+        }
+      }
+    })();
+
+    ttsRequestsRef.current.set(key, { id: requestId, mode, controller, promise });
+    return promise;
+  }
+
+  async function playLinWanCachedAudio(key) {
+    const item = ttsCacheRef.current.get(key);
+    if (!item) return;
+
+    const active = ttsAudioRef.current;
+    if (active && active.key !== key) stopLinWanAudio();
+
+    const audio = ensureLinWanAudio(key);
+    if (!audio) return;
+    if (!audio.paused) {
+      audio.pause();
+      return;
+    }
+
+    const state = ttsStates[key];
+    if (state?.status === 'ended' || (Number.isFinite(audio.duration) && audio.currentTime >= audio.duration)) {
+      audio.currentTime = 0;
+      setLinWanTtsState(key, { currentTime: 0 });
+    }
+    audio.playbackRate = LINWAN_PLAYBACK_RATE;
+
+    try {
+      await audio.play();
+    } catch {
+      releaseLinWanCacheEntry(key, false);
+      ttsFailedRef.current.add(key);
+      setLinWanTtsState(key, { status: 'error', errorMessage: '语音暂时没有准备好。' });
+    }
+  }
+
+  function handleLinWanVoiceAction(content, key, state) {
+    const status = state?.status || 'idle';
+    if (status === 'preparing') return;
+    if (status === 'playing' || status === 'ready' || status === 'paused' || status === 'ended') {
+      void playLinWanCachedAudio(key);
+      return;
+    }
+    if (status === 'error') ttsFailedRef.current.delete(key);
+    void requestLinWanAudio(content, key, 'ondemand', true);
+  }
+
+  function seekLinWanAudio(key, value) {
+    const item = ttsCacheRef.current.get(key);
+    const audio = item?.audio;
+    const nextTime = Number(value);
+    if (!audio || !Number.isFinite(nextTime) || !Number.isFinite(audio.duration)) return;
+    audio.currentTime = Math.min(Math.max(nextTime, 0), audio.duration);
+    setLinWanTtsState(key, { currentTime: audio.currentTime });
   }
 
   return (
@@ -5317,27 +5597,25 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
 
       <div className="assistant-chat-list experience-chat-list">
         {messages.map((item, index) => {
-          const ttsKey = getLinWanTtsKey(item.content, index);
-          const canPlayTts = item.role === 'assistant' && item.content !== openingMessage;
+          const ttsKey = getLinWanTtsKey(item);
+          const canPlayTts = item.role === 'assistant' && item.id !== 'linwan-opening';
+          const ttsState = ttsStates[ttsKey] || {
+            status: ttsCacheRef.current.has(ttsKey) ? 'ready' : 'idle',
+            currentTime: 0,
+            duration: ttsCacheRef.current.get(ttsKey)?.duration || null,
+            elapsedSeconds: 0
+          };
 
           return (
-            <article className={`assistant-chat-message ${item.role}`} key={`${item.role}-${index}`}>
+            <article className={`assistant-chat-message ${item.role}`} key={item.id || `${item.role}-${index}`}>
               <span>{item.role === 'user' ? '我的问题' : '林婉'}</span>
               <p>{item.content}</p>
               {canPlayTts && (
-                <div className="linwan-tts-row">
-                  <button
-                    type="button"
-                    className="linwan-tts-button"
-                    disabled={Boolean(ttsLoadingKey && ttsLoadingKey !== ttsKey)}
-                    onClick={() => playLinWanReply(item.content, ttsKey)}
-                  >
-                    {getLinWanTtsButtonLabel(ttsKey)}
-                  </button>
-                  {ttsErrorKey === ttsKey && (
-                    <small className="linwan-tts-error">{ttsErrorMessage || '语音生成失败，请稍后重试。'}</small>
-                  )}
-                </div>
+                <LinWanVoicePlayer
+                  state={ttsState}
+                  onAction={() => handleLinWanVoiceAction(item.content, ttsKey, ttsState)}
+                  onSeek={(value) => seekLinWanAudio(ttsKey, value)}
+                />
               )}
             </article>
           );
@@ -5361,6 +5639,69 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
         </button>
       </div>
     </section>
+  );
+}
+
+function LinWanVoicePlayer({ state, onAction, onSeek }) {
+  const status = state?.status || 'idle';
+  const currentTime = Number.isFinite(state?.currentTime) ? state.currentTime : 0;
+  const duration = Number.isFinite(state?.duration) ? state.duration : null;
+
+  if (status === 'preparing') {
+    return (
+      <div className="linwan-voice-player preparing" role="status" aria-live="polite">
+        <div className="linwan-voice-status-line">
+          <span className="linwan-voice-loader" aria-hidden="true"><i /><i /><i /></span>
+          <strong>林婉正在准备语音…</strong>
+          <span>已等待 {state.elapsedSeconds || 0} 秒</span>
+        </div>
+        {(state.elapsedSeconds || 0) >= 5 && (
+          <small>语音正在生成，可以先阅读文字内容。</small>
+        )}
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="linwan-voice-player error" role="status">
+        <span>{state.errorMessage || '语音暂时没有准备好。'}</span>
+        <button type="button" className="linwan-tts-button" onClick={onAction}>重新生成</button>
+      </div>
+    );
+  }
+
+  if (status === 'idle' || status === 'ready') {
+    return (
+      <div className={`linwan-voice-player ${status}`}>
+        <button type="button" className="linwan-tts-button" onClick={onAction}>▶ 听林婉说</button>
+        {status === 'ready' && (
+          <time>{formatAudioTime(0)} / {formatAudioTime(duration)}</time>
+        )}
+      </div>
+    );
+  }
+
+  const actionLabel = status === 'playing' ? '暂停' : status === 'paused' ? '继续播放' : '重新播放';
+  return (
+    <div className={`linwan-voice-player active ${status}`}>
+      <div className="linwan-voice-controls">
+        <button type="button" className="linwan-voice-action" onClick={onAction}>{actionLabel}</button>
+        <strong>{status === 'playing' ? '林婉语音' : actionLabel}</strong>
+        <time>{formatAudioTime(currentTime)} / {formatAudioTime(duration)}</time>
+      </div>
+      <input
+        type="range"
+        className="linwan-voice-progress"
+        min="0"
+        max={duration || 1}
+        step="0.1"
+        value={Math.min(currentTime, duration || 0)}
+        disabled={!duration}
+        aria-label="林婉语音播放进度"
+        onChange={(event) => onSeek(event.target.value)}
+      />
+    </div>
   );
 }
 
@@ -5410,14 +5751,31 @@ function TrainingProfileCard({ profile }) {
   );
 }
 
-function getLinWanTtsKey(content, index) {
-  const text = String(content || '');
+function createLinWanMessage(role, content, id = '') {
+  linWanMessageSequence += 1;
+  return {
+    id: id || `linwan-message-${Date.now()}-${linWanMessageSequence}`,
+    role,
+    content
+  };
+}
+
+function getLinWanTtsKey(message) {
+  const text = String(message?.content || '');
   let hash = 0;
   for (let i = 0; i < text.length; i += 1) {
     hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
   }
 
-  return `linwan-${index}-${Math.abs(hash)}`;
+  return `${message?.id || 'linwan-message'}:${LINWAN_VOICE_VERSION}:${Math.abs(hash)}`;
+}
+
+function formatAudioTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '--:--';
+  const wholeSeconds = Math.floor(seconds);
+  const minutes = Math.floor(wholeSeconds / 60);
+  const remainingSeconds = wholeSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
 }
 
 function base64ToBlob(base64, mimeType = 'audio/mpeg') {
@@ -6281,7 +6639,7 @@ function getServerErrorMessage(status, message) {
   return '请求失败，请稍后重试。';
 }
 
-async function postJson(url, body) {
+async function postJson(url, body, options = {}) {
   let response;
   const token = localStorage.getItem(authTokenStorageKey);
 
@@ -6292,9 +6650,11 @@ async function postJson(url, body) {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: options.signal
     });
-  } catch {
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
     throw new Error('网络连接异常，请稍后重试。');
   }
 
