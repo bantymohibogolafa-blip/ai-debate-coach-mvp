@@ -4,9 +4,10 @@ import OnboardingGuide from './components/OnboardingGuide.jsx';
 import ReviewGeneratingCard from './components/ReviewGeneratingCard.jsx';
 import { getAbilityVideosForDimension } from './data/abilityVideoMap.js';
 
-const LINWAN_PLAYBACK_RATE = 1.08;
-const LINWAN_VOICE_VERSION = 'voicedesign-v1';
-const LINWAN_TTS_PREPARE_DELAY_MS = 700;
+const LINWAN_PLAYBACK_RATE = 1;
+const LINWAN_VOICE_VERSION = 'mimo-v2.5-tts:bing-tang:pcm16-v1';
+const LINWAN_PCM_SAMPLE_RATE = 24000;
+const LINWAN_STREAM_START_BUFFER_MS = 200;
 const LINWAN_TTS_CACHE_LIMIT = 5;
 let linWanMessageSequence = 0;
 
@@ -5097,44 +5098,25 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
   const [memoryStatus, setMemoryStatus] = useState('');
   const [isClearingMemory, setIsClearingMemory] = useState(false);
   const [ttsStates, setTtsStates] = useState({});
-  const [isPageVisible, setIsPageVisible] = useState(() => (
-    typeof document === 'undefined' || document.visibilityState === 'visible'
-  ));
   const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
   const ttsAudioRef = useRef(null);
   const ttsCacheRef = useRef(new Map());
   const ttsRequestsRef = useRef(new Map());
+  const ttsStreamRef = useRef(null);
   const ttsFailedRef = useRef(new Set());
-  const latestVoiceKeyRef = useRef('');
   const isLinWanMountedRef = useRef(false);
-
-  const latestSpeakableMessage = useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const item = messages[index];
-      if (item.role === 'assistant' && item.content && item.id !== 'linwan-opening') {
-        return item;
-      }
-    }
-    return null;
-  }, [messages]);
-  const latestVoiceKey = latestSpeakableMessage ? getLinWanTtsKey(latestSpeakableMessage) : '';
-  const hasPreparingVoice = Object.values(ttsStates).some((item) => item?.status === 'preparing');
+  const hasPreparingVoice = Object.values(ttsStates).some((item) => item?.status === 'connecting');
 
   useEffect(() => {
     isLinWanMountedRef.current = true;
     return () => {
+      stopLinWanStream(false);
       stopLinWanAudio(false);
       isLinWanMountedRef.current = false;
       ttsRequestsRef.current.forEach((request) => request.controller.abort());
       ttsRequestsRef.current.clear();
       clearLinWanAudioCache(false);
     };
-  }, []);
-
-  useEffect(() => {
-    const handleVisibilityChange = () => setIsPageVisible(document.visibilityState === 'visible');
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   useEffect(() => {
@@ -5146,7 +5128,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
         let changed = false;
         const next = { ...current };
         Object.entries(current).forEach(([key, item]) => {
-          if (item?.status !== 'preparing' || !item.startedAt) return;
+          if (item?.status !== 'connecting' || !item.startedAt) return;
           const elapsedSeconds = Math.max(0, Math.floor((now - item.startedAt) / 1000));
           if (elapsedSeconds !== item.elapsedSeconds) {
             next[key] = { ...item, elapsedSeconds };
@@ -5159,39 +5141,6 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
 
     return () => window.clearInterval(timer);
   }, [hasPreparingVoice]);
-
-  useEffect(() => {
-    latestVoiceKeyRef.current = latestVoiceKey;
-    if (
-      !latestSpeakableMessage
-      || !latestVoiceKey
-      || isSending
-      || !isLoggedIn
-      || !isPageVisible
-      || ttsCacheRef.current.has(latestVoiceKey)
-      || ttsRequestsRef.current.has(latestVoiceKey)
-      || ttsFailedRef.current.has(latestVoiceKey)
-    ) {
-      return undefined;
-    }
-
-    const timer = window.setTimeout(() => {
-      if (
-        !isLinWanMountedRef.current
-        || document.visibilityState !== 'visible'
-        || latestVoiceKeyRef.current !== latestVoiceKey
-      ) {
-        return;
-      }
-      void requestLinWanAudio(latestSpeakableMessage.content, latestVoiceKey, 'pregenerate');
-    }, LINWAN_TTS_PREPARE_DELAY_MS);
-
-    return () => {
-      window.clearTimeout(timer);
-      const request = ttsRequestsRef.current.get(latestVoiceKey);
-      if (request?.mode === 'pregenerate') request.controller.abort();
-    };
-  }, [latestVoiceKey, latestSpeakableMessage?.content, isSending, isLoggedIn, isPageVisible]);
 
   useEffect(() => {
     if (isLoggedIn) return;
@@ -5299,6 +5248,27 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
     }
   }
 
+  function stopLinWanStream(updateState = true) {
+    const session = ttsStreamRef.current;
+    if (!session) return;
+    session.stopped = true;
+    session.controller.abort();
+    session.node?.port.postMessage({ type: 'clear' });
+    void session.context?.close().catch(() => {});
+    ttsStreamRef.current = null;
+    ttsRequestsRef.current.delete(session.key);
+    if (!session.doneReceived) releaseLinWanCacheEntry(session.key, false);
+    if (updateState) {
+      setLinWanTtsState(session.key, {
+        status: 'stopped',
+        live: false,
+        currentTime: 0,
+        duration: null,
+        errorMessage: ''
+      });
+    }
+  }
+
   function releaseLinWanCacheEntry(key, updateState = true) {
     const item = ttsCacheRef.current.get(key);
     if (!item) return;
@@ -5330,6 +5300,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
   }
 
   function resetLinWanVoiceSession() {
+    stopLinWanStream(false);
     ttsRequestsRef.current.forEach((request) => request.controller.abort());
     ttsRequestsRef.current.clear();
     ttsFailedRef.current.clear();
@@ -5364,7 +5335,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
     audio.addEventListener('play', () => {
       if (ttsCacheRef.current.get(key) !== item) return;
       ttsAudioRef.current = { key, audio };
-      setLinWanTtsState(key, { status: 'playing' });
+      setLinWanTtsState(key, { status: 'playing', live: false });
     });
     audio.addEventListener('pause', () => {
       if (item.releasing || item.suppressPause || audio.ended || ttsCacheRef.current.get(key) !== item) return;
@@ -5389,25 +5360,36 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
     return audio;
   }
 
-  async function requestLinWanAudio(content, key, mode = 'ondemand', playWhenReady = false) {
-    if (!content || !key || !isLoggedIn) return null;
-
-    const cached = ttsCacheRef.current.get(key);
-    if (cached) {
-      if (playWhenReady) void playLinWanCachedAudio(key);
-      return cached;
+  async function requestLinWanAudio(content, key) {
+    if (!content || !key || !isLoggedIn || ttsRequestsRef.current.has(key)) return null;
+    if (ttsCacheRef.current.has(key)) {
+      await playLinWanCachedAudio(key);
+      return ttsCacheRef.current.get(key);
     }
 
-    const existingRequest = ttsRequestsRef.current.get(key);
-    if (existingRequest) return existingRequest.promise;
-    if (mode === 'pregenerate' && ttsFailedRef.current.has(key)) return null;
-
+    if (ttsStreamRef.current?.key !== key) stopLinWanStream();
+    stopLinWanAudio();
     ttsFailedRef.current.delete(key);
     const controller = new AbortController();
-    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const startedAt = Date.now();
+    const session = {
+      key,
+      controller,
+      context: null,
+      node: null,
+      pcmChunks: [],
+      pcmBytes: 0,
+      oddByte: null,
+      bufferedFrames: 0,
+      playbackStarted: false,
+      doneReceived: false,
+      stopped: false
+    };
+    ttsStreamRef.current = session;
+    ttsRequestsRef.current.set(key, session);
     setLinWanTtsState(key, {
-      status: 'preparing',
+      status: 'connecting',
+      live: true,
       startedAt,
       elapsedSeconds: 0,
       currentTime: 0,
@@ -5415,62 +5397,115 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
       errorMessage: ''
     });
 
-    const promise = (async () => {
-      try {
-        const data = await postJson('/api/linwan/tts', { text: content, mode }, { signal: controller.signal });
-        const request = ttsRequestsRef.current.get(key);
-        const isStalePregeneration = mode === 'pregenerate' && (
-          latestVoiceKeyRef.current !== key || document.visibilityState !== 'visible'
-        );
-        if (
-          controller.signal.aborted
-          || !isLinWanMountedRef.current
-          || request?.id !== requestId
-          || isStalePregeneration
-        ) {
-          return null;
-        }
-
-        const blob = base64ToBlob(data.audioBase64, data.mimeType || 'audio/mpeg');
-        if (!blob.size) throw new Error('EMPTY_LINWAN_AUDIO');
-        const url = URL.createObjectURL(blob);
-        const item = {
-          url,
-          mimeType: data.mimeType || 'audio/mpeg',
-          duration: null,
-          createdAt: Date.now(),
-          audio: null,
-          suppressPause: false,
-          releasing: false
-        };
-        ttsCacheRef.current.set(key, item);
-        setLinWanTtsState(key, {
-          status: 'ready',
-          currentTime: 0,
-          duration: null,
-          elapsedSeconds: Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
-        });
-        ensureLinWanAudio(key);
-        pruneLinWanAudioCache();
-        if (playWhenReady) await playLinWanCachedAudio(key);
-        return item;
-      } catch (error) {
-        if (error?.name === 'AbortError' || controller.signal.aborted) {
-          setLinWanTtsState(key, { status: 'idle', elapsedSeconds: 0, startedAt: 0 });
-          return null;
-        }
-        ttsFailedRef.current.add(key);
-        setLinWanTtsState(key, { status: 'error', errorMessage: '语音暂时没有准备好。' });
-        return null;
-      } finally {
-        if (ttsRequestsRef.current.get(key)?.id === requestId) {
-          ttsRequestsRef.current.delete(key);
-        }
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass || !window.AudioWorkletNode) {
+        throw new Error('UNSUPPORTED_LINWAN_STREAMING_AUDIO');
       }
-    })();
+      const context = new AudioContextClass({ sampleRate: LINWAN_PCM_SAMPLE_RATE });
+      session.context = context;
+      await context.audioWorklet.addModule('/linwan-pcm-player-worklet.js');
+      if (session.stopped) return null;
+      const node = new AudioWorkletNode(context, 'linwan-pcm-player');
+      session.node = node;
+      node.connect(context.destination);
+      node.port.onmessage = (event) => {
+        if (session.stopped || ttsStreamRef.current !== session) return;
+        if (event.data?.type === 'played') {
+          setLinWanTtsState(key, { currentTime: event.data.frames / LINWAN_PCM_SAMPLE_RATE });
+        } else if (event.data?.type === 'underrun' && !session.doneReceived) {
+          setLinWanTtsState(key, { status: 'buffering' });
+        } else if (event.data?.type === 'drained' && session.doneReceived) {
+          const duration = session.pcmBytes / 2 / LINWAN_PCM_SAMPLE_RATE;
+          ttsStreamRef.current = null;
+          ttsRequestsRef.current.delete(key);
+          void context.close().catch(() => {});
+          setLinWanTtsState(key, { status: 'completed', live: false, currentTime: duration, duration });
+        }
+      };
+      await context.resume();
 
-    ttsRequestsRef.current.set(key, { id: requestId, mode, controller, promise });
-    return promise;
+      const response = await fetchLinWanTtsStream(content, controller.signal);
+      await readSseResponse(response, async (eventName, data) => {
+        if (session.stopped || controller.signal.aborted) return;
+        if (eventName === 'meta') {
+          if (data.format !== 'pcm16' || data.channels !== 1 || data.sampleRate !== LINWAN_PCM_SAMPLE_RATE) {
+            throw new Error('UNSUPPORTED_LINWAN_PCM_FORMAT');
+          }
+          return;
+        }
+        if (eventName === 'error') throw new Error(data.message || 'LINWAN_TTS_STREAM_ERROR');
+        if (eventName === 'audio') {
+          const bytes = base64ToBytes(data.data);
+          if (!bytes.length) return;
+          session.pcmChunks.push(bytes);
+          session.pcmBytes += bytes.length;
+          const decoded = pcm16LeBytesToFloat32(bytes, session.oddByte);
+          session.oddByte = decoded.oddByte;
+          if (decoded.samples.length) {
+            session.bufferedFrames += decoded.samples.length;
+            node.port.postMessage({ type: 'chunk', samples: decoded.samples }, [decoded.samples.buffer]);
+          }
+          const startFrames = Math.round((LINWAN_STREAM_START_BUFFER_MS / 1000) * LINWAN_PCM_SAMPLE_RATE);
+          if (!session.playbackStarted && session.bufferedFrames >= startFrames) {
+            session.playbackStarted = true;
+            node.port.postMessage({ type: 'start' });
+          }
+          setLinWanTtsState(key, {
+            status: session.playbackStarted ? 'streaming' : 'buffering',
+            bufferedDuration: session.pcmBytes / 2 / LINWAN_PCM_SAMPLE_RATE
+          });
+          return;
+        }
+        if (eventName === 'done') {
+          if (session.oddByte !== null) throw new Error('INCOMPLETE_LINWAN_PCM_SAMPLE');
+          session.doneReceived = true;
+          if (!session.playbackStarted) {
+            session.playbackStarted = true;
+            node.port.postMessage({ type: 'start' });
+          }
+          node.port.postMessage({ type: 'end' });
+          const wavBlob = createPcm16WavBlob(session.pcmChunks, LINWAN_PCM_SAMPLE_RATE);
+          const duration = session.pcmBytes / 2 / LINWAN_PCM_SAMPLE_RATE;
+          const item = {
+            url: URL.createObjectURL(wavBlob),
+            mimeType: 'audio/wav',
+            duration,
+            createdAt: Date.now(),
+            audio: null,
+            suppressPause: false,
+            releasing: false
+          };
+          ttsCacheRef.current.set(key, item);
+          pruneLinWanAudioCache();
+          setLinWanTtsState(key, { duration, bufferedDuration: duration });
+        }
+      });
+      if (!session.doneReceived) throw new Error('INCOMPLETE_LINWAN_TTS_STREAM');
+      return ttsCacheRef.current.get(key) || null;
+    } catch (error) {
+      if (session.stopped) return null;
+      session.stopped = true;
+      controller.abort();
+      nodeSafeClear(session.node);
+      void session.context?.close().catch(() => {});
+      if (ttsStreamRef.current === session) ttsStreamRef.current = null;
+      ttsRequestsRef.current.delete(key);
+      releaseLinWanCacheEntry(key, false);
+      if (error?.name === 'AbortError' || controller.signal.aborted) {
+        setLinWanTtsState(key, { status: 'stopped', live: false, currentTime: 0, duration: null });
+        return null;
+      }
+      ttsFailedRef.current.add(key);
+      setLinWanTtsState(key, {
+        status: 'error',
+        live: false,
+        errorMessage: error?.message === 'UNSUPPORTED_LINWAN_STREAMING_AUDIO'
+          ? '当前浏览器暂不支持实时语音播放。'
+          : '语音播放中断，请稍后重试。'
+      });
+      return null;
+    }
   }
 
   async function playLinWanCachedAudio(key) {
@@ -5505,13 +5540,28 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
 
   function handleLinWanVoiceAction(content, key, state) {
     const status = state?.status || 'idle';
-    if (status === 'preparing') return;
-    if (status === 'playing' || status === 'ready' || status === 'paused' || status === 'ended') {
+    if (status === 'connecting' || status === 'buffering') return;
+    if (status === 'streaming') {
+      const session = ttsStreamRef.current;
+      if (session?.key === key) {
+        void session.context.suspend().then(() => setLinWanTtsState(key, { status: 'paused' }));
+      }
+      return;
+    }
+    if (status === 'paused' && ttsStreamRef.current?.key === key) {
+      void ttsStreamRef.current.context.resume().then(() => setLinWanTtsState(key, { status: 'streaming' }));
+      return;
+    }
+    if (status === 'playing' || status === 'ready' || status === 'paused' || status === 'ended' || status === 'completed') {
       void playLinWanCachedAudio(key);
       return;
     }
     if (status === 'error') ttsFailedRef.current.delete(key);
-    void requestLinWanAudio(content, key, 'ondemand', true);
+    void requestLinWanAudio(content, key);
+  }
+
+  function stopLinWanVoice(key) {
+    if (ttsStreamRef.current?.key === key) stopLinWanStream();
   }
 
   function seekLinWanAudio(key, value) {
@@ -5614,6 +5664,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
                 <LinWanVoicePlayer
                   state={ttsState}
                   onAction={() => handleLinWanVoiceAction(item.content, ttsKey, ttsState)}
+                  onStop={() => stopLinWanVoice(ttsKey)}
                   onSeek={(value) => seekLinWanAudio(ttsKey, value)}
                 />
               )}
@@ -5642,22 +5693,23 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
   );
 }
 
-function LinWanVoicePlayer({ state, onAction, onSeek }) {
+function LinWanVoicePlayer({ state, onAction, onStop, onSeek }) {
   const status = state?.status || 'idle';
   const currentTime = Number.isFinite(state?.currentTime) ? state.currentTime : 0;
   const duration = Number.isFinite(state?.duration) ? state.duration : null;
 
-  if (status === 'preparing') {
+  if (status === 'connecting' || status === 'buffering') {
     return (
       <div className="linwan-voice-player preparing" role="status" aria-live="polite">
         <div className="linwan-voice-status-line">
           <span className="linwan-voice-loader" aria-hidden="true"><i /><i /><i /></span>
-          <strong>林婉正在准备语音…</strong>
-          <span>已等待 {state.elapsedSeconds || 0} 秒</span>
+          <strong>{status === 'connecting' ? '林婉正在开口…' : '语音缓冲中…'}</strong>
+          {status === 'connecting' && <span>已等待 {state.elapsedSeconds || 0} 秒</span>}
         </div>
-        {(state.elapsedSeconds || 0) >= 5 && (
+        {status === 'connecting' && (state.elapsedSeconds || 0) >= 5 && (
           <small>语音正在生成，可以先阅读文字内容。</small>
         )}
+        <button type="button" className="linwan-voice-action" onClick={onStop}>停止</button>
       </div>
     );
   }
@@ -5671,7 +5723,7 @@ function LinWanVoicePlayer({ state, onAction, onSeek }) {
     );
   }
 
-  if (status === 'idle' || status === 'ready') {
+  if (status === 'idle' || status === 'ready' || status === 'stopped') {
     return (
       <div className={`linwan-voice-player ${status}`}>
         <button type="button" className="linwan-tts-button" onClick={onAction}>▶ 听林婉说</button>
@@ -5682,14 +5734,19 @@ function LinWanVoicePlayer({ state, onAction, onSeek }) {
     );
   }
 
-  const actionLabel = status === 'playing' ? '暂停' : status === 'paused' ? '继续播放' : '重新播放';
+  const isLive = Boolean(state?.live) && ['streaming', 'paused'].includes(status);
+  const actionLabel = status === 'playing' || status === 'streaming' ? '暂停' : status === 'paused' ? '继续播放' : '重新播放';
   return (
     <div className={`linwan-voice-player active ${status}`}>
       <div className="linwan-voice-controls">
         <button type="button" className="linwan-voice-action" onClick={onAction}>{actionLabel}</button>
-        <strong>{status === 'playing' ? '林婉语音' : actionLabel}</strong>
-        <time>{formatAudioTime(currentTime)} / {formatAudioTime(duration)}</time>
+        <strong>{isLive ? '林婉语音' : actionLabel}</strong>
+        <time>{formatAudioTime(currentTime)} / {isLive ? '生成中' : formatAudioTime(duration)}</time>
+        {isLive && <button type="button" className="linwan-voice-action" onClick={onStop}>停止</button>}
       </div>
+      {isLive && Number.isFinite(state?.bufferedDuration) && (
+        <small>已缓冲 {formatAudioTime(state.bufferedDuration)}</small>
+      )}
       <input
         type="range"
         className="linwan-voice-progress"
@@ -5697,7 +5754,7 @@ function LinWanVoicePlayer({ state, onAction, onSeek }) {
         max={duration || 1}
         step="0.1"
         value={Math.min(currentTime, duration || 0)}
-        disabled={!duration}
+        disabled={isLive || !duration}
         aria-label="林婉语音播放进度"
         onChange={(event) => onSeek(event.target.value)}
       />
@@ -5786,6 +5843,110 @@ function base64ToBlob(base64, mimeType = 'audio/mpeg') {
   }
 
   return new Blob([bytes], { type: mimeType });
+}
+
+function nodeSafeClear(node) {
+  try {
+    node?.port.postMessage({ type: 'clear' });
+  } catch {
+    // The AudioContext may already be closed.
+  }
+}
+
+async function fetchLinWanTtsStream(text, signal) {
+  const token = localStorage.getItem(authTokenStorageKey);
+  const response = await fetch('/api/linwan/tts/stream', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify({ text }),
+    signal
+  });
+  if (!response.ok || !response.body || !/text\/event-stream/i.test(response.headers.get('content-type') || '')) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || 'LINWAN_TTS_STREAM_REQUEST_FAILED');
+  }
+  return response;
+}
+
+async function readSseResponse(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const eventBlocks = buffer.split(/\r?\n\r?\n/);
+      buffer = eventBlocks.pop() || '';
+      for (const block of eventBlocks) await dispatchSseBlock(block, onEvent);
+      if (done) break;
+    }
+    if (buffer.trim()) await dispatchSseBlock(buffer, onEvent);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function dispatchSseBlock(block, onEvent) {
+  let eventName = 'message';
+  const dataLines = [];
+  block.split(/\r?\n/).forEach((line) => {
+    if (line.startsWith('event:')) eventName = line.slice(6).trim();
+    if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+  });
+  if (!dataLines.length) return;
+  await onEvent(eventName, JSON.parse(dataLines.join('\n')));
+}
+
+function base64ToBytes(base64) {
+  const binary = atob(String(base64 || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function pcm16LeBytesToFloat32(bytes, previousOddByte = null) {
+  const carryLength = previousOddByte === null ? 0 : 1;
+  const combined = new Uint8Array(carryLength + bytes.length);
+  if (carryLength) combined[0] = previousOddByte;
+  combined.set(bytes, carryLength);
+  const completeLength = combined.length - (combined.length % 2);
+  const samples = new Float32Array(completeLength / 2);
+  const view = new DataView(combined.buffer, combined.byteOffset, completeLength);
+  for (let index = 0; index < samples.length; index += 1) {
+    samples[index] = view.getInt16(index * 2, true) / 32768;
+  }
+  return {
+    samples,
+    oddByte: completeLength < combined.length ? combined[combined.length - 1] : null
+  };
+}
+
+function createPcm16WavBlob(chunks, sampleRate) {
+  const dataLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+  const writeAscii = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+  };
+  writeAscii(0, 'RIFF');
+  view.setUint32(4, 36 + dataLength, true);
+  writeAscii(8, 'WAVE');
+  writeAscii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, 'data');
+  view.setUint32(40, dataLength, true);
+  return new Blob([header, ...chunks], { type: 'audio/wav' });
 }
 
 function ReviewAssistant({ context }) {
