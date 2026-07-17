@@ -808,7 +808,7 @@ export function buildRespondMessages({ topic, userSide, aiSide, difficulty, cele
   ];
 }
 
-export function buildReviewMessages({ topic, userSide, aiSide, difficulty, celebrityDebater, trainingMode, history, defensePrep, freeDebatePrep }) {
+export function buildReviewMessages({ topic, userSide, aiSide, difficulty, celebrityDebater, trainingMode, history, defensePrep, freeDebatePrep, completedRounds }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(aiSide || getOpponentSide(userSide));
   const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
@@ -828,7 +828,10 @@ export function buildReviewMessages({ topic, userSide, aiSide, difficulty, celeb
         modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
         buildReviewRubricInstruction(trainingMode, difficulty),
-        `请根据完整训练过程生成复盘报告。额外关注：${modeProfile.reviewFocus}。`,
+        `请根据用户已经完成的训练内容生成复盘报告。额外关注：${modeProfile.reviewFocus}。`,
+        '本次复盘材料只包含用户已经正式提交的作答。不得因对话轮次较少、用户没有继续下一轮、训练在某一轮后主动结束而扣分。',
+        '只评价实际提交的内容，不推测用户对未进入轮次的回答能力，也不要出现“未回答下一问”“回避后续追问”或类似评价。',
+        '样本较短时，可以说明复盘覆盖范围有限，但不能把训练轮次少本身作为能力缺陷。',
         '请用简洁中文输出，适合高中学生阅读。必须严格输出 JSON。'
       ].join('\n')
     },
@@ -838,8 +841,9 @@ export function buildReviewMessages({ topic, userSide, aiSide, difficulty, celeb
         `辩题：${topic}`,
         `用户立场：${userSideLabel}`,
         `AI 立场：${opponentSideLabel}`,
+        `已完成轮次：${Number.isFinite(Number(completedRounds)) ? Number(completedRounds) : 0}`,
         prepContext,
-        `完整对话：\n${transcript || '暂无'}`,
+        `已完成的可评分对话：\n${transcript || '暂无'}`,
         '请生成复盘报告。'
       ].filter(Boolean).join('\n\n')
     }
@@ -904,6 +908,7 @@ export function buildPolishMessages({
         typeProfile.instruction,
         '不要替用户改变核心立场，不要自动帮用户承认对方观点，不要新增虚构事实。',
         '不得把用户没有表达过的核心观点强行加进去，可以优化表达，但不能篡改论点。',
+        '只整理用户当前提供的原始回答；不要替用户补答尚未进入的下一轮追问，也不要把 AI 的判断或追问写成用户观点。',
         '不得套用其他训练环节模板，必须符合当前训练模式。',
         '禁止使用省略号替代完整观点。如果内容较长，请压缩表达，而不是省略。宁可少写几个点，也要把每一个点写完整。',
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
