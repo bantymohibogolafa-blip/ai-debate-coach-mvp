@@ -47,7 +47,14 @@ const appUsersTable = process.env.SUPABASE_APP_USERS_TABLE || 'app_users';
 const linWanMessagesTable = process.env.SUPABASE_LINWAN_MESSAGES_TABLE || 'linwan_messages';
 const linWanMemoryTable = process.env.SUPABASE_LINWAN_MEMORY_TABLE || 'linwan_memory';
 const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '30d';
-const linWanTtsStylePrompt = '年轻高中辩论队学姐的声音，清亮、自然、干净，语气清醒克制但不高冷，带一点真诚和热情。像在认真陪队友复盘、拆问题、给建议。说话要利落，节奏中等略快，停顿自然但不要拖长，句尾收得干净。指出问题时坚定直接，安抚用户时轻一点，但不要软绵绵。不要客服腔，不要播音腔，不要机械朗读，不要过度甜美，不要过度清冷。';
+const LINWAN_SPEAKING_STYLE = '以年轻高中辩论队学姐的状态自然说话。语气清醒、克制但不疏离，真诚、有精神，带自然的热情。表达中等偏快、紧凑利落，停顿短而自然，句尾收得干净，不拖腔。像在认真陪队友复盘和给建议，直接但不冷漠。不要高冷审判感、客服腔、播音腔、舞台朗诵感或过度甜美。';
+const XIAOMI_TTS_MODEL = normalizeText(process.env.XIAOMI_TTS_MODEL || 'mimo-v2.5-tts');
+const XIAOMI_TTS_VOICE = normalizeText(process.env.XIAOMI_TTS_VOICE || '冰糖');
+const XIAOMI_TTS_FORMAT = normalizeText(process.env.XIAOMI_TTS_FORMAT || 'pcm16');
+const XIAOMI_TTS_SAMPLE_RATE = 24000;
+const XIAOMI_TTS_FIRST_CHUNK_TIMEOUT_MS = positiveIntegerEnv('XIAOMI_TTS_FIRST_CHUNK_TIMEOUT_MS', 20000);
+const XIAOMI_TTS_IDLE_TIMEOUT_MS = positiveIntegerEnv('XIAOMI_TTS_IDLE_TIMEOUT_MS', 20000);
+const XIAOMI_TTS_TOTAL_TIMEOUT_MS = positiveIntegerEnv('XIAOMI_TTS_TOTAL_TIMEOUT_MS', 300000);
 const aliyunTokenCache = {
   token: '',
   expireTime: 0
@@ -299,6 +306,159 @@ app.post('/api/linwan/tts', requireAuth, async (req, res, next) => {
       status: error.status || 502
     });
     next(error);
+  }
+});
+
+app.post('/api/linwan/tts/stream', requireAuth, async (req, res) => {
+  const startedAt = Date.now();
+  const requestId = crypto.randomUUID();
+  const controller = new AbortController();
+  let clientDisconnected = false;
+  let streamFinished = false;
+  let chunkCount = 0;
+  let totalBytes = 0;
+  let firstChunkMs = null;
+  let idleTimer;
+  let firstChunkTimer;
+  let totalTimer;
+  let payload;
+
+  const abortUpstream = () => {
+    if (!controller.signal.aborted) controller.abort();
+  };
+  const clearTimers = () => {
+    clearTimeout(firstChunkTimer);
+    clearTimeout(idleTimer);
+    clearTimeout(totalTimer);
+  };
+  const handleClientClose = () => {
+    if (streamFinished || res.writableEnded) return;
+    clientDisconnected = true;
+    abortUpstream();
+  };
+
+  res.on('close', handleClientClose);
+
+  try {
+    payload = validateLinWanTtsPayload(req.body);
+    const apiKey = normalizeText(process.env.XIAOMI_TTS_API_KEY || process.env.MIMO_API_KEY);
+    const apiUrl = resolveXiaomiChatCompletionsUrl(
+      normalizeText(process.env.XIAOMI_TTS_API_URL || process.env.MIMO_TTS_API_URL || 'https://api.xiaomimimo.com/v1')
+    );
+    if (!apiKey || !apiUrl) throw httpError(501, '语音服务暂未配置');
+    if (XIAOMI_TTS_MODEL !== 'mimo-v2.5-tts' || XIAOMI_TTS_FORMAT !== 'pcm16') {
+      throw httpError(500, '语音流式配置无效');
+    }
+
+    res.status(200);
+    res.set({
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.flushHeaders();
+    await writeSseEvent(res, 'meta', {
+      sampleRate: XIAOMI_TTS_SAMPLE_RATE,
+      channels: 1,
+      format: XIAOMI_TTS_FORMAT,
+      voice: XIAOMI_TTS_VOICE
+    });
+
+    firstChunkTimer = setTimeout(abortUpstream, XIAOMI_TTS_FIRST_CHUNK_TIMEOUT_MS);
+    totalTimer = setTimeout(abortUpstream, XIAOMI_TTS_TOTAL_TIMEOUT_MS);
+    const upstream = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'api-key': apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream'
+      },
+      body: JSON.stringify({
+        model: XIAOMI_TTS_MODEL,
+        messages: [
+          { role: 'user', content: LINWAN_SPEAKING_STYLE },
+          { role: 'assistant', content: payload.text }
+        ],
+        audio: { format: XIAOMI_TTS_FORMAT, voice: XIAOMI_TTS_VOICE },
+        stream: true
+      }),
+      signal: controller.signal
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      const detail = await readTtsErrorDetail(upstream);
+      console.error('[Linwan TTS Stream] upstream rejected', { requestId, status: upstream.status, detail });
+      throw httpError(502, '语音暂时没有准备好');
+    }
+
+    await readXiaomiSse(upstream.body, async (data) => {
+      const audioData = data?.choices?.[0]?.delta?.audio?.data;
+      if (!audioData || controller.signal.aborted) return;
+      if (firstChunkMs === null) {
+        firstChunkMs = Date.now() - startedAt;
+        clearTimeout(firstChunkTimer);
+      }
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(abortUpstream, XIAOMI_TTS_IDLE_TIMEOUT_MS);
+      chunkCount += 1;
+      totalBytes += base64DecodedLength(audioData);
+      await writeSseEvent(res, 'audio', { data: audioData });
+    });
+
+    if (!chunkCount) throw httpError(502, '语音暂时没有准备好');
+    clearTimers();
+    const totalMs = Date.now() - startedAt;
+    await writeSseEvent(res, 'done', {
+      chunkCount,
+      totalBytes,
+      durationSeconds: totalBytes / 2 / XIAOMI_TTS_SAMPLE_RATE,
+      firstChunkMs,
+      totalMs
+    });
+    streamFinished = true;
+    res.end();
+    console.info('[Linwan TTS Stream]', {
+      requestId,
+      textLength: payload.text.length,
+      voice: XIAOMI_TTS_VOICE,
+      firstChunkMs,
+      chunkCount,
+      totalBytes,
+      audioDurationMs: Math.round((totalBytes / 2 / XIAOMI_TTS_SAMPLE_RATE) * 1000),
+      totalMs,
+      completed: true,
+      aborted: false
+    });
+  } catch (error) {
+    clearTimers();
+    const aborted = controller.signal.aborted || clientDisconnected;
+    if (!clientDisconnected && !res.writableEnded && !res.headersSent) {
+      streamFinished = true;
+      res.status(getPublicStatus(error)).json({ message: getPublicErrorMessage(error) });
+    } else if (!clientDisconnected && !res.writableEnded) {
+      await writeSseEvent(res, 'error', {
+        message: aborted ? '语音播放中断，请稍后重试。' : '语音暂时没有准备好'
+      }).catch(() => {});
+      streamFinished = true;
+      res.end();
+    }
+    console.error('[Linwan TTS Stream]', {
+      requestId,
+      textLength: payload?.text?.length || 0,
+      voice: XIAOMI_TTS_VOICE,
+      firstChunkMs,
+      chunkCount,
+      totalBytes,
+      audioDurationMs: Math.round((totalBytes / 2 / XIAOMI_TTS_SAMPLE_RATE) * 1000),
+      totalMs: Date.now() - startedAt,
+      completed: false,
+      aborted
+    });
+  } finally {
+    clearTimers();
+    res.off('close', handleClientClose);
   }
 });
 
@@ -1382,11 +1542,10 @@ function validateLinWanTtsPayload(body = {}) {
     throw httpError(400, '请先提供要朗读的林婉回复。');
   }
 
-  const maxLength = 6000;
   return {
-    text: cleanText.slice(0, maxLength),
-    truncated: cleanText.length > maxLength,
-    mode: body.mode === 'pregenerate' ? 'pregenerate' : 'ondemand'
+    text: cleanText,
+    truncated: false,
+    mode: 'ondemand'
   };
 }
 
@@ -1967,8 +2126,8 @@ function cleanLinWanReply(text) {
 
 async function synthesizeLinWanSpeech(text) {
   const apiKey = normalizeText(process.env.XIAOMI_TTS_API_KEY || process.env.MIMO_API_KEY);
-  const model = normalizeText(process.env.XIAOMI_TTS_MODEL || process.env.MIMO_TTS_MODEL || 'mimo-v2.5-tts-voicedesign');
-  const voice = normalizeText(process.env.XIAOMI_TTS_VOICE || process.env.MIMO_TTS_VOICE);
+  const model = XIAOMI_TTS_MODEL;
+  const voice = XIAOMI_TTS_VOICE;
   const apiUrl = normalizeText(
     process.env.XIAOMI_TTS_API_URL
     || process.env.MIMO_TTS_API_URL
@@ -2135,19 +2294,17 @@ function isRecoverableXiaomiTtsAttemptError(error) {
 }
 
 function resolveXiaomiTtsVoice({ model, voice }) {
-  if (/voicedesign/i.test(model)) return '';
   if (voice) return voice;
-  return 'mimo_default';
+  return XIAOMI_TTS_VOICE;
 }
 
 function buildOfficialChatTtsBody({ model, voice, text }) {
-  const isVoiceDesign = /voicedesign/i.test(model);
   const body = {
     model,
     messages: [
       {
         role: 'user',
-        content: linWanTtsStylePrompt
+        content: LINWAN_SPEAKING_STYLE
       },
       {
         role: 'assistant',
@@ -2159,11 +2316,7 @@ function buildOfficialChatTtsBody({ model, voice, text }) {
     }
   };
 
-  if (isVoiceDesign) {
-    body.audio.optimize_text_preview = true;
-  } else if (voice) {
-    body.audio.voice = voice;
-  }
+  if (voice) body.audio.voice = voice;
 
   return body;
 }
@@ -2178,8 +2331,8 @@ function buildSpeechTtsBody({ model, voice, text, includeStylePrompt, formatFiel
   if (voice) body.voice = voice;
 
   if (includeStylePrompt) {
-    body.instructions = linWanTtsStylePrompt;
-    body.style_prompt = linWanTtsStylePrompt;
+    body.instructions = LINWAN_SPEAKING_STYLE;
+    body.style_prompt = LINWAN_SPEAKING_STYLE;
     body.speed = 1.08;
   }
 
@@ -2194,6 +2347,80 @@ function uniqueXiaomiTtsAttempts(attempts) {
     seen.add(key);
     return true;
   });
+}
+
+function positiveIntegerEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function resolveXiaomiChatCompletionsUrl(rawApiUrl) {
+  const cleanUrl = String(rawApiUrl || '').trim().replace(/\/+$/, '');
+  if (!cleanUrl) return '';
+  if (/\/chat\/completions$/i.test(cleanUrl)) return cleanUrl;
+  if (/\/audio\/speech$/i.test(cleanUrl)) return cleanUrl.replace(/\/audio\/speech$/i, '/chat/completions');
+  return `${cleanUrl}/chat/completions`;
+}
+
+async function writeSseEvent(res, event, data) {
+  if (res.writableEnded || res.destroyed) throw new Error('SSE client disconnected.');
+  const canContinue = res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  if (!canContinue) {
+    await new Promise((resolve, reject) => {
+      const onDrain = () => { cleanup(); resolve(); };
+      const onClose = () => { cleanup(); reject(new Error('SSE client disconnected.')); };
+      const cleanup = () => {
+        res.off('drain', onDrain);
+        res.off('close', onClose);
+      };
+      res.once('drain', onDrain);
+      res.once('close', onClose);
+    });
+  }
+}
+
+async function readXiaomiSse(body, onData) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() || '';
+      for (const eventText of events) {
+        const dataText = eventText
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trimStart())
+          .join('\n')
+          .trim();
+        if (!dataText || dataText === '[DONE]') continue;
+        await onData(JSON.parse(dataText));
+      }
+      if (done) break;
+    }
+    const finalText = buffer.trim();
+    if (finalText) {
+      const dataText = finalText
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+        .join('\n')
+        .trim();
+      if (dataText && dataText !== '[DONE]') await onData(JSON.parse(dataText));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function base64DecodedLength(value) {
+  const clean = String(value || '').replace(/\s/g, '');
+  if (!clean) return 0;
+  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
 }
 
 async function parseTtsResponse(response, requestedAudioFormat = '') {
