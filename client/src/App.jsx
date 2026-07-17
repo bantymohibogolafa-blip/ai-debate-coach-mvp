@@ -427,11 +427,13 @@ function App() {
   const recordingInputSampleRateRef = useRef(48000);
   const reviewRequestRef = useRef(false);
 
+  const reviewableMessages = useMemo(() => buildReviewableMessages(history), [history]);
   const userAnswers = useMemo(
-    () => history.filter((item) => item.role === 'user' && isMeaningfulUserInput(item.content)).length,
-    [history]
+    () => reviewableMessages.filter((item) => item.role === 'user' && isMeaningfulUserInput(item.content)).length,
+    [reviewableMessages]
   );
   const hasMeaningfulUserContribution = userAnswers > 0;
+  const hasUnansweredAiTail = useMemo(() => hasUnansweredAssistantTail(history), [history]);
   const isFinished = isTraining && userAnswers >= config.rounds;
   const currentRound = Math.min(userAnswers + 1, config.rounds);
   const isCelebrityMode = config.celebrityDebater !== 'none';
@@ -1456,8 +1458,8 @@ function App() {
     }
   }
 
-  async function saveTrainingRecord(reviewContent, reviewData = null) {
-    if (!history.some((item) => item.role === 'user' && isMeaningfulUserInput(item.content))) {
+  async function saveTrainingRecord(reviewContent, reviewData = null, messagesForReview = reviewableMessages) {
+    if (!messagesForReview.some((item) => item.role === 'user' && isMeaningfulUserInput(item.content))) {
       setSaveStatus('');
       return;
     }
@@ -1499,7 +1501,7 @@ function App() {
         styleId: config.celebrityDebater,
         trainingMode: config.trainingMode,
         taskId: activeTaskSession?.taskId || '',
-        messages: history,
+        messages: messagesForReview,
         review: reviewContent,
         score: recordScore,
         result: extractResultFromReview(reviewContent),
@@ -1775,7 +1777,8 @@ function App() {
   async function finishAndReview() {
     if (reviewRequestRef.current || isBusy || isRecording) return;
 
-    if (!history.some((item) => item.role === 'user' && isMeaningfulUserInput(item.content))) {
+    const messagesForReview = buildReviewableMessages(history);
+    if (!messagesForReview.length) {
       setError(FINISH_REQUIRES_ANSWER_MESSAGE);
       return;
     }
@@ -1796,7 +1799,7 @@ function App() {
         aiSideLabel: sessionForReview.aiSideLabel || getOptionLabel(sides, getOpponentSideValue(config.userSide)),
         defensePrep: sessionForReview.defensePrep ?? defensePrep.trim(),
         freeDebatePrep: sessionForReview.freeDebatePrep ?? freeDebatePrep.trim(),
-        history
+        history: messagesForReview
       });
       const content = requireContent(data);
       const nextStructuredReview = normalizeStructuredReview(data.structuredReview);
@@ -1814,7 +1817,7 @@ function App() {
       setReview(content);
       setStructuredReview(nextStructuredReview);
       setIsTraining(false);
-      await saveTrainingRecord(content, nextStructuredReview);
+      await saveTrainingRecord(content, nextStructuredReview, messagesForReview);
       reviewCompleted = true;
       setReviewGenerationStatus('complete');
       await new Promise((resolve) => window.setTimeout(resolve, 650));
@@ -2070,7 +2073,7 @@ function App() {
         userSideLabel: getOptionLabel(sides, config.userSide),
         aiSideLabel: getOptionLabel(sides, getOpponentSideValue(config.userSide)),
         polishType,
-        history,
+        history: buildReviewableMessages(history),
         answer: trimmedAnswer
       });
       const fallbackOptions = currentPolishOptions.map((option) => ({
@@ -3355,6 +3358,11 @@ function App() {
               {!hasMeaningfulUserContribution && (
                 <small className="finish-requirement-hint">{FINISH_REQUIRES_ANSWER_MESSAGE}</small>
               )}
+              {hasMeaningfulUserContribution && hasUnansweredAiTail && (
+                <small className="finish-requirement-hint">
+                  将复盘你已经完成的回答，尚未作答的最新追问不会计入评分。
+                </small>
+              )}
               {(isReviewing || reviewGenerationStatus === 'error') && (
                 <ReviewGeneratingCard status={reviewGenerationStatus} error={reviewLoadingError} />
               )}
@@ -3385,7 +3393,7 @@ function App() {
               difficulty: config.difficulty,
               userSide: config.userSide,
               aiSide: getOpponentSideValue(config.userSide),
-              messages: history
+              messages: reviewableMessages
             }}
           />
           <div className="next-training-card">
@@ -6527,6 +6535,29 @@ function isMeaningfulUserInput(value) {
   return Boolean(text && /[\p{L}\p{N}]/u.test(text));
 }
 
+function getLastMeaningfulUserIndex(messages) {
+  if (!Array.isArray(messages)) return -1;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'user' && isMeaningfulUserInput(message.content)) return index;
+  }
+
+  return -1;
+}
+
+function buildReviewableMessages(messages) {
+  const lastMeaningfulUserIndex = getLastMeaningfulUserIndex(messages);
+  return lastMeaningfulUserIndex < 0 ? [] : messages.slice(0, lastMeaningfulUserIndex + 1);
+}
+
+function hasUnansweredAssistantTail(messages) {
+  const lastMeaningfulUserIndex = getLastMeaningfulUserIndex(messages);
+  return lastMeaningfulUserIndex >= 0 && messages.slice(lastMeaningfulUserIndex + 1).some((message) => (
+    message?.role === 'ai' || message?.role === 'assistant'
+  ));
+}
+
 function extractResultFromReview(reviewText) {
   const match = String(reviewText || '').match(/胜负倾向[：:]\s*(?:\n|\r\n)?\s*(用户明显胜|用户小优|势均力敌|用户偏劣)/);
   return match?.[1] || '';
@@ -6570,11 +6601,11 @@ function normalizeStructuredReview(value) {
 function buildReviewAssistantContext({ reviewText, reviewData, structuredReview, fallbackMode, assistantContext }) {
   const source = assistantContext || {};
   const normalizedReview = reviewData || normalizeStructuredReview(structuredReview) || {};
-  const sourceMessages = Array.isArray(source.messages)
+  const sourceMessages = buildReviewableMessages(Array.isArray(source.messages)
     ? source.messages
     : Array.isArray(structuredReview?.messages)
       ? structuredReview.messages
-      : [];
+      : []);
 
   return {
     topic: source.topic || structuredReview?.topic || '',

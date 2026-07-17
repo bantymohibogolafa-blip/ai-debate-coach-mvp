@@ -188,6 +188,7 @@ app.post('/api/debate/respond', async (req, res, next) => {
 app.post('/api/debate/polish', async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body, { requirePrep: false });
+    const reviewableHistory = buildReviewableMessages(payload.history);
     const answer = normalizeText(req.body.answer);
     const polishType = normalizeText(req.body.polishType || req.body.polish_type);
     const modeDisplayName = normalizeText(req.body.modeDisplayName || req.body.mode_display_name);
@@ -196,7 +197,13 @@ app.post('/api/debate/polish', async (req, res, next) => {
       return res.status(400).json({ message: '请先输入回答。' });
     }
 
-    const messages = buildPolishMessages({ ...payload, answer, polishType, modeDisplayName });
+    const messages = buildPolishMessages({
+      ...payload,
+      history: reviewableHistory,
+      answer,
+      polishType,
+      modeDisplayName
+    });
     const content = await callDeepSeekNoIncompleteMarkers(messages, { maxTokens: 1300, temperature: 0.45 });
 
     res.json(parsePolishContent(content, answer, payload.trainingMode, polishType, modeDisplayName));
@@ -208,12 +215,30 @@ app.post('/api/debate/polish', async (req, res, next) => {
 app.post('/api/debate/review', async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body, { requirePrep: false });
+    const originalHistory = payload.history;
+    const reviewableHistory = buildReviewableMessages(originalHistory);
 
-    if (!hasMeaningfulUserContribution(payload.history)) {
+    if (!reviewableHistory.length) {
       throw noMeaningfulUserInputError();
     }
 
-    const messages = buildReviewMessages(payload);
+    if (process.env.NODE_ENV !== 'production') {
+      const lastMeaningfulUserIndex = getLastMeaningfulUserIndex(originalHistory);
+      console.debug('[Training Review Boundary]', {
+        originalMessageCount: originalHistory.length,
+        reviewableMessageCount: reviewableHistory.length,
+        meaningfulUserCount: countMeaningfulUserMessages(reviewableHistory),
+        lastMeaningfulUserIndex,
+        trimmedTailCount: originalHistory.length - reviewableHistory.length,
+        hasUnansweredAssistantTail: hasUnansweredAssistantTail(originalHistory)
+      });
+    }
+
+    const messages = buildReviewMessages({
+      ...payload,
+      history: reviewableHistory,
+      completedRounds: countMeaningfulUserMessages(reviewableHistory)
+    });
     const content = await callDeepSeek(messages, { maxTokens: 2200, temperature: 0.5 });
     const structuredReview = parseReviewContent(content, payload.trainingMode);
     const formattedContent = formatStructuredReview(structuredReview, content);
@@ -928,9 +953,9 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
     defensePrep,
     freeDebatePrep,
     history: history
-      .filter((item) => ['ai', 'user'].includes(item.role) && normalizeText(item.content))
+      .filter((item) => ['ai', 'assistant', 'user'].includes(item.role) && normalizeText(item.content))
       .map((item) => ({
-        role: item.role,
+        role: item.role === 'assistant' ? 'ai' : item.role,
         content: normalizeText(item.content)
       }))
   };
@@ -951,6 +976,7 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   let trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode));
   const taskId = normalizeText(body.taskId || body.task_id);
   const messages = Array.isArray(body.messages) ? body.messages : [];
+  const reviewableMessages = buildReviewableMessages(messages);
   const review = normalizeText(body.review);
   const score = parseNullableScore(body.score);
   const result = normalizeText(body.result);
@@ -1031,12 +1057,12 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     throw badRequest('训练记录缺少有效训练模式。');
   }
 
-  if (!hasMeaningfulUserContribution(messages)) {
+  if (!reviewableMessages.length) {
     throw noMeaningfulUserInputError();
   }
 
   if (['constructive', 'summary', 'closing'].includes(trainingMode)) {
-    const longestUserMessage = messages
+    const longestUserMessage = reviewableMessages
       .filter((item) => item.role === 'user')
       .reduce((maxLength, item) => Math.max(maxLength, normalizeText(item.content).length), 0);
 
@@ -1065,10 +1091,10 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     difficulty,
     style_id: styleId,
     training_mode: trainingMode,
-    messages: messages
-      .filter((item) => ['ai', 'user'].includes(item.role) && normalizeText(item.content))
+    messages: reviewableMessages
+      .filter((item) => ['ai', 'assistant', 'user'].includes(item.role) && normalizeText(item.content))
       .map((item) => ({
-        role: item.role,
+        role: item.role === 'assistant' ? 'ai' : item.role,
         content: normalizeText(item.content)
       })),
     review,
@@ -1433,15 +1459,15 @@ function normalizeReviewAssistantContext(context) {
       comment: limitLength(normalizeText(dimension?.comment), 240)
     })).filter((dimension) => dimension.name)
     : [];
-  const messages = Array.isArray(context.messages)
+  const normalizedMessages = Array.isArray(context.messages)
     ? context.messages
       .filter((item) => ['ai', 'user', 'assistant'].includes(item?.role) && normalizeText(item?.content))
-      .slice(-10)
       .map((item) => ({
         role: item.role === 'assistant' ? 'ai' : item.role,
         content: limitLength(normalizeText(item.content), 700)
       }))
     : [];
+  const messages = buildReviewableMessages(normalizedMessages).slice(-10);
 
   return {
     topic: limitLength(normalizeText(context.topic), 300),
@@ -3039,10 +3065,33 @@ function isMeaningfulUserInput(value) {
   return Boolean(text && /[\p{L}\p{N}]/u.test(text));
 }
 
-function hasMeaningfulUserContribution(messages) {
-  return Array.isArray(messages) && messages.some((item) => (
-    item?.role === 'user' && isMeaningfulUserInput(item.content)
+function getLastMeaningfulUserIndex(messages) {
+  if (!Array.isArray(messages)) return -1;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'user' && isMeaningfulUserInput(message.content)) return index;
+  }
+
+  return -1;
+}
+
+function buildReviewableMessages(messages) {
+  const lastMeaningfulUserIndex = getLastMeaningfulUserIndex(messages);
+  return lastMeaningfulUserIndex < 0 ? [] : messages.slice(0, lastMeaningfulUserIndex + 1);
+}
+
+function hasUnansweredAssistantTail(messages) {
+  const lastMeaningfulUserIndex = getLastMeaningfulUserIndex(messages);
+  return lastMeaningfulUserIndex >= 0 && messages.slice(lastMeaningfulUserIndex + 1).some((message) => (
+    message?.role === 'ai' || message?.role === 'assistant'
   ));
+}
+
+function countMeaningfulUserMessages(messages) {
+  return Array.isArray(messages)
+    ? messages.filter((message) => message?.role === 'user' && isMeaningfulUserInput(message.content)).length
+    : 0;
 }
 
 function parseNullableScore(value) {
