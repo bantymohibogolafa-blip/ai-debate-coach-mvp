@@ -426,6 +426,13 @@ function App() {
   const recordingPcmChunksRef = useRef([]);
   const recordingInputSampleRateRef = useRef(48000);
   const reviewRequestRef = useRef(false);
+  const polishRequestIdRef = useRef(0);
+  const polishAbortControllerRef = useRef(null);
+
+  useEffect(() => () => {
+    polishRequestIdRef.current += 1;
+    polishAbortControllerRef.current?.abort();
+  }, []);
 
   const reviewableMessages = useMemo(() => buildReviewableMessages(history), [history]);
   const userAnswers = useMemo(
@@ -1437,7 +1444,7 @@ function App() {
     setError('');
     setSelectedRecord(null);
     setSaveStatus('');
-    setPolishResult(null);
+    clearPolishWorkspace();
     setSelectedPolishType((polishOptionsByMode[mode] || polishOptionsByMode.general)[0].id);
     setActiveTaskSession({
       taskId: task.id,
@@ -1683,7 +1690,7 @@ function App() {
     setReviewGenerationStatus('idle');
     setReviewLoadingError('');
     setHistory([]);
-    setPolishResult(null);
+    clearPolishWorkspace();
     setSelectedRecord(null);
     setSaveStatus('');
     const nextTrainingSession = {
@@ -1721,7 +1728,7 @@ function App() {
   }
 
   async function submitAnswer() {
-    if (isBusy || isRecording) return;
+    if (isLoading || isReviewing || isTranscribing || isRecording) return;
 
     const trimmedAnswer = answer.trim();
     if (!isMeaningfulUserInput(trimmedAnswer)) {
@@ -1738,7 +1745,7 @@ function App() {
     setHistory(nextHistory);
     setAnswer('');
     setError('');
-    setPolishResult(null);
+    clearPolishWorkspace();
 
     if (isSingleSpeechMode) {
       return;
@@ -1854,7 +1861,7 @@ function App() {
     setError('');
     setSelectedRecord(null);
     setSaveStatus(statusMessage);
-    setPolishResult(null);
+    clearPolishWorkspace();
     setSelectedPolishType(nextPolishOptions[0].id);
     setRecordingError('');
     setRecordingStatus('');
@@ -1907,7 +1914,7 @@ function App() {
     setReviewLoadingError('');
     setSelectedRecord(null);
     setSaveStatus('');
-    setPolishResult(null);
+    clearPolishWorkspace();
     setRecordingError('');
     setRecordingStatus('');
     setRecordedAudioUrl((currentUrl) => {
@@ -2041,7 +2048,6 @@ function App() {
       }
 
       appendAnswerText(transcript);
-      setPolishResult(null);
       setRecordingStatus('录音识别完成，请检查文字后提交。');
     } catch (requestError) {
       setRecordingStatus('');
@@ -2053,16 +2059,31 @@ function App() {
   }
 
   async function polishAnswer(polishType = activePolishType) {
-    if (isBusy || isRecording) return;
+    if (isPolishing || isLoading || isReviewing || isTranscribing || isRecording) return;
 
-    const trimmedAnswer = answer.trim();
-    if (!trimmedAnswer) {
+    const originalText = polishResult?.original || answer.trim();
+    if (!isMeaningfulUserInput(originalText)) {
       setError('请先输入你的回答。');
       return;
     }
 
+    const requestId = polishRequestIdRef.current + 1;
+    polishRequestIdRef.current = requestId;
+    polishAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    polishAbortControllerRef.current = controller;
     setIsPolishing(true);
     setError('');
+    setPolishResult((current) => ({
+      original: current?.original || originalText,
+      generatedDraft: current?.generatedDraft || '',
+      generatedLabel: current?.generatedLabel || '',
+      generatedType: current?.generatedType || '',
+      selectedSource: current?.selectedSource || 'original',
+      modeDisplayName: current?.modeDisplayName || getOptionLabel(trainingModes, config.trainingMode),
+      tip: current?.tip || '',
+      error: ''
+    }));
 
     try {
       const data = await postJson('/api/debate/polish', {
@@ -2074,32 +2095,68 @@ function App() {
         aiSideLabel: getOptionLabel(sides, getOpponentSideValue(config.userSide)),
         polishType,
         history: buildReviewableMessages(history),
-        answer: trimmedAnswer
-      });
+        answer: originalText
+      }, { signal: controller.signal });
+      if (polishRequestIdRef.current !== requestId) return;
+
       const fallbackOptions = currentPolishOptions.map((option) => ({
         ...option,
-        text: option.id === polishType ? data.polished || trimmedAnswer : data.concise || data.polished || trimmedAnswer
+        text: option.id === polishType ? data.polished || originalText : data.concise || data.polished || originalText
       }));
+      const nextOptions = Array.isArray(data.options) && data.options.length ? data.options : fallbackOptions;
+      const selectedType = data.selectedType || polishType;
+      const generatedOption = nextOptions.find((option) => option.id === selectedType) || nextOptions[0];
+      const generatedDraft = generatedOption?.text || data.polished || originalText;
 
-      setPolishResult({
-        original: data.original || trimmedAnswer,
+      setPolishResult((current) => ({
+        original: current?.original || originalText,
+        generatedDraft,
+        generatedLabel: generatedOption?.label || getPolishTypeLabel(currentPolishOptions, selectedType),
+        generatedType: selectedType,
+        selectedSource: current?.selectedSource || 'original',
         modeDisplayName: data.modeDisplayName || getOptionLabel(trainingModes, config.trainingMode),
-        selectedType: data.selectedType || polishType,
-        options: Array.isArray(data.options) && data.options.length ? data.options : fallbackOptions,
-        polished: data.polished || trimmedAnswer,
-        concise: data.concise || trimmedAnswer,
-        tip: data.tip || '建议先给结论，再补一个清晰标准。'
-      });
+        tip: data.tip || '建议先给结论，再补一个清晰标准。',
+        error: ''
+      }));
     } catch (requestError) {
-      setError(getFriendlyError(requestError));
+      if (requestError?.name === 'AbortError' || polishRequestIdRef.current !== requestId) return;
+      setPolishResult((current) => ({
+        ...(current || { original: originalText, selectedSource: 'original' }),
+        error: '整理表达生成失败，请稍后重试。'
+      }));
     } finally {
-      setIsPolishing(false);
+      if (polishRequestIdRef.current === requestId) {
+        polishAbortControllerRef.current = null;
+        setIsPolishing(false);
+      }
     }
   }
 
-  function usePolishedAnswer(text) {
-    setAnswer(text);
-    setRecordingStatus('已放入回答框，请检查文字后提交。');
+  function cancelPolishRequest() {
+    polishRequestIdRef.current += 1;
+    polishAbortControllerRef.current?.abort();
+    polishAbortControllerRef.current = null;
+    setIsPolishing(false);
+  }
+
+  function clearPolishWorkspace() {
+    cancelPolishRequest();
+    setPolishResult(null);
+  }
+
+  function useOriginalAnswer() {
+    if (!polishResult?.original) return;
+    setAnswer(polishResult.original);
+    setPolishResult((current) => current ? { ...current, selectedSource: 'original', error: '' } : current);
+    setRecordingStatus('已恢复原稿，请检查文字后提交。');
+    setRecordingError('');
+  }
+
+  function useGeneratedAnswer() {
+    if (!polishResult?.generatedDraft) return;
+    setAnswer(polishResult.generatedDraft);
+    setPolishResult((current) => current ? { ...current, selectedSource: 'generated', error: '' } : current);
+    setRecordingStatus('已放入整理稿，请检查文字后提交。');
     setRecordingError('');
   }
 
@@ -2108,6 +2165,7 @@ function App() {
       const separator = currentAnswer.trim() ? '\n' : '';
       return `${currentAnswer}${separator}${text}`;
     });
+    setPolishResult((current) => current ? { ...current, selectedSource: 'manual' } : current);
   }
 
   function clearRecordingTimer() {
@@ -3262,11 +3320,11 @@ function App() {
                   </div>
                   <textarea
                     value={answer}
-                    disabled={isBusy}
+                    disabled={isLoading || isReviewing || isTranscribing}
                     onChange={(event) => {
                       setAnswer(event.target.value);
                       if (error) setError('');
-                      if (polishResult) setPolishResult(null);
+                      setPolishResult((current) => current ? { ...current, selectedSource: 'manual' } : current);
                     }}
                     placeholder={getAnswerPlaceholder(config.trainingMode)}
                     rows={4}
@@ -3284,7 +3342,6 @@ function App() {
                           className={option.id === activePolishType ? 'active' : ''}
                           onClick={() => {
                             setSelectedPolishType(option.id);
-                            if (polishResult) setPolishResult(null);
                           }}
                           disabled={isBusy || isRecording}
                         >
@@ -3327,26 +3384,65 @@ function App() {
                         <span>表达整理</span>
                         <strong>先选稿，再提交</strong>
                       </div>
-                      <div className="polish-option">
-                        <span>原始文本</span>
-                        <p>{polishResult.original}</p>
-                      </div>
-                      {(polishResult.options || []).map((option) => (
-                        <div
-                          className={`polish-option ${option.id === polishResult.selectedType ? 'featured' : ''}`}
-                          key={option.id}
-                        >
-                          <span>{option.label}</span>
-                          <p>{option.text}</p>
-                          <button type="button" onClick={() => usePolishedAnswer(option.text)}>
-                            使用{option.label}
-                          </button>
+                      <p className="polish-card-description">原稿和整理稿可以随时切换，确认后再提交。</p>
+                      {polishResult.selectedSource === 'manual' && (
+                        <div className="polish-selection-status">当前内容已手动修改</div>
+                      )}
+                      <div className={`polish-option ${polishResult.selectedSource === 'original' ? 'selected' : ''}`}>
+                        <div className="polish-option-heading">
+                          <span>原始文本</span>
+                          {polishResult.selectedSource === 'original' && <strong>✓ 当前选稿</strong>}
                         </div>
-                      ))}
-                      <div className="polish-tip">{polishResult.tip}</div>
+                        <p>{polishResult.original}</p>
+                        <button type="button" onClick={useOriginalAnswer}>
+                          {polishResult.selectedSource === 'original' ? '✓ 当前使用原稿' : '使用原稿'}
+                        </button>
+                      </div>
+                      {polishResult.generatedDraft && (
+                        <div className={`polish-option featured ${polishResult.selectedSource === 'generated' && answer === polishResult.generatedDraft ? 'selected' : ''}`}>
+                          <div className="polish-option-heading">
+                            <span>{polishResult.generatedLabel || '整理稿'}</span>
+                            {polishResult.selectedSource === 'generated' && answer === polishResult.generatedDraft && (
+                              <strong>✓ 当前选稿</strong>
+                            )}
+                          </div>
+                          <p>{polishResult.generatedDraft}</p>
+                          <button type="button" onClick={useGeneratedAnswer}>
+                            {polishResult.selectedSource === 'generated' && answer === polishResult.generatedDraft
+                              ? `✓ 当前使用${polishResult.generatedLabel || '整理稿'}`
+                              : `使用${polishResult.generatedLabel || '整理稿'}`}
+                          </button>
+                          {polishResult.selectedSource === 'generated' && answer !== polishResult.generatedDraft && (
+                            <small>当前回答框仍保留上一版整理稿，点击上方按钮后才会采用新稿。</small>
+                          )}
+                        </div>
+                      )}
+                      {isPolishing && (
+                        <div className="polish-generation-status">
+                          {polishResult.generatedDraft ? '正在重新整理表达…' : '正在整理表达…'}
+                        </div>
+                      )}
+                      {polishResult.error && <div className="polish-generation-error">{polishResult.error}</div>}
+                      <div className="polish-card-actions">
+                        <button
+                          type="button"
+                          className="polish-regenerate-button"
+                          onClick={() => polishAnswer(activePolishType)}
+                          disabled={isPolishing || isLoading || isReviewing || isTranscribing || isRecording}
+                        >
+                          {isPolishing
+                            ? polishResult.generatedDraft ? '正在重新整理表达…' : '正在整理表达…'
+                            : polishResult.generatedDraft ? '重新生成' : '生成整理稿'}
+                        </button>
+                      </div>
+                      {polishResult.tip && <div className="polish-tip">{polishResult.tip}</div>}
                     </div>
                   )}
-                  <button className="primary-button" onClick={submitAnswer} disabled={isBusy || isRecording}>
+                  <button
+                    className="primary-button"
+                    onClick={submitAnswer}
+                    disabled={isLoading || isReviewing || isTranscribing || isRecording}
+                  >
                     {isLoading ? '分析中...' : '提交回答'}
                   </button>
                 </>
@@ -6276,6 +6372,10 @@ function OptionGroup({ label, options, value, onChange, disabled, className = ''
 
 function getOptionLabel(options, value) {
   return options.find((option) => option.value === value)?.label || '';
+}
+
+function getPolishTypeLabel(options, id) {
+  return options.find((option) => option.id === id)?.label || '';
 }
 
 function getDateTimeLocalAfterDays(days = 3) {
