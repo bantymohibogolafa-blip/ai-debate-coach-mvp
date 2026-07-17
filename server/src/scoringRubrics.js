@@ -526,29 +526,6 @@ JSON填写要求：
 `;
 }
 
-export function createFallbackStructuredReview(mode, text = '') {
-  const { rubric, isFallback } = getScoringRubric(mode);
-  return {
-    score: 60,
-    scoreLevel: getScoreLevel(60),
-    mode: rubric.appMode,
-    modeDisplayName: rubric.displayName,
-    dimensionScores: rubric.dimensions.map((dimension) => ({
-      name: dimension.name,
-      score: null,
-      maxScore: dimension.maxScore,
-      comment: 'AI返回了文本复盘，未能解析为结构化维度。'
-    })),
-    battlefield: '',
-    mainWeakness: '',
-    strengths: [],
-    weaknesses: [],
-    reviewText: isFallback ? `当前训练模式未识别，已使用通用评分。\n${text}`.trim() : text,
-    nextStepAdvice: [],
-    template: ''
-  };
-}
-
 function buildDifficultyScoringInstruction(difficulty) {
   if (difficulty === 'novice') {
     return [
