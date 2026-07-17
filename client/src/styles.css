@@ -1492,6 +1492,13 @@ textarea:focus {
   justify-self: stretch;
 }
 
+.finish-requirement-hint {
+  grid-column: 1 / -1;
+  color: #78888f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .answer-box {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

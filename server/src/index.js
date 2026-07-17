@@ -24,7 +24,6 @@ import {
   normalizeTrainingMode
 } from './prompts.js';
 import {
-  createFallbackStructuredReview,
   getScoreLevel,
   getScoringRubric,
   normalizeScoringMode
@@ -210,8 +209,8 @@ app.post('/api/debate/review', async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body, { requirePrep: false });
 
-    if (!payload.history.length) {
-      return res.status(400).json({ message: '暂无对话，无法复盘。' });
+    if (!hasMeaningfulUserContribution(payload.history)) {
+      throw noMeaningfulUserInputError();
     }
 
     const messages = buildReviewMessages(payload);
@@ -822,9 +821,9 @@ if (process.env.NODE_ENV === 'production') {
 
 app.use((error, req, res, next) => {
   console.error(error);
-  res.status(getPublicStatus(error)).json({
-    message: getPublicErrorMessage(error)
-  });
+  const responseBody = { message: getPublicErrorMessage(error) };
+  if (error.code === 'NO_MEANINGFUL_USER_INPUT') responseBody.error = error.code;
+  res.status(getPublicStatus(error)).json(responseBody);
 });
 
 app.listen(port, () => {
@@ -1032,8 +1031,8 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     throw badRequest('训练记录缺少有效训练模式。');
   }
 
-  if (!messages.length) {
-    throw badRequest('训练记录缺少完整对话。');
+  if (!hasMeaningfulUserContribution(messages)) {
+    throw noMeaningfulUserInputError();
   }
 
   if (['constructive', 'summary', 'closing'].includes(trainingMode)) {
@@ -1048,6 +1047,10 @@ async function validateTrainingRecordPayload(body, authUser = null) {
 
   if (!review) {
     throw badRequest('训练记录缺少复盘报告。');
+  }
+
+  if (score === null) {
+    throw badRequest('训练记录缺少有效评分。');
   }
 
   const record = {
@@ -2660,8 +2663,14 @@ function httpError(status, message) {
   return error;
 }
 
+function noMeaningfulUserInputError() {
+  const error = httpError(422, '请先完成至少一次有效作答，再结束训练。');
+  error.code = 'NO_MEANINGFUL_USER_INPUT';
+  return error;
+}
+
 function getPublicStatus(error) {
-  if ([400, 401, 403, 404, 409, 429].includes(error.status)) {
+  if ([400, 401, 403, 404, 409, 422, 429].includes(error.status)) {
     return error.status;
   }
 
@@ -2691,6 +2700,14 @@ function getPublicErrorMessage(error) {
 
   if (error.code === 'EMPTY_DEEPSEEK_CONTENT') {
     return 'AI 暂时没有返回内容，请重试。';
+  }
+
+  if (error.code === 'NO_MEANINGFUL_USER_INPUT') {
+    return '请先完成至少一次有效作答，再结束训练。';
+  }
+
+  if (error.code === 'REVIEW_PARSE_FAILED') {
+    return '复盘生成失败，请稍后重试。';
   }
 
   if (error.status === 429) {
@@ -2731,7 +2748,7 @@ function getPublicErrorMessage(error) {
     return '语音生成失败，请稍后重试。';
   }
 
-  if ([400, 401, 403, 404, 409].includes(error.status) && error.message) {
+  if ([400, 401, 403, 404, 409, 422].includes(error.status) && error.message) {
     return error.message;
   }
 
@@ -3014,6 +3031,18 @@ function isValidNickname(nickname) {
 function clampNumber(value, min, max) {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, value));
+}
+
+function isMeaningfulUserInput(value) {
+  if (typeof value !== 'string') return false;
+  const text = value.trim();
+  return Boolean(text && /[\p{L}\p{N}]/u.test(text));
+}
+
+function hasMeaningfulUserContribution(messages) {
+  return Array.isArray(messages) && messages.some((item) => (
+    item?.role === 'user' && isMeaningfulUserInput(item.content)
+  ));
 }
 
 function parseNullableScore(value) {
@@ -4848,21 +4877,27 @@ function parseReviewContent(content, trainingMode) {
   const clean = normalizeText(content);
   const jsonText = extractJsonObject(clean);
 
-  if (jsonText) {
-    try {
-      const parsed = JSON.parse(jsonText);
-      return normalizeStructuredReview(parsed, trainingMode, clean);
-    } catch {
-      // Fall through to the conservative fallback below.
-    }
+  if (!jsonText) {
+    throw reviewParseError();
   }
 
-  return createFallbackStructuredReview(trainingMode, clean);
+  try {
+    const parsed = JSON.parse(jsonText);
+    return normalizeStructuredReview(parsed, trainingMode);
+  } catch (error) {
+    if (error.code === 'REVIEW_PARSE_FAILED') throw error;
+    throw reviewParseError();
+  }
 }
 
-function normalizeStructuredReview(parsed, trainingMode, fallbackText) {
+function normalizeStructuredReview(parsed, trainingMode) {
   const { rubric, isFallback } = getScoringRubric(trainingMode);
-  const score = clampNumber(roundToOne(Number(parsed?.score)), 30, 100);
+  const rawScore = Number(parsed?.score);
+  const reviewText = normalizeText(parsed?.reviewText);
+  if (!Number.isFinite(rawScore) || rawScore < 30 || rawScore > 100 || !reviewText) {
+    throw reviewParseError();
+  }
+  const score = roundToOne(rawScore);
   const dimensionScores = rubric.dimensions.map((dimension, index) => {
     const provided = Array.isArray(parsed?.dimensionScores)
       ? parsed.dimensionScores.find((item) => normalizeText(item?.name) === dimension.name) || parsed.dimensionScores[index]
@@ -4885,8 +4920,6 @@ function normalizeStructuredReview(parsed, trainingMode, fallbackText) {
       comment: limitLength(normalizeText(provided?.comment), 800)
     };
   });
-  const reviewText = normalizeText(parsed?.reviewText) || fallbackText;
-
   return {
     score,
     scoreLevel: getScoreLevel(score),
@@ -4901,6 +4934,12 @@ function normalizeStructuredReview(parsed, trainingMode, fallbackText) {
     nextStepAdvice: normalizeStringList(parsed?.nextStepAdvice, 5, 500),
     template: normalizeText(parsed?.template)
   };
+}
+
+function reviewParseError() {
+  const error = httpError(502, '复盘生成失败，请稍后重试。');
+  error.code = 'REVIEW_PARSE_FAILED';
+  return error;
 }
 
 function normalizeStringList(value, limit, maxLength) {

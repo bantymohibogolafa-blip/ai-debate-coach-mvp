@@ -9,6 +9,7 @@ const LINWAN_VOICE_VERSION = 'mimo-v2.5-tts:bing-tang:pcm16-v1';
 const LINWAN_PCM_SAMPLE_RATE = 24000;
 const LINWAN_STREAM_START_BUFFER_MS = 200;
 const LINWAN_TTS_CACHE_LIMIT = 5;
+const FINISH_REQUIRES_ANSWER_MESSAGE = '请先完成至少一次有效作答，再结束训练。';
 let linWanMessageSequence = 0;
 
 const sides = [
@@ -424,11 +425,13 @@ function App() {
   const audioProcessorRef = useRef(null);
   const recordingPcmChunksRef = useRef([]);
   const recordingInputSampleRateRef = useRef(48000);
+  const reviewRequestRef = useRef(false);
 
   const userAnswers = useMemo(
-    () => history.filter((item) => item.role === 'user').length,
+    () => history.filter((item) => item.role === 'user' && isMeaningfulUserInput(item.content)).length,
     [history]
   );
+  const hasMeaningfulUserContribution = userAnswers > 0;
   const isFinished = isTraining && userAnswers >= config.rounds;
   const currentRound = Math.min(userAnswers + 1, config.rounds);
   const isCelebrityMode = config.celebrityDebater !== 'none';
@@ -453,6 +456,7 @@ function App() {
     : getOptionLabel(difficulties, config.difficulty);
   const latestAiMessage = useMemo(() => getLatestMessage(history, 'ai'), [history]);
   const isBusy = isLoading || isReviewing || isPolishing || isTranscribing;
+  const canFinishTraining = hasMeaningfulUserContribution && !isBusy && !isRecording;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
   const isLoggedIn = Boolean(authToken && currentUser?.id);
   const currentTeam = currentSpace.type === 'team'
@@ -1453,6 +1457,22 @@ function App() {
   }
 
   async function saveTrainingRecord(reviewContent, reviewData = null) {
+    if (!history.some((item) => item.role === 'user' && isMeaningfulUserInput(item.content))) {
+      setSaveStatus('');
+      return;
+    }
+
+    const recordScore = reviewData?.score ?? extractScoreFromReview(reviewContent);
+    if (
+      recordScore === null
+      || recordScore === undefined
+      || recordScore === ''
+      || !Number.isFinite(Number(recordScore))
+    ) {
+      setSaveStatus('复盘生成失败，请稍后重试。');
+      return;
+    }
+
     if (currentSpace.type === 'team' && !isLoggedIn) {
       setSaveStatus('复盘已生成，但团队记录需要登录后才能同步。');
       return;
@@ -1481,7 +1501,7 @@ function App() {
         taskId: activeTaskSession?.taskId || '',
         messages: history,
         review: reviewContent,
-        score: reviewData?.score ?? extractScoreFromReview(reviewContent),
+        score: recordScore,
         result: extractResultFromReview(reviewContent),
         battlefield: reviewData?.battlefield || extractBattlefieldFromReview(reviewContent),
         modeDisplayName: reviewData?.modeDisplayName || getOptionLabel(trainingModes, config.trainingMode),
@@ -1702,8 +1722,8 @@ function App() {
     if (isBusy || isRecording) return;
 
     const trimmedAnswer = answer.trim();
-    if (!trimmedAnswer) {
-      setError('请先输入你的回答。');
+    if (!isMeaningfulUserInput(trimmedAnswer)) {
+      setError('请输入包含实际内容的回答。');
       return;
     }
 
@@ -1753,13 +1773,14 @@ function App() {
   }
 
   async function finishAndReview() {
-    if (isBusy || isRecording) return;
+    if (reviewRequestRef.current || isBusy || isRecording) return;
 
-    if (!history.length) {
-      setError('暂无对话，无法复盘。');
+    if (!history.some((item) => item.role === 'user' && isMeaningfulUserInput(item.content))) {
+      setError(FINISH_REQUIRES_ANSWER_MESSAGE);
       return;
     }
 
+    reviewRequestRef.current = true;
     setIsReviewing(true);
     setReviewGenerationStatus('loading');
     setReviewLoadingError('');
@@ -1779,6 +1800,16 @@ function App() {
       });
       const content = requireContent(data);
       const nextStructuredReview = normalizeStructuredReview(data.structuredReview);
+      if (
+        !nextStructuredReview
+        || nextStructuredReview.score === null
+        || nextStructuredReview.score === undefined
+        || nextStructuredReview.score === ''
+        || !Number.isFinite(Number(nextStructuredReview.score))
+        || !String(nextStructuredReview.reviewText || '').trim()
+      ) {
+        throw new Error('INVALID_REVIEW_RESULT');
+      }
 
       setReview(content);
       setStructuredReview(nextStructuredReview);
@@ -1793,6 +1824,7 @@ function App() {
       setReviewGenerationStatus('error');
       setError(message);
     } finally {
+      reviewRequestRef.current = false;
       setIsReviewing(false);
       if (reviewCompleted) {
         setReviewGenerationStatus('idle');
@@ -3317,9 +3349,12 @@ function App() {
                 </>
               )}
 
-              <button className="secondary-button" onClick={finishAndReview} disabled={isBusy || isRecording || !history.length}>
+              <button className="secondary-button" onClick={finishAndReview} disabled={!canFinishTraining}>
                 结束并复盘
               </button>
+              {!hasMeaningfulUserContribution && (
+                <small className="finish-requirement-hint">{FINISH_REQUIRES_ANSWER_MESSAGE}</small>
+              )}
               {(isReviewing || reviewGenerationStatus === 'error') && (
                 <ReviewGeneratingCard status={reviewGenerationStatus} error={reviewLoadingError} />
               )}
@@ -6486,6 +6521,12 @@ function extractScoreFromReview(reviewText) {
   return formatScoreValue(match[1]);
 }
 
+function isMeaningfulUserInput(value) {
+  if (typeof value !== 'string') return false;
+  const text = value.trim();
+  return Boolean(text && /[\p{L}\p{N}]/u.test(text));
+}
+
 function extractResultFromReview(reviewText) {
   const match = String(reviewText || '').match(/胜负倾向[：:]\s*(?:\n|\r\n)?\s*(用户明显胜|用户小优|势均力敌|用户偏劣)/);
   return match?.[1] || '';
@@ -6785,7 +6826,7 @@ function getServerErrorMessage(status, message) {
     return message;
   }
 
-  if ([400, 401, 403, 409].includes(status) && message) {
+  if ([400, 401, 403, 409, 422].includes(status) && message) {
     return message;
   }
 
