@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import InstallPwaHint from './components/InstallPwaHint.jsx';
+import LinWanContextManifest from './components/LinWanContextManifest.jsx';
+import LinWanSettingsPanel from './components/LinWanSettingsPanel.jsx';
 import OnboardingGuide from './components/OnboardingGuide.jsx';
 import ReviewGeneratingCard from './components/ReviewGeneratingCard.jsx';
 import { getAbilityVideosForDimension } from './data/abilityVideoMap.js';
@@ -3640,7 +3642,11 @@ function App() {
       )}
 
       {activeTab === 'experience' && (
-        <DebateExperienceChat trainingProfile={linWanTrainingProfile} isLoggedIn={isLoggedIn} />
+        <DebateExperienceChat
+          trainingProfile={linWanTrainingProfile}
+          isLoggedIn={isLoggedIn}
+          currentUser={currentUser}
+        />
       )}
 
       {activeTab === 'teams' && (
@@ -5200,7 +5206,7 @@ function WeaknessVideoRecommendations({ dimensions }) {
   );
 }
 
-function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
+function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
   const featuredQuickQuestions = [
     '我最近最该练什么？',
     '我反复出现的问题是什么？',
@@ -5231,20 +5237,44 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
   const openingMessage = '我是林婉，你的辩论顾问，也是你的辩论搭子。\n\n我会参考你最近的训练状态，不局限于某一场比赛，综合分析你的问题，提出我的建议。\n\n另外，我也有许多大赛经验。赛前准备、攻防设计、临场心态这些问题，都可以拿来问我，我会把能用的经验讲给你听。\n\n辩论赛的准备过程是痛苦且艰辛的，但没事，有我在，我们慢慢来。';
   const hasTrainingProfile = Number(trainingProfile?.recentTrainingCount || 0) > 0;
   const [question, setQuestion] = useState('');
-  const [messages, setMessages] = useState(() => [createLinWanMessage('assistant', openingMessage, 'linwan-opening')]);
+  const [messages, setMessages] = useState([]);
   const [isSending, setIsSending] = useState(false);
   const [chatError, setChatError] = useState('');
-  const [memoryStatus, setMemoryStatus] = useState('');
-  const [isClearingMemory, setIsClearingMemory] = useState(false);
+  const [historyNotice, setHistoryNotice] = useState('');
+  const [historyState, setHistoryState] = useState({ status: 'idle', error: '', hasMore: false, nextCursor: null });
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [olderHistoryError, setOlderHistoryError] = useState('');
+  const [profile, setProfile] = useState(getDefaultLinWanClientProfile());
+  const [profileState, setProfileState] = useState({ status: 'idle', error: '' });
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isClearingHistory, setIsClearingHistory] = useState(false);
   const [ttsStates, setTtsStates] = useState({});
   const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
+  const chatListRef = useRef(null);
+  const historyScrollRestoreRef = useRef(null);
   const ttsAudioRef = useRef(null);
   const ttsCacheRef = useRef(new Map());
   const ttsRequestsRef = useRef(new Map());
   const ttsStreamRef = useRef(null);
   const ttsFailedRef = useRef(new Set());
   const isLinWanMountedRef = useRef(false);
+  const linWanSessionIdRef = useRef(0);
+  const historyAbortRef = useRef(null);
+  const profileAbortRef = useRef(null);
+  const olderHistoryAbortRef = useRef(null);
+  const profileSaveAbortRef = useRef(null);
+  const clearHistoryAbortRef = useRef(null);
+  const chatAbortRef = useRef(null);
+  const sendRequestIdRef = useRef(0);
   const hasPreparingVoice = Object.values(ttsStates).some((item) => item?.status === 'connecting');
+
+  useLayoutEffect(() => {
+    const restore = historyScrollRestoreRef.current;
+    const container = chatListRef.current;
+    if (!restore || !container) return;
+    container.scrollTop = restore.previousTop + container.scrollHeight - restore.previousHeight;
+    historyScrollRestoreRef.current = null;
+  }, [messages]);
 
   useEffect(() => {
     isLinWanMountedRef.current = true;
@@ -5252,6 +5282,12 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
       stopLinWanStream(false);
       stopLinWanAudio(false);
       isLinWanMountedRef.current = false;
+      historyAbortRef.current?.abort();
+      profileAbortRef.current?.abort();
+      olderHistoryAbortRef.current?.abort();
+      profileSaveAbortRef.current?.abort();
+      clearHistoryAbortRef.current?.abort();
+      chatAbortRef.current?.abort();
       ttsRequestsRef.current.forEach((request) => request.controller.abort());
       ttsRequestsRef.current.clear();
       clearLinWanAudioCache(false);
@@ -5282,37 +5318,198 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
   }, [hasPreparingVoice]);
 
   useEffect(() => {
-    if (isLoggedIn) return;
+    const sessionId = linWanSessionIdRef.current + 1;
+    linWanSessionIdRef.current = sessionId;
+    sendRequestIdRef.current += 1;
+    historyAbortRef.current?.abort();
+    profileAbortRef.current?.abort();
+    olderHistoryAbortRef.current?.abort();
+    profileSaveAbortRef.current?.abort();
+    clearHistoryAbortRef.current?.abort();
+    chatAbortRef.current?.abort();
     resetLinWanVoiceSession();
-  }, [isLoggedIn]);
+    setMessages([]);
+    setQuestion('');
+    setChatError('');
+    setHistoryNotice('');
+    setOlderHistoryError('');
+    setIsLoadingOlder(false);
+    setIsSending(false);
+    setIsClearingHistory(false);
+    setIsSettingsOpen(false);
+
+    if (!isLoggedIn || !currentUser?.id) {
+      setProfile(getDefaultLinWanClientProfile());
+      setProfileState({ status: 'idle', error: '' });
+      setHistoryState({ status: 'ready', error: '', hasMore: false, nextCursor: null });
+      setMessages([createLinWanMessage('assistant', openingMessage, 'linwan-opening')]);
+      requestAnimationFrame(scrollLinWanToBottom);
+      return undefined;
+    }
+
+    const historyController = new AbortController();
+    const profileController = new AbortController();
+    historyAbortRef.current = historyController;
+    profileAbortRef.current = profileController;
+    void loadInitialHistory(sessionId, historyController.signal);
+    void loadLinWanProfile(sessionId, profileController.signal);
+    return () => {
+      historyController.abort();
+      profileController.abort();
+    };
+  }, [isLoggedIn, currentUser?.id]);
+
+  async function loadInitialHistory(sessionId = linWanSessionIdRef.current, signal) {
+    setHistoryState({ status: 'loading', error: '', hasMore: false, nextCursor: null });
+    try {
+      const data = await getJson('/api/linwan/history?limit=10', { signal });
+      if (sessionId !== linWanSessionIdRef.current) return;
+      const loadedMessages = normalizeLinWanClientMessages(data.messages);
+      setMessages(loadedMessages.length
+        ? loadedMessages
+        : [createLinWanMessage('assistant', openingMessage, 'linwan-opening')]);
+      setHistoryState({
+        status: 'ready',
+        error: '',
+        hasMore: Boolean(data.hasMore),
+        nextCursor: data.nextCursor || null
+      });
+      requestAnimationFrame(scrollLinWanToBottom);
+    } catch (error) {
+      if (error?.name === 'AbortError' || sessionId !== linWanSessionIdRef.current) return;
+      setMessages([]);
+      setHistoryState({
+        status: 'error',
+        error: '历史聊天加载失败，请稍后重试。',
+        hasMore: false,
+        nextCursor: null
+      });
+    }
+  }
+
+  async function loadLinWanProfile(sessionId = linWanSessionIdRef.current, signal) {
+    setProfileState({ status: 'loading', error: '' });
+    try {
+      const data = await getJson('/api/linwan/profile', { signal });
+      if (sessionId !== linWanSessionIdRef.current) return;
+      setProfile({ ...getDefaultLinWanClientProfile(), ...(data.profile || {}) });
+      setProfileState({ status: 'ready', error: '' });
+    } catch (error) {
+      if (error?.name === 'AbortError' || sessionId !== linWanSessionIdRef.current) return;
+      setProfileState({ status: 'error', error: '“我的林婉”设置读取失败，请稍后重试。' });
+    }
+  }
+
+  function retryInitialHistory() {
+    historyAbortRef.current?.abort();
+    const controller = new AbortController();
+    historyAbortRef.current = controller;
+    void loadInitialHistory(linWanSessionIdRef.current, controller.signal);
+  }
+
+  function retryLinWanProfile() {
+    profileAbortRef.current?.abort();
+    const controller = new AbortController();
+    profileAbortRef.current = controller;
+    void loadLinWanProfile(linWanSessionIdRef.current, controller.signal);
+  }
+
+  async function loadOlderHistory() {
+    if (!isLoggedIn || isLoadingOlder || !historyState.hasMore || !historyState.nextCursor) return;
+    const container = chatListRef.current;
+    const previousHeight = container?.scrollHeight || 0;
+    const previousTop = container?.scrollTop || 0;
+    const sessionId = linWanSessionIdRef.current;
+    const controller = new AbortController();
+    olderHistoryAbortRef.current?.abort();
+    olderHistoryAbortRef.current = controller;
+    setIsLoadingOlder(true);
+    setOlderHistoryError('');
+    try {
+      const data = await getJson(`/api/linwan/history?limit=10&before=${encodeURIComponent(historyState.nextCursor)}`, {
+        signal: controller.signal
+      });
+      if (sessionId !== linWanSessionIdRef.current) return;
+      const olderMessages = normalizeLinWanClientMessages(data.messages);
+      historyScrollRestoreRef.current = { previousHeight, previousTop };
+      setMessages((current) => mergeLinWanClientMessages(olderMessages, current));
+      setHistoryState((current) => ({
+        ...current,
+        hasMore: Boolean(data.hasMore),
+        nextCursor: data.nextCursor || null
+      }));
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      if (sessionId === linWanSessionIdRef.current) {
+        setOlderHistoryError('更早的聊天记录加载失败，请重试。');
+      }
+    } finally {
+      if (sessionId === linWanSessionIdRef.current) {
+        olderHistoryAbortRef.current = null;
+        setIsLoadingOlder(false);
+      }
+    }
+  }
+
+  function scrollLinWanToBottom() {
+    const container = chatListRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+  }
 
   async function sendExperienceQuestion(nextQuestion = question) {
     const cleanQuestion = String(nextQuestion || '').trim();
     if (!cleanQuestion || isSending) return;
 
-    const historyForRequest = messages
+    const historyForRequest = isLoggedIn ? [] : messages
       .filter((item) => item.content !== openingMessage)
-      .slice(-10);
-    const nextMessages = [...messages, createLinWanMessage('user', cleanQuestion)];
+      .slice(-60);
+    const localUserMessage = createLinWanMessage('user', cleanQuestion);
+    const requestId = sendRequestIdRef.current + 1;
+    sendRequestIdRef.current = requestId;
+    const controller = new AbortController();
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = controller;
+    const nextMessages = [...messages, localUserMessage];
     setMessages(nextMessages);
     setQuestion('');
     setChatError('');
+    setHistoryNotice('');
     setIsSending(true);
+    requestAnimationFrame(scrollLinWanToBottom);
 
     try {
       const data = await postJson('/api/debate-experience-chat', {
         question: cleanQuestion,
         chatHistory: historyForRequest,
         userTrainingProfile: trainingProfile || null
+      }, { signal: controller.signal });
+      if (requestId !== sendRequestIdRef.current) return;
+      const savedUserMessage = data.userMessage
+        ? createLinWanMessage('user', cleanQuestion, data.userMessage.id, data.userMessage.createdAt)
+        : localUserMessage;
+      const assistantMessage = createLinWanMessage(
+        'assistant',
+        data.answer || '我暂时没有整理好回答，你可以换个问法再试一次。',
+        data.assistantMessage?.id,
+        data.assistantMessage?.createdAt,
+        data.contextManifest
+      );
+      setMessages((current) => {
+        const replaced = current.map((item) => item.id === localUserMessage.id ? savedUserMessage : item);
+        return mergeLinWanClientMessages(replaced, [assistantMessage]);
       });
-      setMessages([
-        ...nextMessages,
-        createLinWanMessage('assistant', data.answer || '我暂时没有整理好回答，你可以换个问法再试一次。')
-      ]);
-    } catch {
+      if (data.historyEnabled && !data.historySaved) {
+        setHistoryNotice('本轮回答暂未保存到历史记录。');
+      }
+      requestAnimationFrame(scrollLinWanToBottom);
+    } catch (error) {
+      if (error?.name === 'AbortError' || requestId !== sendRequestIdRef.current) return;
       setChatError('林婉暂时没有回应，请稍后再试。');
     } finally {
-      setIsSending(false);
+      if (requestId === sendRequestIdRef.current) {
+        chatAbortRef.current = null;
+        setIsSending(false);
+      }
     }
   }
 
@@ -5321,27 +5518,46 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
     setShowAllQuickQuestions(false);
   }
 
-  async function clearLinWanMemory() {
-    if (isClearingMemory) return;
+  async function saveLinWanProfile(nextProfile) {
+    const sessionId = linWanSessionIdRef.current;
+    const controller = new AbortController();
+    profileSaveAbortRef.current?.abort();
+    profileSaveAbortRef.current = controller;
+    const data = await putJson('/api/linwan/profile', nextProfile, { signal: controller.signal });
+    if (sessionId !== linWanSessionIdRef.current) return null;
+    const savedProfile = { ...getDefaultLinWanClientProfile(), ...(data.profile || {}) };
+    setProfile(savedProfile);
+    setProfileState({ status: 'ready', error: '' });
+    return savedProfile;
+  }
 
-    if (!isLoggedIn) {
-      setMemoryStatus('登录后可以清空跨设备保存的林婉记忆。');
-      return;
-    }
-
-    setIsClearingMemory(true);
-    setMemoryStatus('');
+  async function clearLinWanHistory() {
+    if (!isLoggedIn || isClearingHistory) return false;
+    const sessionId = linWanSessionIdRef.current;
+    const controller = new AbortController();
+    clearHistoryAbortRef.current?.abort();
+    clearHistoryAbortRef.current = controller;
+    setIsClearingHistory(true);
+    setHistoryNotice('');
     setChatError('');
 
     try {
-      const data = await postJson('/api/debate-experience-memory/clear', {});
+      const data = await deleteJson('/api/linwan/history', { signal: controller.signal });
+      if (sessionId !== linWanSessionIdRef.current) return false;
       resetLinWanVoiceSession();
       setMessages([createLinWanMessage('assistant', openingMessage, 'linwan-opening')]);
-      setMemoryStatus(data.message || '林婉记忆已清空。');
-    } catch {
-      setMemoryStatus('林婉记忆暂时清空失败，请稍后再试。');
+      setHistoryState({ status: 'ready', error: '', hasMore: false, nextCursor: null });
+      setHistoryNotice(data.message || '聊天记录已清空。');
+      requestAnimationFrame(scrollLinWanToBottom);
+      return true;
+    } catch (error) {
+      if (error?.name === 'AbortError') return false;
+      throw new Error(getFriendlyError(error) || '聊天记录清空失败，请稍后重试。');
     } finally {
-      setIsClearingMemory(false);
+      if (sessionId === linWanSessionIdRef.current) {
+        clearHistoryAbortRef.current = null;
+        setIsClearingHistory(false);
+      }
     }
   }
 
@@ -5719,24 +5935,19 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
           <p className="eyebrow">辩手经验室</p>
           <h2>林婉 · 辩论顾问</h2>
         </div>
-        <button
-          type="button"
-          className="memory-clear-button"
-          disabled={isSending || isClearingMemory}
-          onClick={clearLinWanMemory}
-        >
-          {isClearingMemory ? '清空中...' : '清空林婉记忆'}
-        </button>
+        {isLoggedIn && (
+          <button type="button" className="linwan-settings-open" onClick={() => setIsSettingsOpen(true)}>
+            我的林婉
+          </button>
+        )}
       </div>
 
       <TrainingProfileCard profile={trainingProfile} />
 
-      <article className="experience-opening-card">
-        <span>林婉</span>
-        <p>{openingMessage}</p>
-      </article>
-
-      <p className="experience-boundary-note">林婉更关注你的近期训练状态和长期训练方向。单轮细节问题，可以在对应记录下问复盘助手。</p>
+      <p className="experience-boundary-note">
+        林婉会参考近期训练画像和有限的最近对话。单轮细节问题，可以在对应记录下问复盘助手。
+      </p>
+      {!isLoggedIn && <p className="linwan-guest-note">游客聊天仅保留在当前页面，登录后可恢复云端历史并设置“我的林婉”。</p>}
 
       <section className="experience-quick-panel" aria-label="快捷问题">
         <div className="experience-featured-questions">
@@ -5784,10 +5995,26 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
         )}
       </section>
 
-      <div className="assistant-chat-list experience-chat-list">
+      {historyState.status === 'loading' && <div className="assistant-loading">正在加载历史聊天…</div>}
+      {historyState.status === 'error' && (
+        <div className="linwan-history-error" role="alert">
+          <span>{historyState.error}</span>
+          <button type="button" onClick={retryInitialHistory}>重新加载</button>
+        </div>
+      )}
+
+      <div className="assistant-chat-list experience-chat-list" ref={chatListRef}>
+        {historyState.status === 'ready' && historyState.hasMore && (
+          <button type="button" className="linwan-load-older" disabled={isLoadingOlder} onClick={loadOlderHistory}>
+            {isLoadingOlder ? '加载中…' : '加载更早消息'}
+          </button>
+        )}
+        {olderHistoryError && <div className="linwan-older-error">{olderHistoryError}</div>}
         {messages.map((item, index) => {
           const ttsKey = getLinWanTtsKey(item);
           const canPlayTts = item.role === 'assistant' && item.id !== 'linwan-opening';
+          const previousMessage = messages[index - 1];
+          const showDate = item.createdAt && getLinWanLocalDateKey(item.createdAt) !== getLinWanLocalDateKey(previousMessage?.createdAt);
           const ttsState = ttsStates[ttsKey] || {
             status: ttsCacheRef.current.has(ttsKey) ? 'ready' : 'idle',
             currentTime: 0,
@@ -5796,38 +6023,60 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn }) {
           };
 
           return (
-            <article className={`assistant-chat-message ${item.role}`} key={item.id || `${item.role}-${index}`}>
-              <span>{item.role === 'user' ? '我的问题' : '林婉'}</span>
-              <p>{item.content}</p>
-              {canPlayTts && (
-                <LinWanVoicePlayer
-                  state={ttsState}
-                  onAction={() => handleLinWanVoiceAction(item.content, ttsKey, ttsState)}
-                  onStop={() => stopLinWanVoice(ttsKey)}
-                  onSeek={(value) => seekLinWanAudio(ttsKey, value)}
-                />
-              )}
-            </article>
+            <div className="linwan-message-group" key={item.id || `${item.role}-${index}`}>
+              {showDate && <div className="linwan-date-separator">{formatLinWanLocalDate(item.createdAt)}</div>}
+              <article className={`assistant-chat-message ${item.role} ${item.id === 'linwan-opening' ? 'opening' : ''}`}>
+                <div className="linwan-message-meta">
+                  <span>{item.role === 'user' ? '我的问题' : '林婉'}</span>
+                  {item.createdAt && <time dateTime={item.createdAt}>{formatLinWanLocalTime(item.createdAt)}</time>}
+                </div>
+                <p>{item.content}</p>
+                {item.role === 'assistant' && item.contextManifest && (
+                  <LinWanContextManifest manifest={item.contextManifest} autoShow={profile.autoShowContext} />
+                )}
+                {canPlayTts && (
+                  <LinWanVoicePlayer
+                    state={ttsState}
+                    onAction={() => handleLinWanVoiceAction(item.content, ttsKey, ttsState)}
+                    onStop={() => stopLinWanVoice(ttsKey)}
+                    onSeek={(value) => seekLinWanAudio(ttsKey, value)}
+                  />
+                )}
+              </article>
+            </div>
           );
         })}
       </div>
 
       {isSending && <div className="assistant-loading">林婉正在整理思路...</div>}
       {chatError && <div className="assistant-error">{chatError}</div>}
-      {memoryStatus && <div className="assistant-memory-status">{memoryStatus}</div>}
+      {historyNotice && <div className="assistant-memory-status">{historyNotice}</div>}
 
       <div className="assistant-input-row experience-input-row">
         <textarea
           value={question}
-          disabled={isSending}
+          disabled={isSending || historyState.status !== 'ready'}
           onChange={(event) => setQuestion(event.target.value)}
           placeholder={hasTrainingProfile ? '例如：我最近最该练什么？帮我安排三天训练计划。' : '例如：自由辩总被带跑怎么办？赛前准备一个辩题该怎么做？'}
           rows={3}
         />
-        <button type="button" disabled={isSending || !question.trim()} onClick={() => sendExperienceQuestion()}>
+        <button type="button" disabled={isSending || historyState.status !== 'ready' || !question.trim()} onClick={() => sendExperienceQuestion()}>
           发送
         </button>
       </div>
+
+      <LinWanSettingsPanel
+        isOpen={isSettingsOpen}
+        profile={profile}
+        isLoading={profileState.status === 'loading'}
+        loadError={profileState.error}
+        onRetry={retryLinWanProfile}
+        onSave={saveLinWanProfile}
+        onClose={() => setIsSettingsOpen(false)}
+        onClearHistory={clearLinWanHistory}
+        isClearingHistory={isClearingHistory}
+        isChatBusy={isSending}
+      />
     </section>
   );
 }
@@ -5947,13 +6196,86 @@ function TrainingProfileCard({ profile }) {
   );
 }
 
-function createLinWanMessage(role, content, id = '') {
+function createLinWanMessage(role, content, id = '', createdAt = '', contextManifest = null) {
   linWanMessageSequence += 1;
   return {
     id: id || `linwan-message-${Date.now()}-${linWanMessageSequence}`,
     role,
-    content
+    content,
+    createdAt: id === 'linwan-opening' ? '' : createdAt || new Date().toISOString(),
+    contextManifest: role === 'assistant' && contextManifest && typeof contextManifest === 'object'
+      ? contextManifest
+      : null
   };
+}
+
+function getDefaultLinWanClientProfile() {
+  return {
+    preferredName: '',
+    responseLength: 'balanced',
+    communicationStyle: 'balanced',
+    answerOrder: 'auto',
+    terminologyLevel: 'normal',
+    customPreference: '',
+    autoShowContext: true
+  };
+}
+
+function normalizeLinWanClientMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  const seen = new Set();
+  return messages
+    .map((item) => ({
+      id: String(item?.id || ''),
+      role: item?.role,
+      content: String(item?.content || '').trim(),
+      createdAt: String(item?.createdAt || item?.created_at || ''),
+      contextManifest: item?.role === 'assistant' && item?.contextManifest && typeof item.contextManifest === 'object'
+        ? item.contextManifest
+        : null
+    }))
+    .filter((item) => {
+      if (!item.id || !['user', 'assistant'].includes(item.role) || !item.content || seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+}
+
+function mergeLinWanClientMessages(first, second) {
+  const merged = [];
+  const seen = new Set();
+  [...(Array.isArray(first) ? first : []), ...(Array.isArray(second) ? second : [])].forEach((item) => {
+    if (!item?.id || seen.has(item.id)) return;
+    seen.add(item.id);
+    merged.push(item);
+  });
+  return merged;
+}
+
+function getLinWanLocalDateKey(value) {
+  const date = new Date(value || '');
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function formatLinWanLocalDate(value) {
+  const date = new Date(value || '');
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  }).format(date);
+}
+
+function formatLinWanLocalTime(value) {
+  const date = new Date(value || '');
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(date);
 }
 
 function getLinWanTtsKey(message) {
@@ -7000,17 +7322,34 @@ async function postJson(url, body, options = {}) {
   return data;
 }
 
-async function getJson(url) {
+async function putJson(url, body, options = {}) {
+  return requestJson(url, { method: 'PUT', body, signal: options.signal });
+}
+
+async function deleteJson(url, options = {}) {
+  return requestJson(url, { method: 'DELETE', signal: options.signal });
+}
+
+async function getJson(url, options = {}) {
+  return requestJson(url, { method: 'GET', signal: options.signal });
+}
+
+async function requestJson(url, options = {}) {
   let response;
   const token = localStorage.getItem(authTokenStorageKey);
 
   try {
     response = await fetch(url, {
+      method: options.method || 'GET',
       headers: {
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {})
-      }
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: options.signal
     });
-  } catch {
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
     throw new Error('网络连接异常，请稍后重试。');
   }
 
