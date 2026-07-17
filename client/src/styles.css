@@ -2660,6 +2660,470 @@ textarea:focus {
   font-size: 16px;
 }
 
+.linwan-settings-open {
+  min-height: 40px;
+  border: 1px solid #b9d4d5;
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: #245e62;
+  background: #eef8f7;
+  font-weight: 900;
+}
+
+.linwan-guest-note {
+  margin: -8px 0 0;
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: #687982;
+  background: #f7fafb;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.experience-chat-list {
+  max-height: min(68vh, 680px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 4px 8px 0;
+  scrollbar-gutter: stable;
+}
+
+.linwan-load-older {
+  justify-self: center;
+  min-height: 38px;
+  border: 1px solid #cbdadd;
+  border-radius: 999px;
+  padding: 7px 14px;
+  color: #52636c;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.linwan-history-error,
+.linwan-older-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #9f2f20;
+  background: #fff1ea;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.linwan-history-error button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  border: 1px solid #e6bbaa;
+  border-radius: 8px;
+  padding: 6px 11px;
+  color: #8f321f;
+  background: #fff;
+  font-weight: 900;
+}
+
+.linwan-older-error {
+  display: block;
+  text-align: center;
+}
+
+.linwan-message-group {
+  display: grid;
+  gap: 6px;
+}
+
+.linwan-date-separator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 2px;
+  color: #829198;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.linwan-date-separator::before,
+.linwan-date-separator::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+  background: #e2eaec;
+}
+
+.linwan-message-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 5px;
+}
+
+.assistant-chat-message .linwan-message-meta span {
+  margin: 0;
+}
+
+.linwan-message-meta time {
+  color: #8a989e;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.assistant-chat-message.opening {
+  border-left: 5px solid #2f7375;
+  padding: 16px 18px;
+  background: #eef8f7;
+  box-shadow: 0 10px 24px rgba(31, 111, 111, 0.08);
+}
+
+.linwan-context-manifest {
+  margin-top: 10px;
+  border-top: 1px solid rgba(47, 115, 117, 0.16);
+  padding-top: 8px;
+  color: #687982;
+  font-size: 12px;
+}
+
+.linwan-context-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  border: 0;
+  padding: 4px 0;
+  color: #587178;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.linwan-context-toggle span {
+  margin: 0;
+  color: #2f7375;
+  font-size: 14px;
+}
+
+.linwan-context-manifest ul {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding-left: 18px;
+  line-height: 1.55;
+}
+
+.linwan-settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(15, 35, 42, 0.42);
+}
+
+.linwan-settings-panel {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(100%, 480px);
+  height: 100%;
+  color: #243a42;
+  background: #fffdfa;
+  box-shadow: -18px 0 48px rgba(15, 35, 42, 0.22);
+}
+
+.linwan-settings-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #e4ebec;
+  padding: 18px 20px;
+}
+
+.linwan-settings-panel > header span {
+  color: #c8502d;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.linwan-settings-panel > header h3 {
+  margin: 3px 0 0;
+  color: #10282f;
+  font-size: 22px;
+}
+
+.linwan-settings-close {
+  width: 40px;
+  height: 40px;
+  border: 1px solid #d9e3e5;
+  border-radius: 50%;
+  color: #52636c;
+  background: #fff;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.linwan-settings-panel > div:not(.linwan-settings-confirm),
+.linwan-settings-panel > section {
+  min-height: 0;
+}
+
+.linwan-settings-panel > :not(header):not(.linwan-settings-confirm) {
+  min-height: 0;
+}
+
+.linwan-settings-panel > div:has(.linwan-settings-scroll) {
+  display: grid;
+  min-height: 0;
+}
+
+.linwan-settings-scroll {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 110px;
+}
+
+.linwan-settings-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.linwan-settings-field > span,
+.linwan-settings-field legend {
+  color: #34464d;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.linwan-settings-field input[type='text'],
+.linwan-settings-field > input,
+.linwan-settings-field textarea {
+  width: 100%;
+  border: 1px solid #cddadd;
+  border-radius: 8px;
+  padding: 10px 11px;
+  color: #243a42;
+  background: #fff;
+  font: inherit;
+}
+
+.linwan-settings-field textarea {
+  resize: vertical;
+}
+
+.linwan-settings-field > small {
+  justify-self: end;
+  color: #819096;
+  font-size: 12px;
+}
+
+.linwan-settings-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.linwan-settings-options label {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 42px;
+  border: 1px solid #d4e0e2;
+  border-radius: 8px;
+  color: #52636c;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.linwan-settings-options label.selected {
+  border-color: #2f7375;
+  color: #245e62;
+  background: #eef8f7;
+  box-shadow: inset 0 0 0 1px rgba(47, 115, 117, 0.16);
+}
+
+.linwan-settings-options input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.linwan-settings-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #d9e4e5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbfc;
+}
+
+.linwan-settings-switch > span {
+  display: grid;
+  gap: 4px;
+}
+
+.linwan-settings-switch small {
+  color: #73838a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.linwan-settings-switch input {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  accent-color: #2f7375;
+}
+
+.linwan-settings-danger {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid #eaded8;
+  padding-top: 16px;
+}
+
+.linwan-settings-danger p {
+  margin: 0;
+  color: #687982;
+  font-size: 13px;
+}
+
+.linwan-settings-danger button {
+  justify-self: start;
+  min-height: 38px;
+  border: 1px solid #efc4b4;
+  border-radius: 8px;
+  padding: 7px 12px;
+  color: #9f2f20;
+  background: #fff7f3;
+  font-weight: 900;
+}
+
+.linwan-settings-panel > footer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #e2e9ea;
+  padding: 12px 20px;
+  background: rgba(255, 253, 250, 0.96);
+  backdrop-filter: blur(10px);
+}
+
+.linwan-settings-panel > footer > div {
+  min-height: 18px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.linwan-settings-panel .success {
+  color: #2f7375;
+}
+
+.linwan-settings-panel .error {
+  color: #9f2f20;
+}
+
+.linwan-settings-save {
+  min-height: 44px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: #2f7375;
+  font-weight: 900;
+}
+
+.linwan-settings-state {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: #52636c;
+  text-align: center;
+}
+
+.linwan-settings-state p {
+  margin: 0;
+}
+
+.linwan-settings-state button {
+  min-height: 40px;
+  border: 1px solid #bad3d5;
+  border-radius: 8px;
+  padding: 7px 13px;
+  color: #245e62;
+  background: #eef8f7;
+  font-weight: 900;
+}
+
+.linwan-settings-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 35, 42, 0.5);
+}
+
+.linwan-settings-confirm > div {
+  display: grid;
+  gap: 14px;
+  width: min(100%, 380px);
+  border-radius: 10px;
+  padding: 18px;
+  background: #fff;
+  box-shadow: 0 18px 44px rgba(15, 35, 42, 0.24);
+}
+
+.linwan-settings-confirm h4,
+.linwan-settings-confirm p {
+  margin: 0;
+}
+
+.linwan-settings-confirm p {
+  color: #687982;
+  line-height: 1.6;
+}
+
+.linwan-settings-confirm > div > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.linwan-settings-confirm button {
+  min-height: 42px;
+  border: 1px solid #cbdadd;
+  border-radius: 8px;
+  color: #52636c;
+  background: #fff;
+  font-weight: 900;
+}
+
+.linwan-settings-confirm button.danger {
+  border-color: #c8502d;
+  color: #fff;
+  background: #c8502d;
+}
+
 .history-panel {
   margin-top: 22px;
 }
@@ -4557,6 +5021,48 @@ textarea:focus {
 
   .linwan-voice-progress {
     height: 28px;
+  }
+
+  .linwan-settings-open {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .experience-chat-list {
+    max-height: 62vh;
+    padding-right: 0;
+    scrollbar-gutter: auto;
+  }
+
+  .linwan-settings-backdrop {
+    align-items: flex-end;
+  }
+
+  .linwan-settings-panel {
+    width: 100%;
+    height: min(94dvh, 820px);
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -18px 44px rgba(15, 35, 42, 0.24);
+  }
+
+  .linwan-settings-panel > header,
+  .linwan-settings-scroll,
+  .linwan-settings-panel > footer {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .linwan-settings-options {
+    grid-template-columns: 1fr;
+  }
+
+  .linwan-settings-options label {
+    min-height: 44px;
+  }
+
+  .linwan-history-error {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

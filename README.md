@@ -64,7 +64,7 @@ SUPABASE_TEAM_TASKS_TABLE=team_tasks
 SUPABASE_TEAM_TASK_ASSIGNMENTS_TABLE=team_task_assignments
 SUPABASE_APP_USERS_TABLE=app_users
 SUPABASE_LINWAN_MESSAGES_TABLE=linwan_messages
-SUPABASE_LINWAN_MEMORY_TABLE=linwan_memory
+SUPABASE_LINWAN_PROFILE_TABLE=linwan_user_profile
 JWT_SECRET=replace-with-a-long-random-secret-at-least-32-chars
 JWT_EXPIRES_IN=30d
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
@@ -95,11 +95,12 @@ supabase-team-spaces.sql
 supabase-team-admin-roles.sql
 supabase-auth-1.sql
 supabase-linwan-memory.sql
+supabase-linwan-history-profile.sql
 supabase-team-task-4.sql
 supabase-scoring-rubrics.sql
 ```
 
-这些迁移会创建或更新当前后端默认使用的 `teams`、`team_members`、`training_records`、`app_users`、`team_tasks`、`team_task_assignments`、`linwan_messages` 和 `linwan_memory`。如果你已经建过旧版 `debate_training_records`，可以保留旧表；当前代码默认使用 `training_records`。后端使用 service role key 访问 Supabase REST API，因此前端不会接触 Supabase key。
+这些迁移会创建或更新当前后端默认使用的 `teams`、`team_members`、`training_records`、`app_users`、`team_tasks`、`team_task_assignments`、`linwan_messages`、`linwan_user_profile` 和保留兼容的 `linwan_memory`。`supabase-linwan-history-profile.sql` 会为林婉消息增加 `context_manifest` 并创建“我的林婉”设置表；旧 `linwan_memory` 数据不会迁移，新聊天逻辑也不再读取或更新它。如果你已经建过旧版 `debate_training_records`，可以保留旧表；当前代码默认使用 `training_records`。后端使用 service role key 访问 Supabase REST API，因此前端不会接触 Supabase key。
 
 ## 本地运行步骤
 
@@ -180,7 +181,7 @@ SUPABASE_TEAM_TASKS_TABLE=team_tasks
 SUPABASE_TEAM_TASK_ASSIGNMENTS_TABLE=team_task_assignments
 SUPABASE_APP_USERS_TABLE=app_users
 SUPABASE_LINWAN_MESSAGES_TABLE=linwan_messages
-SUPABASE_LINWAN_MEMORY_TABLE=linwan_memory
+SUPABASE_LINWAN_PROFILE_TABLE=linwan_user_profile
 JWT_SECRET=replace-with-a-long-random-secret-at-least-32-chars
 JWT_EXPIRES_IN=30d
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
