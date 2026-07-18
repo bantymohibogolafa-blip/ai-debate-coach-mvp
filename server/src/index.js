@@ -316,19 +316,23 @@ app.post('/api/debate-experience-chat', optionalAuth, async (req, res, next) => 
     if (req.authExpired) throw httpError(401, '登录状态已过期，请重新登录。');
     const payload = validateDebateExperienceChatPayload(req.body);
     const linWanUserId = req.user?.id || '';
+    const authorizedTrainingProfile = req.user
+      ? await fetchAuthorizedLinWanTrainingProfile(req.user.id, payload.trainingScope)
+      : payload.userTrainingProfile;
     const context = await buildLinWanContext({
       userId: linWanUserId,
       displayName: req.user?.displayName || '',
       currentQuestion: payload.question,
       guestChatHistory: payload.chatHistory,
-      userTrainingProfile: payload.userTrainingProfile
+      userTrainingProfile: authorizedTrainingProfile
     });
     const messages = buildDebateExperienceMessages({
       question: payload.question,
-      userTrainingProfile: payload.userTrainingProfile,
+      userTrainingProfile: authorizedTrainingProfile,
       profile: context.profile,
       recentMessages: context.recentMessages
     });
+    logLinWanContextAudit(linWanUserId, context, messages);
     const rawAnswer = await callDeepSeek(messages, {
       maxTokens: getLinWanResponseMaxTokens(context.profile),
       temperature: 0.55
@@ -763,9 +767,11 @@ app.get('/api/training-records', optionalAuth, async (req, res, next) => {
       return res.status(400).json({ message: '匿名用户 ID 无效，请刷新页面后重试。' });
     }
 
-    const records = spaceType === 'personal'
-      ? await fetchPersonalTrainingRecords(localUserId, limit, req.user?.id)
-      : await fetchLegacyTrainingRecords(localUserId, limit);
+    if (spaceType !== 'personal') {
+      throw httpError(400, '团队训练记录请使用已验证团队成员身份的记录接口。');
+    }
+
+    const records = await fetchPersonalTrainingRecords(localUserId, limit, req.user?.id);
     res.json({ records: records.map(mapTrainingRecordFromDb) });
   } catch (error) {
     next(error);
@@ -1655,7 +1661,11 @@ function validateDebateExperienceChatPayload(body = {}) {
   return {
     question,
     chatHistory,
-    userTrainingProfile: normalizeDebateExperienceProfile(body.userTrainingProfile || body.context || null)
+    userTrainingProfile: normalizeDebateExperienceProfile(body.userTrainingProfile || body.context || null),
+    trainingScope: {
+      spaceType: normalizeSpaceType(body.trainingScope?.spaceType || body.trainingScope?.space_type),
+      teamCode: normalizeTeamCode(body.trainingScope?.teamCode || body.trainingScope?.team_code)
+    }
   };
 }
 
@@ -1927,6 +1937,71 @@ ${profileContext}
   ];
 }
 
+async function fetchAuthorizedLinWanTrainingProfile(userId, scope = {}) {
+  if (!isUuid(userId)) throw httpError(401, '登录状态已过期，请重新登录。');
+  const spaceType = normalizeSpaceType(scope.spaceType);
+  let rows;
+
+  if (spaceType === 'team') {
+    const teamCode = normalizeTeamCode(scope.teamCode);
+    if (!isValidTeamCode(teamCode)) throw badRequest('林婉训练画像的团队空间无效。');
+    await requireActiveMembership(teamCode, userId);
+    rows = await fetchMyTrainingRecords(teamCode, userId, 10);
+  } else {
+    rows = await fetchPersonalTrainingRecords('', 10, userId);
+  }
+
+  return buildLinWanTrainingProfileFromRows(rows);
+}
+
+function buildLinWanTrainingProfileFromRows(rows = []) {
+  const recent = Array.isArray(rows) ? rows.slice(0, 10) : [];
+  if (!recent.length) return normalizeDebateExperienceProfile(null);
+  const scores = recent.map((row) => Number(row.score)).filter(Number.isFinite);
+  const weakDimensions = summarizeRecordDimensions(recent).weak;
+  const frequentModes = getFrequentTrainingModes(recent).slice(0, 3);
+  const latest = recent[0] || {};
+  const averageScore = scores.length
+    ? Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 10) / 10
+    : null;
+  const trendDelta = scores.length >= 2 ? scores[0] - scores.at(-1) : 0;
+  const scoreTrend = scores.length < 2 ? '暂无足够数据' : trendDelta >= 3 ? '近期上升' : trendDelta <= -3 ? '近期回落' : '近期稳定';
+
+  return normalizeDebateExperienceProfile({
+    recentTrainingCount: recent.length,
+    frequentModes,
+    averageScore,
+    scoreTrend,
+    weakDimensions,
+    recurringProblems: inferLinWanRecurringProblems(weakDimensions),
+    latestRecordSummary: {
+      topic: latest.topic || '未命名辩题',
+      mode: getTrainingModeLabel(latest.training_mode || 'free_debate'),
+      difficulty: latest.difficulty || '',
+      score: Number.isFinite(Number(latest.score)) ? Number(latest.score) : null,
+      scoreLevel: latest.score_level || '',
+      userSide: getSideLabel(latest.user_side),
+      aiSide: getSideLabel(latest.ai_side),
+      battlefield: latest.battlefield || '',
+      reviewSummary: limitLength(normalizeText(latest.review), 220),
+      createdAt: latest.created_at || ''
+    },
+    recommendedFocus: weakDimensions.length ? `优先训练：${weakDimensions.slice(0, 2).join('、')}` : ''
+  });
+}
+
+function inferLinWanRecurringProblems(weakDimensions = []) {
+  const text = weakDimensions.join(' ');
+  const problems = [];
+  if (/战场|控制|识别|主线/.test(text)) problems.push('容易被对方问题带走，需要先练战场识别');
+  if (/表达|节奏|时间|稳定/.test(text)) problems.push('回答容易变长，落点不够清楚，需要练表达压缩');
+  if (/防守|回应|切割|陷阱|反压/.test(text)) problems.push('防守时需要先处理问题预设，再回到己方标准');
+  if (/追问|问题|质询|漏洞|压迫/.test(text)) problems.push('攻辩问题还需要形成连续问题链');
+  if (/论据|例证|数据|论证|逻辑/.test(text)) problems.push('论据和结论之间还需要补足推理链');
+  if (/价值|升华|整合|收束|结算/.test(text)) problems.push('结尾需要更清楚地完成胜负比较和价值收束');
+  return problems.slice(0, 4);
+}
+
 async function buildLinWanContext({
   userId,
   displayName = '',
@@ -1969,6 +2044,7 @@ async function fetchLinWanProfile(userId, displayName = '') {
       limit: '1'
     })
   );
+  assertLinWanRowsOwnedByUser(row ? [row] : [], userId, 'profile');
   return mapLinWanProfileRow(row, displayName);
 }
 
@@ -1998,13 +2074,14 @@ async function fetchLinWanRecentContextMessages(userId, limit = 60) {
 
   const rows = await supabaseRequest(
     `${linWanMessagesTable}?${new URLSearchParams({
-      select: 'id,role,content,created_at',
+      select: 'id,user_id,role,content,created_at',
       user_id: `eq.${userId}`,
       order: 'created_at.desc,id.desc',
       limit: String(limit)
     }).toString()}`
   );
 
+  assertLinWanRowsOwnedByUser(rows, userId, 'recent_history');
   return rows.reverse().map(mapLinWanMessageFromDb);
 }
 
@@ -2012,7 +2089,7 @@ async function fetchLinWanHistoryPage(userId, limit = 10, cursor = null) {
   if (!isUuid(userId)) throw httpError(401, '该功能需要登录后使用。');
   const pageSize = Math.floor(clampNumber(Number(limit || 10), 1, 30));
   const query = new URLSearchParams({
-    select: 'id,role,content,created_at,context_manifest',
+    select: 'id,user_id,role,content,created_at,context_manifest',
     user_id: `eq.${userId}`,
     order: 'created_at.desc,id.desc',
     limit: String(pageSize + 1)
@@ -2021,6 +2098,7 @@ async function fetchLinWanHistoryPage(userId, limit = 10, cursor = null) {
     query.set('or', `(created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id}))`);
   }
   const rows = await supabaseRequest(`${linWanMessagesTable}?${query.toString()}`);
+  assertLinWanRowsOwnedByUser(rows, userId, 'history_page');
   const hasMore = rows.length > pageSize;
   const pageRows = rows.slice(0, pageSize);
   const oldest = pageRows[pageRows.length - 1];
@@ -2086,11 +2164,46 @@ async function persistLinWanExchange(userId, {
     body: [userMessage, assistantMessage],
     prefer: 'return=representation'
   });
+  assertLinWanRowsOwnedByUser(rows, userId, 'persisted_exchange');
   const mapped = rows.map(mapLinWanMessageFromDb);
   return {
     userMessage: mapped.find((item) => item.role === 'user') || null,
     assistantMessage: mapped.find((item) => item.role === 'assistant') || null
   };
+}
+
+function assertLinWanRowsOwnedByUser(rows, expectedUserId, source) {
+  if (!isUuid(expectedUserId) || !Array.isArray(rows)) {
+    throw httpError(500, '林婉上下文安全校验失败。');
+  }
+
+  const mismatched = rows.filter((row) => normalizeText(row?.user_id) !== expectedUserId);
+  if (!mismatched.length) return;
+
+  console.error('[linwan-security] Cross-user data rejected', {
+    source,
+    requestUser: fingerprintUserId(expectedUserId),
+    rejectedRows: mismatched.length
+  });
+  const error = httpError(500, '林婉上下文安全校验失败。');
+  error.code = 'LINWAN_CROSS_USER_DATA';
+  throw error;
+}
+
+function logLinWanContextAudit(userId, context, modelMessages) {
+  if (process.env.NODE_ENV === 'production' || process.env.LINWAN_CONTEXT_AUDIT !== 'true') return;
+  console.debug('[linwan-context-audit]', {
+    requestUser: userId ? fingerprintUserId(userId) : 'guest',
+    historyMessageIds: (context?.recentMessages || []).map((item) => normalizeText(item.id)).filter(Boolean),
+    historyMessageCount: context?.recentMessages?.length || 0,
+    modelMessageCount: Array.isArray(modelMessages) ? modelMessages.length : 0,
+    profileLoaded: Boolean(context?.profile),
+    trainingProfileUsed: Boolean(context?.modelContext?.userTrainingProfile)
+  });
+}
+
+function fingerprintUserId(userId) {
+  return crypto.createHash('sha256').update(String(userId || '')).digest('hex').slice(0, 12);
 }
 
 function redactSensitiveText(text) {
@@ -4006,7 +4119,9 @@ async function fetchLegacyTrainingRecords(localUserId, limit) {
 }
 
 async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '', page = {}) {
-  const identityFilter = appUserId ? { app_user_id: `eq.${appUserId}` } : { local_user_id: `eq.${localUserId}` };
+  const identityFilter = appUserId
+    ? { app_user_id: `eq.${appUserId}` }
+    : { local_user_id: `eq.${localUserId}`, app_user_id: 'is.null' };
   const query = new URLSearchParams({
     select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
     space_type: 'eq.personal',
@@ -4017,8 +4132,9 @@ async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '', 
   try {
     return await supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);
   } catch (error) {
-    if (!isSupabaseSchemaError(error)) throw error;
-    return fetchLegacyPersonalTrainingRecords(localUserId, limit);
+    // Private records must fail closed. A legacy query cannot distinguish
+    // account-owned rows from guest rows and could expose another user's data.
+    throw error;
   }
 }
 
@@ -4113,8 +4229,11 @@ async function fetchTeamStats(teamCode, viewer = null) {
   const records = filteredRecords;
   const scoredRecords = records.filter((record) => Number.isFinite(Number(record.score)));
   const memberMap = new Map();
-  const recentRecords = records
-    .slice(0, 10)
+  const recentRecords = sanitizeTeamRecordsForViewer(
+    records.slice(0, 10),
+    viewer || {},
+    viewer?.app_user_id || viewer?.local_user_id || ''
+  )
     .map(mapTrainingRecordFromDb);
 
   records.forEach((record) => {
