@@ -1613,6 +1613,23 @@ textarea:focus {
   transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 
+.speech-input-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+}
+
+.speech-input-icon {
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+.speech-input-button.recording .speech-input-icon {
+  animation: speech-recording-pulse 1.4s ease-in-out infinite;
+}
+
 .record-button:hover:not(:disabled) {
   transform: translateY(-1px);
 }
@@ -2442,6 +2459,44 @@ textarea:focus {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: stretch;
+}
+
+.experience-input-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.linwan-speech-input {
+  min-width: 116px;
+  border-color: #bdd6d8 !important;
+  color: #245e62 !important;
+  background: #eef8f7 !important;
+  font-weight: 900;
+}
+
+.linwan-speech-input.recording {
+  border-color: #c8502d !important;
+  color: #fff !important;
+  background: linear-gradient(135deg, #c8502d, #a83c20) !important;
+}
+
+.linwan-speech-status {
+  margin-top: -3px;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #245e62;
+  background: #edf7f6;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.linwan-speech-status.error {
+  color: #9c2f1d;
+  background: #fff0eb;
+}
+
+@keyframes speech-recording-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.82); }
+  50% { opacity: 1; transform: scale(1); }
 }
 
 .assistant-input-row textarea {
@@ -5575,6 +5630,29 @@ textarea:focus {
     min-height: 48px;
   }
 
+}
+
+@media (max-width: 620px) {
+  .experience-input-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .experience-input-row textarea {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  .experience-input-row button {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+  }
+
+  .linwan-speech-input {
+    font-size: 13px;
+  }
 }
 
 @keyframes linwan-top-sheet-in {

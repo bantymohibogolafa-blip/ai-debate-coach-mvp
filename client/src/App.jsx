@@ -4,12 +4,15 @@ import LinWanContextManifest from './components/LinWanContextManifest.jsx';
 import LinWanSettingsPanel from './components/LinWanSettingsPanel.jsx';
 import OnboardingGuide from './components/OnboardingGuide.jsx';
 import ReviewGeneratingCard from './components/ReviewGeneratingCard.jsx';
+import SpeechInputButton from './components/SpeechInputButton.jsx';
 import { getAbilityVideosForDimension } from './data/abilityVideoMap.js';
+import useSpeechInput from './hooks/useSpeechInput.js';
 import {
   getMobileTrainingSnapshot,
   getMobileTrainingStepAvailability,
   validateMobileTrainingSetup
 } from './utils/mobileTrainingSetup.js';
+import { appendSpeechTranscript, stopPlaybackBeforeSpeechInput } from './utils/speechInput.js';
 
 const LINWAN_PLAYBACK_RATE = 1;
 const LINWAN_VOICE_VERSION = 'mimo-v2.5-tts:bing-tang:pcm16-v1';
@@ -325,6 +328,7 @@ const personalSpace = { type: 'personal', teamCode: '' };
 const roundSelectionModes = ['free_debate', 'attack', 'defense'];
 const longOutputModes = ['constructive', 'summary', 'closing'];
 const recordingLimitHint = '单次录音不要超过30秒';
+const maxRecordingSeconds = 30;
 
 function App() {
   const [config, setConfig] = useState(initialConfig);
@@ -419,25 +423,23 @@ function App() {
   const [selectedPolishType, setSelectedPolishType] = useState('');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showPwaHint, setShowPwaHint] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const [recordingError, setRecordingError] = useState('');
-  const [recordingStatus, setRecordingStatus] = useState('');
   const mobileTopicInputRef = useRef(null);
   const mobileSetupRef = useRef(null);
-  const [recordedAudioUrl, setRecordedAudioUrl] = useState('');
-  const recordingStreamRef = useRef(null);
-  const recordingTimerRef = useRef(null);
-  const recordingStartedAtRef = useRef(0);
-  const audioContextRef = useRef(null);
-  const audioSourceRef = useRef(null);
-  const audioProcessorRef = useRef(null);
-  const recordingPcmChunksRef = useRef([]);
-  const recordingInputSampleRateRef = useRef(48000);
   const reviewRequestRef = useRef(false);
   const polishRequestIdRef = useRef(0);
   const polishAbortControllerRef = useRef(null);
+  const trainingSpeech = useSpeechInput({
+    scene: 'training',
+    maxRecordingSeconds,
+    onTranscript: appendAnswerText
+  });
+  const {
+    isRecording,
+    isTranscribing,
+    message: recordingStatus,
+    error: recordingError,
+    audioUrl: recordedAudioUrl
+  } = trainingSpeech;
 
   useEffect(() => () => {
     polishRequestIdRef.current += 1;
@@ -474,7 +476,7 @@ function App() {
     ? `市赛 · ${selectedDebater?.shortName || '明星辩手'}`
     : getOptionLabel(difficulties, config.difficulty);
   const latestAiMessage = useMemo(() => getLatestMessage(history, 'ai'), [history]);
-  const isBusy = isLoading || isReviewing || isPolishing || isTranscribing;
+  const isBusy = isLoading || isReviewing || isPolishing || trainingSpeech.isBusy;
   const canFinishTraining = hasMeaningfulUserContribution && !isBusy && !isRecording;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
   const isLoggedIn = Boolean(authToken && currentUser?.id);
@@ -532,8 +534,6 @@ function App() {
   const emptyAbilityMessage = isTeamSpace
     ? '你在当前团队中暂无训练记录，完成一次团队训练后即可生成团队空间下的个人能力估测。'
     : '暂无个人训练记录，完成训练后即可生成能力估测。';
-  const maxRecordingSeconds = 30;
-
   useEffect(() => {
     const storedLocalUserId = getOrCreateLocalUserId();
     const preferredSpace = parseStoredSpace();
@@ -627,10 +627,15 @@ function App() {
   }, [currentSpace.type, currentSpace.teamCode, activeTab, activeTaskSession?.teamCode]);
 
   useEffect(() => {
-    return () => {
-      stopRecordingResources(false);
-    };
-  }, []);
+    if (activeTab !== 'training') {
+      trainingSpeech.cancelRecording();
+      trainingSpeech.clearAudioUrl();
+    }
+  }, [activeTab, trainingSpeech.cancelRecording, trainingSpeech.clearAudioUrl]);
+
+  useEffect(() => {
+    trainingSpeech.cancelRecording();
+  }, [currentSpace.type, currentSpace.teamCode, trainingSpeech.cancelRecording]);
 
   async function verifyAuthSession(preferredTeamCode = '') {
     try {
@@ -652,6 +657,8 @@ function App() {
   }
 
   function clearAuthSession(statusMessage = '') {
+    trainingSpeech.cancelRecording();
+    trainingSpeech.clearAudioUrl();
     localStorage.removeItem(authTokenStorageKey);
     localStorage.removeItem(authUserStorageKey);
     setAuthToken('');
@@ -815,6 +822,8 @@ function App() {
   }
 
   function setCurrentTrainingSpace(space) {
+    trainingSpeech.cancelRecording();
+    trainingSpeech.clearAudioUrl();
     const nextSpace = space?.type === 'team' && space.teamCode
       ? { type: 'team', teamCode: normalizeTeamCode(space.teamCode) }
       : personalSpace;
@@ -828,7 +837,8 @@ function App() {
   }
 
   function selectTrainingSpace(value) {
-    if (isBusy || isRecording) return;
+    if (isLoading || isReviewing || isPolishing) return;
+    if (trainingSpeech.isBusy) trainingSpeech.cancelRecording();
 
     if (value === 'join') {
       if (!isLoggedIn) {
@@ -1927,14 +1937,8 @@ function App() {
     setSaveStatus(statusMessage);
     clearPolishWorkspace();
     setSelectedPolishType(nextPolishOptions[0].id);
-    setRecordingError('');
-    setRecordingStatus('');
-    setRecordedAudioUrl((currentUrl) => {
-      if (currentUrl) URL.revokeObjectURL(currentUrl);
-      return '';
-    });
-    setRecordingDuration(0);
-    stopRecordingResources();
+    trainingSpeech.cancelRecording();
+    trainingSpeech.clearAudioUrl();
     setIsTraining(false);
     setTrainingSession(null);
     setLongOutputPromptMode(longOutputModes.includes(nextMode) ? nextMode : '');
@@ -1979,14 +1983,8 @@ function App() {
     setSelectedRecord(null);
     setSaveStatus('');
     clearPolishWorkspace();
-    setRecordingError('');
-    setRecordingStatus('');
-    setRecordedAudioUrl((currentUrl) => {
-      if (currentUrl) URL.revokeObjectURL(currentUrl);
-      return '';
-    });
-    setRecordingDuration(0);
-    stopRecordingResources();
+    trainingSpeech.cancelRecording();
+    trainingSpeech.clearAudioUrl();
     setIsTraining(false);
     setGeneratedTopics([]);
     setRecentGeneratedTopics({});
@@ -1996,130 +1994,6 @@ function App() {
     setSetupStep('topic');
     setLongOutputPromptMode('');
     setActiveTaskSession(null);
-  }
-
-  async function startAudioRecording() {
-    if (isBusy || isRecording) return;
-
-    if (!isAudioRecorderSupported()) {
-      setRecordingStatus('');
-      setRecordingError('当前浏览器不支持录音上传，请使用文字输入。');
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      const audioContext = new AudioContextClass();
-      const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      const silentGain = audioContext.createGain();
-      silentGain.gain.value = 0;
-
-      recordingPcmChunksRef.current = [];
-      recordingStreamRef.current = stream;
-      audioContextRef.current = audioContext;
-      audioSourceRef.current = source;
-      audioProcessorRef.current = processor;
-      recordingInputSampleRateRef.current = audioContext.sampleRate;
-      recordingStartedAtRef.current = Date.now();
-
-      processor.onaudioprocess = (event) => {
-        if (!recordingStartedAtRef.current) return;
-        const inputData = event.inputBuffer.getChannelData(0);
-        recordingPcmChunksRef.current.push(new Float32Array(inputData));
-      };
-
-      source.connect(processor);
-      processor.connect(silentGain);
-      silentGain.connect(audioContext.destination);
-
-      setIsRecording(true);
-      setRecordingDuration(0);
-      setRecordingError('');
-      setRecordingStatus(`正在录音，请开始回答。最多录制 ${maxRecordingSeconds} 秒。`);
-
-      recordingTimerRef.current = window.setInterval(() => {
-        const seconds = Math.floor((Date.now() - recordingStartedAtRef.current) / 1000);
-        setRecordingDuration(seconds);
-
-        if (seconds >= maxRecordingSeconds) {
-          stopAudioRecording();
-        }
-      }, 500);
-    } catch (recordError) {
-      setIsRecording(false);
-      setRecordingStatus('');
-      setRecordingError(isPermissionDenied(recordError) ? '请允许浏览器使用麦克风后再试。' : '录音失败，请重试或改用文字输入。');
-      stopRecordingResources();
-    }
-  }
-
-  function stopAudioRecording() {
-    if (!audioProcessorRef.current) return;
-
-    setIsRecording(false);
-    setRecordingStatus('正在上传录音并转文字...');
-    clearRecordingTimer();
-    uploadRecordedAudio();
-  }
-
-  async function uploadRecordedAudio() {
-    const chunks = recordingPcmChunksRef.current;
-    const inputSampleRate = recordingInputSampleRateRef.current;
-    stopRecordingResources(false);
-
-    if (!chunks.length) {
-      setRecordingStatus('');
-      setRecordingError('没有录到声音，请重新录音。');
-      return;
-    }
-
-    const mergedPcm = mergeFloat32Chunks(chunks);
-    const wavBlob = encodeWav(downsampleBuffer(mergedPcm, inputSampleRate, 16000), 16000);
-    const nextAudioUrl = URL.createObjectURL(wavBlob);
-    setRecordedAudioUrl((currentUrl) => {
-      if (currentUrl) URL.revokeObjectURL(currentUrl);
-      return nextAudioUrl;
-    });
-    setIsTranscribing(true);
-    setRecordingError('');
-    setRecordingStatus('正在转文字，请稍候。');
-
-    try {
-      const response = await fetch('/api/speech/transcribe', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'audio/wav'
-        },
-        body: wavBlob
-      });
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data.message || '录音识别失败，请重试或改用文字输入。');
-      }
-
-      const transcript = String(data.text || '').trim();
-      if (!transcript) {
-        throw new Error('录音识别失败，请重试或改用文字输入。');
-      }
-
-      appendAnswerText(transcript);
-      setRecordingStatus('录音识别完成，请检查文字后提交。');
-    } catch (requestError) {
-      setRecordingStatus('');
-      setRecordingError(getFriendlyError(requestError));
-    } finally {
-      setIsTranscribing(false);
-      recordingPcmChunksRef.current = [];
-    }
   }
 
   async function polishAnswer(polishType = activePolishType) {
@@ -2212,52 +2086,17 @@ function App() {
     if (!polishResult?.original) return;
     setAnswer(polishResult.original);
     setPolishResult((current) => current ? { ...current, selectedSource: 'original', error: '' } : current);
-    setRecordingStatus('已恢复原稿，请检查文字后提交。');
-    setRecordingError('');
   }
 
   function useGeneratedAnswer() {
     if (!polishResult?.generatedDraft) return;
     setAnswer(polishResult.generatedDraft);
     setPolishResult((current) => current ? { ...current, selectedSource: 'generated', error: '' } : current);
-    setRecordingStatus('已放入整理稿，请检查文字后提交。');
-    setRecordingError('');
   }
 
   function appendAnswerText(text) {
-    setAnswer((currentAnswer) => {
-      const separator = currentAnswer.trim() ? '\n' : '';
-      return `${currentAnswer}${separator}${text}`;
-    });
+    setAnswer((currentAnswer) => appendSpeechTranscript(currentAnswer, text));
     setPolishResult((current) => current ? { ...current, selectedSource: 'manual' } : current);
-  }
-
-  function clearRecordingTimer() {
-    if (recordingTimerRef.current) {
-      window.clearInterval(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
-  }
-
-  function stopRecordingTracks() {
-    recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
-    recordingStreamRef.current = null;
-  }
-
-  function stopRecordingResources(updateState = true) {
-    clearRecordingTimer();
-    audioProcessorRef.current?.disconnect();
-    audioSourceRef.current?.disconnect();
-    audioProcessorRef.current = null;
-    audioSourceRef.current = null;
-    recordingStartedAtRef.current = 0;
-    audioContextRef.current?.close().catch(() => {});
-    audioContextRef.current = null;
-    recordingPcmChunksRef.current = [];
-    stopRecordingTracks();
-    if (updateState) {
-      setIsRecording(false);
-    }
   }
 
   function closeOnboarding() {
@@ -2411,7 +2250,7 @@ function App() {
                       setSelectedRecord(null);
                       setIsFunctionPanelOpen(false);
                     }}
-                    disabled={isBusy || isRecording || isTeamsLoading}
+                    disabled={isLoading || isReviewing || isPolishing || isTeamsLoading}
                   >
                     <option value="personal">个人模式</option>
                     {joinedTeams.map((team) => (
@@ -3456,14 +3295,12 @@ function App() {
                     </div>
                   </div>
                   <div className="speech-panel">
-                    <button
-                      type="button"
-                      className={`record-button ${isRecording ? 'recording' : ''}`}
-                      onClick={isRecording ? stopAudioRecording : startAudioRecording}
-                      disabled={isBusy}
-                    >
-                      {isRecording ? `停止并识别 ${formatDuration(recordingDuration)}` : `录音回答（${recordingLimitHint}）`}
-                    </button>
+                    <SpeechInputButton
+                      speech={trainingSpeech}
+                      className="record-button"
+                      idleLabel={`录音回答（${recordingLimitHint}）`}
+                      disabled={isLoading || isReviewing || isPolishing}
+                    />
                     <button
                       type="button"
                       className="polish-button"
@@ -5354,6 +5191,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
   const [ttsStates, setTtsStates] = useState({});
   const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
   const chatListRef = useRef(null);
+  const questionInputRef = useRef(null);
   const historyScrollRestoreRef = useRef(null);
   const ttsAudioRef = useRef(null);
   const ttsCacheRef = useRef(new Map());
@@ -5369,6 +5207,23 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
   const clearHistoryAbortRef = useRef(null);
   const chatAbortRef = useRef(null);
   const sendRequestIdRef = useRef(0);
+  const linWanSpeech = useSpeechInput({
+    scene: 'linwan',
+    maxRecordingSeconds,
+    onBeforeRecord: stopLinWanVoiceForSpeechInput,
+    onTranscript: (transcript) => {
+      setQuestion((current) => appendSpeechTranscript(current, transcript));
+      window.requestAnimationFrame(() => {
+        const input = questionInputRef.current;
+        if (!input) return;
+        input.focus({ preventScroll: true });
+        input.selectionStart = input.value.length;
+        input.selectionEnd = input.value.length;
+        input.scrollTop = input.scrollHeight;
+      });
+    }
+  });
+  const isLinWanSpeechBusy = linWanSpeech.isBusy;
   const hasPreparingVoice = Object.values(ttsStates).some((item) => item?.status === 'connecting');
 
   useLayoutEffect(() => {
@@ -5430,6 +5285,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
     profileSaveAbortRef.current?.abort();
     clearHistoryAbortRef.current?.abort();
     chatAbortRef.current?.abort();
+    linWanSpeech.cancelRecording();
     resetLinWanVoiceSession();
     setMessages([]);
     setQuestion('');
@@ -5561,7 +5417,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
 
   async function sendExperienceQuestion(nextQuestion = question) {
     const cleanQuestion = String(nextQuestion || '').trim();
-    if (!cleanQuestion || isSending) return;
+    if (!cleanQuestion || isSending || isLinWanSpeechBusy) return;
 
     const historyForRequest = isLoggedIn ? [] : messages
       .filter((item) => item.content !== openingMessage)
@@ -5617,6 +5473,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
   }
 
   function handleQuickQuestion(item) {
+    if (isLinWanSpeechBusy) return;
     sendExperienceQuestion(item);
     setShowAllQuickQuestions(false);
   }
@@ -5704,6 +5561,10 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
     if (updateState) {
       setLinWanTtsState(active.key, { status: 'ready', currentTime: 0 });
     }
+  }
+
+  function stopLinWanVoiceForSpeechInput() {
+    stopPlaybackBeforeSpeechInput({ stopStream: stopLinWanStream, stopAudio: stopLinWanAudio });
   }
 
   function stopLinWanStream(updateState = true) {
@@ -5997,6 +5858,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
   }
 
   function handleLinWanVoiceAction(content, key, state) {
+    if (isLinWanSpeechBusy) return;
     const status = state?.status || 'idle';
     if (status === 'connecting' || status === 'buffering') return;
     if (status === 'streaming') {
@@ -6058,7 +5920,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
             <button
               type="button"
               key={item}
-              disabled={isSending}
+              disabled={isSending || isLinWanSpeechBusy}
               onClick={() => handleQuickQuestion(item)}
             >
               {item}
@@ -6085,7 +5947,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
                     <button
                       type="button"
                       key={item}
-                      disabled={isSending}
+                      disabled={isSending || isLinWanSpeechBusy}
                       onClick={() => handleQuickQuestion(item)}
                     >
                       {item}
@@ -6140,6 +6002,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
                 {canPlayTts && (
                   <LinWanVoicePlayer
                     state={ttsState}
+                    disabled={isLinWanSpeechBusy}
                     onAction={() => handleLinWanVoiceAction(item.content, ttsKey, ttsState)}
                     onStop={() => stopLinWanVoice(ttsKey)}
                     onSeek={(value) => seekLinWanAudio(ttsKey, value)}
@@ -6157,16 +6020,28 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
 
       <div className="assistant-input-row experience-input-row">
         <textarea
+          ref={questionInputRef}
           value={question}
           disabled={isSending || historyState.status !== 'ready'}
           onChange={(event) => setQuestion(event.target.value)}
           placeholder={hasTrainingProfile ? '例如：我最近最该练什么？帮我安排三天训练计划。' : '例如：自由辩总被带跑怎么办？赛前准备一个辩题该怎么做？'}
           rows={3}
         />
-        <button type="button" disabled={isSending || historyState.status !== 'ready' || !question.trim()} onClick={() => sendExperienceQuestion()}>
+        <SpeechInputButton
+          speech={linWanSpeech}
+          className="linwan-speech-input"
+          idleLabel="语音输入"
+          disabled={isSending || historyState.status !== 'ready'}
+        />
+        <button type="button" disabled={isSending || isLinWanSpeechBusy || historyState.status !== 'ready' || !question.trim()} onClick={() => sendExperienceQuestion()}>
           发送
         </button>
       </div>
+      {(linWanSpeech.message || linWanSpeech.error) && (
+        <div className={`linwan-speech-status ${linWanSpeech.error ? 'error' : ''}`} aria-live="polite">
+          {linWanSpeech.error || linWanSpeech.message}
+        </div>
+      )}
 
       <LinWanSettingsPanel
         isOpen={isSettingsOpen}
@@ -6184,7 +6059,7 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
   );
 }
 
-function LinWanVoicePlayer({ state, onAction, onStop, onSeek }) {
+function LinWanVoicePlayer({ state, onAction, onStop, onSeek, disabled = false }) {
   const status = state?.status || 'idle';
   const currentTime = Number.isFinite(state?.currentTime) ? state.currentTime : 0;
   const duration = Number.isFinite(state?.duration) ? state.duration : null;
@@ -6200,7 +6075,7 @@ function LinWanVoicePlayer({ state, onAction, onStop, onSeek }) {
         {status === 'connecting' && (state.elapsedSeconds || 0) >= 5 && (
           <small>语音正在生成，可以先阅读文字内容。</small>
         )}
-        <button type="button" className="linwan-voice-action" onClick={onStop}>停止</button>
+        <button type="button" className="linwan-voice-action" onClick={onStop} disabled={disabled}>停止</button>
       </div>
     );
   }
@@ -6209,7 +6084,7 @@ function LinWanVoicePlayer({ state, onAction, onStop, onSeek }) {
     return (
       <div className="linwan-voice-player error" role="status">
         <span>{state.errorMessage || '语音暂时没有准备好。'}</span>
-        <button type="button" className="linwan-tts-button" onClick={onAction}>重新生成</button>
+        <button type="button" className="linwan-tts-button" onClick={onAction} disabled={disabled}>重新生成</button>
       </div>
     );
   }
@@ -6217,7 +6092,7 @@ function LinWanVoicePlayer({ state, onAction, onStop, onSeek }) {
   if (status === 'idle' || status === 'ready' || status === 'stopped') {
     return (
       <div className={`linwan-voice-player ${status}`}>
-        <button type="button" className="linwan-tts-button" onClick={onAction}>▶ 听林婉说</button>
+        <button type="button" className="linwan-tts-button" onClick={onAction} disabled={disabled}>▶ 听林婉说</button>
         {status === 'ready' && (
           <time>{formatAudioTime(0)} / {formatAudioTime(duration)}</time>
         )}
@@ -6230,10 +6105,10 @@ function LinWanVoicePlayer({ state, onAction, onStop, onSeek }) {
   return (
     <div className={`linwan-voice-player active ${status}`}>
       <div className="linwan-voice-controls">
-        <button type="button" className="linwan-voice-action" onClick={onAction}>{actionLabel}</button>
+        <button type="button" className="linwan-voice-action" onClick={onAction} disabled={disabled}>{actionLabel}</button>
         <strong>{isLive ? '林婉语音' : actionLabel}</strong>
         <time>{formatAudioTime(currentTime)} / {isLive ? '生成中' : formatAudioTime(duration)}</time>
-        {isLive && <button type="button" className="linwan-voice-action" onClick={onStop}>停止</button>}
+        {isLive && <button type="button" className="linwan-voice-action" onClick={onStop} disabled={disabled}>停止</button>}
       </div>
       {isLive && Number.isFinite(state?.bufferedDuration) && (
         <small>已缓冲 {formatAudioTime(state.bufferedDuration)}</small>
@@ -6245,7 +6120,7 @@ function LinWanVoicePlayer({ state, onAction, onStop, onSeek }) {
         max={duration || 1}
         step="0.1"
         value={Math.min(currentTime, duration || 0)}
-        disabled={isLive || !duration}
+        disabled={disabled || isLive || !duration}
         aria-label="林婉语音播放进度"
         onChange={(event) => onSeek(event.target.value)}
       />
@@ -7482,102 +7357,6 @@ function getTaskAssignmentLabel(task = {}) {
 
 function shuffle(items) {
   return [...items].sort(() => Math.random() - 0.5);
-}
-
-function isAudioRecorderSupported() {
-  const AudioContextClass = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
-
-  return (
-    typeof navigator !== 'undefined' &&
-    Boolean(navigator.mediaDevices?.getUserMedia) &&
-    Boolean(AudioContextClass)
-  );
-}
-
-function isPermissionDenied(error) {
-  return error?.name === 'NotAllowedError' || error?.name === 'SecurityError';
-}
-
-function formatDuration(seconds) {
-  const safeSeconds = Math.max(0, seconds);
-  const minutes = Math.floor(safeSeconds / 60);
-  const restSeconds = String(safeSeconds % 60).padStart(2, '0');
-  return `${minutes}:${restSeconds}`;
-}
-
-function mergeFloat32Chunks(chunks) {
-  const totalLength = chunks.reduce((length, chunk) => length + chunk.length, 0);
-  const result = new Float32Array(totalLength);
-  let offset = 0;
-
-  chunks.forEach((chunk) => {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  });
-
-  return result;
-}
-
-function downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
-  if (inputSampleRate === outputSampleRate) {
-    return buffer;
-  }
-
-  const sampleRateRatio = inputSampleRate / outputSampleRate;
-  const newLength = Math.round(buffer.length / sampleRateRatio);
-  const result = new Float32Array(newLength);
-
-  for (let index = 0; index < newLength; index += 1) {
-    const start = Math.floor(index * sampleRateRatio);
-    const end = Math.min(Math.floor((index + 1) * sampleRateRatio), buffer.length);
-    let sum = 0;
-    let count = 0;
-
-    for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
-      sum += buffer[sampleIndex];
-      count += 1;
-    }
-
-    result[index] = count ? sum / count : 0;
-  }
-
-  return result;
-}
-
-function encodeWav(samples, sampleRate) {
-  const bytesPerSample = 2;
-  const dataLength = samples.length * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + dataLength);
-  const view = new DataView(buffer);
-
-  writeAscii(view, 0, 'RIFF');
-  view.setUint32(4, 36 + dataLength, true);
-  writeAscii(view, 8, 'WAVE');
-  writeAscii(view, 12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * bytesPerSample, true);
-  view.setUint16(32, bytesPerSample, true);
-  view.setUint16(34, 16, true);
-  writeAscii(view, 36, 'data');
-  view.setUint32(40, dataLength, true);
-
-  let offset = 44;
-  samples.forEach((sample) => {
-    const clampedSample = Math.max(-1, Math.min(1, sample));
-    view.setInt16(offset, clampedSample < 0 ? clampedSample * 0x8000 : clampedSample * 0x7fff, true);
-    offset += 2;
-  });
-
-  return new Blob([view], { type: 'audio/wav' });
-}
-
-function writeAscii(view, offset, text) {
-  for (let index = 0; index < text.length; index += 1) {
-    view.setUint8(offset + index, text.charCodeAt(index));
-  }
 }
 
 function requireContent(data) {

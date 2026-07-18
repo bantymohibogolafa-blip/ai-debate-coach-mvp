@@ -890,20 +890,45 @@ app.post(
   '/api/speech/transcribe',
   express.raw({
     limit: '12mb',
-    type: ['audio/*', 'application/octet-stream']
+    type: () => true
   }),
   async (req, res, next) => {
+    const startedAt = Date.now();
     try {
       const audioBuffer = req.body;
-      const mimeType = normalizeText(req.headers['content-type']) || 'application/octet-stream';
+      const mimeType = (normalizeText(req.headers['content-type']) || 'application/octet-stream').split(';')[0].toLowerCase();
+      const sceneHeader = normalizeText(req.headers['x-speech-scene']);
+      const scene = ['training', 'linwan'].includes(sceneHeader) ? sceneHeader : 'unknown';
+
+      if (!['audio/wav', 'audio/x-wav', 'application/octet-stream'].includes(mimeType)) {
+        throw httpError(415, '当前录音格式不受支持，请重新录音。');
+      }
 
       if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
         return res.status(400).json({ message: '没有收到录音文件，请重新录音。' });
       }
 
       const transcript = await transcribeAudio(audioBuffer, mimeType);
+      console.info('ASR request completed', {
+        scene,
+        audioBytes: audioBuffer.length,
+        mimeType,
+        elapsedMs: Date.now() - startedAt,
+        success: true
+      });
       res.json({ text: transcript });
     } catch (error) {
+      console.warn('ASR request failed', {
+        scene: ['training', 'linwan'].includes(normalizeText(req.headers['x-speech-scene']))
+          ? normalizeText(req.headers['x-speech-scene'])
+          : 'unknown',
+        audioBytes: Buffer.isBuffer(req.body) ? req.body.length : 0,
+        mimeType: (normalizeText(req.headers['content-type']) || 'unknown').split(';')[0],
+        elapsedMs: Date.now() - startedAt,
+        success: false,
+        category: error.code || error.status || 'unknown'
+      });
+      error.safelyLogged = true;
       next(error);
     }
   }
@@ -918,7 +943,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 app.use((error, req, res, next) => {
-  console.error(error);
+  if (!error.safelyLogged) console.error(error);
   const responseBody = { message: getPublicErrorMessage(error) };
   if (error.code === 'NO_MEANINGFUL_USER_INPUT') responseBody.error = error.code;
   res.status(getPublicStatus(error)).json(responseBody);
@@ -2637,7 +2662,7 @@ function noMeaningfulUserInputError() {
 }
 
 function getPublicStatus(error) {
-  if ([400, 401, 403, 404, 409, 422, 429].includes(error.status)) {
+  if ([400, 401, 403, 404, 409, 413, 415, 422, 429, 504].includes(error.status)) {
     return error.status;
   }
 
@@ -2651,6 +2676,10 @@ function getPublicStatus(error) {
 
   if (error.code === 'ASR_NOT_CONFIGURED') {
     return 501;
+  }
+
+  if (error.code === 'ASR_TIMEOUT') {
+    return 504;
   }
 
   if (error.code === 'TTS_NOT_CONFIGURED') {
@@ -2681,8 +2710,16 @@ function getPublicErrorMessage(error) {
     return 'AI 服务繁忙或额度不足，请稍后重试。';
   }
 
+  if (error.status === 413) {
+    return '录音文件过大，请缩短录音后重试。';
+  }
+
   if (error.code === 'ASR_NOT_CONFIGURED') {
     return '录音识别服务暂未配置，请先使用文字输入。';
+  }
+
+  if (error.code === 'ASR_TIMEOUT') {
+    return '语音识别暂时失败，请稍后重试。';
   }
 
   if (error.code === 'TTS_NOT_CONFIGURED') {
@@ -2718,11 +2755,15 @@ function getPublicErrorMessage(error) {
     return '语音生成失败，请稍后重试。';
   }
 
-  if ([400, 401, 403, 404, 409, 422].includes(error.status) && error.message) {
+  if ([400, 401, 403, 404, 409, 413, 415, 422].includes(error.status) && error.message) {
     return error.message;
   }
 
-  if (error.code === 'ASR_REQUEST_FAILED' || error.code === 'EMPTY_ASR_CONTENT') {
+  if (error.code === 'EMPTY_ASR_CONTENT') {
+    return '没有识别到有效内容，请靠近麦克风后重试。';
+  }
+
+  if (error.code === 'ASR_REQUEST_FAILED') {
     return '录音识别失败，请重试或改用文字输入。';
   }
 
@@ -5171,14 +5212,30 @@ async function transcribeAudio(audioBuffer, mimeType) {
   requestUrl.searchParams.set('enable_punctuation_prediction', 'true');
   requestUrl.searchParams.set('enable_inverse_text_normalization', 'true');
 
-  const response = await fetch(requestUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/octet-stream',
-      'X-NLS-Token': token
-    },
-    body: audioBuffer
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+  let response;
+  try {
+    response = await fetch(requestUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-NLS-Token': token
+      },
+      body: audioBuffer,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error('Speech recognition request timed out.');
+      timeoutError.code = 'ASR_TIMEOUT';
+      timeoutError.status = 504;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const data = await response.json().catch(() => ({}));
 
@@ -5199,7 +5256,7 @@ async function transcribeAudio(audioBuffer, mimeType) {
   if (!text) {
     const error = new Error('Speech recognition returned empty text.');
     error.code = 'EMPTY_ASR_CONTENT';
-    error.status = 502;
+    error.status = 422;
     throw error;
   }
 
