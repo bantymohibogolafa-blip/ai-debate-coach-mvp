@@ -78,6 +78,9 @@ test('guide and function panel share one contact component without changing entr
   assert.match(guideSource, /<ContactFeedback variant="guide"/);
   assert.match(appSource, /<ContactFeedback variant="panel"/);
   assert.match(contactSource, /from '\.\.\/data\/contactInfo\.js'/);
+  assert.match(contactSource, /在使用过程中遇到任何问题，敬请联系：/);
+  assert.equal(contactSource.includes('党梓豪微信'), false);
+  assert.equal(contactSource.includes('党梓豪｜微信'), false);
   assert.match(guideSource, /primaryAction\.type === 'start'[\s\S]*\? onStart/);
   assert.match(appSource, /onClick=\{\(\) => switchFunctionTab\(item\)\}/);
   for (const label of ['训练区', '辩论顾问', '我的记录', '能力估测', '我的团队', '团队数据']) {
