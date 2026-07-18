@@ -552,6 +552,17 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const handleCrossTabAuthChange = (event) => {
+      if (![authTokenStorageKey, authUserStorageKey].includes(event.key)) return;
+      // localStorage is shared by tabs. Reload immediately so a tab can never
+      // keep account A's React state while API helpers already use account B's token.
+      window.location.reload();
+    };
+    window.addEventListener('storage', handleCrossTabAuthChange);
+    return () => window.removeEventListener('storage', handleCrossTabAuthChange);
+  }, []);
+
+  useEffect(() => {
     if (localStorage.getItem(onboardingStorageKey) === 'true') {
       return undefined;
     }
@@ -3591,7 +3602,9 @@ function App() {
 
       {activeTab === 'experience' && (
         <DebateExperienceChat
+          key={currentUser?.id || 'linwan-guest'}
           trainingProfile={linWanTrainingProfile}
+          trainingSpace={isTeamSpace ? { spaceType: 'team', teamCode: currentTeam.teamCode } : { spaceType: 'personal' }}
           isLoggedIn={isLoggedIn}
           currentUser={currentUser}
         />
@@ -5154,7 +5167,7 @@ function WeaknessVideoRecommendations({ dimensions }) {
   );
 }
 
-function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
+function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, currentUser }) {
   const featuredQuickQuestions = [
     '我最近最该练什么？',
     '我反复出现的问题是什么？',
@@ -5448,7 +5461,8 @@ function DebateExperienceChat({ trainingProfile, isLoggedIn, currentUser }) {
       const data = await postJson('/api/debate-experience-chat', {
         question: cleanQuestion,
         chatHistory: historyForRequest,
-        userTrainingProfile: trainingProfile || null
+        userTrainingProfile: trainingProfile || null,
+        trainingScope: trainingSpace || { spaceType: 'personal' }
       }, { signal: controller.signal });
       if (requestId !== sendRequestIdRef.current) return;
       const savedUserMessage = data.userMessage
