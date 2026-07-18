@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import InstallPwaHint from './components/InstallPwaHint.jsx';
+import ContactFeedback from './components/ContactFeedback.jsx';
 import LinWanContextManifest from './components/LinWanContextManifest.jsx';
 import LinWanSettingsPanel from './components/LinWanSettingsPanel.jsx';
 import OnboardingGuide from './components/OnboardingGuide.jsx';
@@ -2288,6 +2289,7 @@ function App() {
                   )}
                 </div>
               </section>
+              <ContactFeedback variant="panel" />
             </div>
           </section>
         </div>
