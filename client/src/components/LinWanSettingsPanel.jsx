@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 const DEFAULT_PROFILE = {
   preferredName: '',
@@ -53,8 +54,38 @@ export default function LinWanSettingsPanel({
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearError, setClearError] = useState('');
+  const [isVisible, setIsVisible] = useState(isOpen);
+  const [isClosing, setIsClosing] = useState(false);
   const wasOpenRef = useRef(false);
   const isDirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(baseline), [draft, baseline]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsVisible(true);
+      setIsClosing(false);
+      return undefined;
+    }
+
+    if (!isVisible) return undefined;
+    setIsClosing(true);
+    const timer = window.setTimeout(() => {
+      setIsVisible(false);
+      setIsClosing(false);
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [isOpen, isVisible]);
+
+  useEffect(() => {
+    if (!isVisible) return undefined;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousDocumentOverscroll = document.documentElement.style.overscrollBehavior;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overscrollBehavior = 'none';
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overscrollBehavior = previousDocumentOverscroll;
+    };
+  }, [isVisible]);
 
   useEffect(() => {
     if (isOpen && !wasOpenRef.current) {
@@ -77,7 +108,7 @@ export default function LinWanSettingsPanel({
     setBaseline(next);
   }, [isOpen, profile]);
 
-  if (!isOpen) return null;
+  if (!isVisible) return null;
 
   function updateDraft(key, value) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -91,6 +122,13 @@ export default function LinWanSettingsPanel({
       return;
     }
     onClose();
+  }
+
+  function revealFocusedField(event) {
+    event.currentTarget.closest('.linwan-settings-field')?.scrollIntoView({
+      block: 'center',
+      behavior: 'smooth'
+    });
   }
 
   async function saveProfile() {
@@ -123,11 +161,9 @@ export default function LinWanSettingsPanel({
     }
   }
 
-  return (
-    <div className="linwan-settings-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) requestClose();
-    }}>
-      <aside className="linwan-settings-panel" role="dialog" aria-modal="true" aria-labelledby="linwan-settings-title">
+  return createPortal(
+    <div className="linwan-settings-backdrop" role="presentation">
+      <aside className={`linwan-settings-panel${isClosing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-labelledby="linwan-settings-title">
         <header>
           <div>
             <span>个性设置</span>
@@ -152,6 +188,7 @@ export default function LinWanSettingsPanel({
                   value={draft.preferredName}
                   maxLength={12}
                   onChange={(event) => updateDraft('preferredName', cleanInline(event.target.value, 12))}
+                  onFocus={revealFocusedField}
                   placeholder="留空表示不主动使用称呼"
                 />
                 <small>{[...draft.preferredName].length} / 12</small>
@@ -184,6 +221,7 @@ export default function LinWanSettingsPanel({
                   maxLength={200}
                   rows={4}
                   onChange={(event) => updateDraft('customPreference', cleanInline(event.target.value, 200))}
+                  onFocus={revealFocusedField}
                   placeholder="例如：指出问题时直接一些，但请给出可马上练的动作。"
                 />
                 <small>{[...draft.customPreference].length} / 200</small>
@@ -251,7 +289,8 @@ export default function LinWanSettingsPanel({
           </div>
         )}
       </aside>
-    </div>
+    </div>,
+    document.body
   );
 }
 
