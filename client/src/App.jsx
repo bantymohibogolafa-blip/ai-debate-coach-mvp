@@ -13,6 +13,7 @@ import {
   validateMobileTrainingSetup
 } from './utils/mobileTrainingSetup.js';
 import { appendSpeechTranscript, stopPlaybackBeforeSpeechInput } from './utils/speechInput.js';
+import { buildTrainingMessageView } from './utils/trainingMessageView.js';
 
 const LINWAN_PLAYBACK_RATE = 1;
 const LINWAN_VOICE_VERSION = 'mimo-v2.5-tts:bing-tang:pcm16-v1';
@@ -475,7 +476,10 @@ function App() {
   const selectedDifficultyLabel = isCelebrityMode
     ? `市赛 · ${selectedDebater?.shortName || '明星辩手'}`
     : getOptionLabel(difficulties, config.difficulty);
-  const latestAiMessage = useMemo(() => getLatestMessage(history, 'ai'), [history]);
+  const trainingMessageView = useMemo(
+    () => buildTrainingMessageView(history, isTraining),
+    [history, isTraining]
+  );
   const isBusy = isLoading || isReviewing || isPolishing || trainingSpeech.isBusy;
   const canFinishTraining = hasMeaningfulUserContribution && !isBusy && !isRecording;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
@@ -3229,14 +3233,14 @@ function App() {
           </div>
 
           <div className="conversation">
-            {history.length === 0 ? (
+            {trainingMessageView.historyEntries.length === 0 ? (
               <div className="empty-state">
                 <span className="empty-light" />
                 <strong>赛场待命</strong>
                 <p>{getEmptyTrainingHint(config.trainingMode, config.userSide)}</p>
               </div>
             ) : (
-              history.map((item, index) => (
+              trainingMessageView.historyEntries.map(({ message: item, originalIndex: index }) => (
                 <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
                   <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
                   <p>{formatConversationContent(item.content, item.role)}</p>
@@ -3260,7 +3264,9 @@ function App() {
                 <>
                   <div className="round-card">
                     <span>第 {currentRound} / {config.rounds} 轮 · {getRoundPromptLabel(config.trainingMode)}</span>
-                    <p>{latestAiMessage ? formatConversationContent(latestAiMessage, 'ai') : getEmptyTrainingHint(config.trainingMode, config.userSide)}</p>
+                    <p>{trainingMessageView.currentAiMessage
+                      ? formatConversationContent(trainingMessageView.currentAiMessage.content, 'ai')
+                      : getEmptyTrainingHint(config.trainingMode, config.userSide)}</p>
                   </div>
                   <textarea
                     value={answer}
@@ -6926,16 +6932,6 @@ function isTeamLeaderRole(role) {
 
 function isTeamManagerRole(role) {
   return isTeamLeaderRole(role) || role === 'admin';
-}
-
-function getLatestMessage(history, role) {
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    if (history[index].role === role) {
-      return history[index].content;
-    }
-  }
-
-  return '';
 }
 
 function getOpponentSideValue(userSide) {
