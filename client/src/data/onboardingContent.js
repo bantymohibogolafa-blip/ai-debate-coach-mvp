@@ -93,7 +93,7 @@ export const onboardingPages = Object.freeze([
   Object.freeze({
     id: 'start',
     title: '去大胆试试吧',
-    intro: '别害怕，去大胆尝试 AI 辩论，也试着和林婉聊会儿吧。\n\n她不一样，你也不一样，她应该会很懂你的吧。'
+    intro: '别害怕，去大胆尝试 AI 辩论，也试着和林婉聊会儿吧。\n她不一样，你也不一样，她应该会很懂你的吧。'
   })
 ]);
 

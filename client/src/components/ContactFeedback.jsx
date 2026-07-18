@@ -56,24 +56,23 @@ export default function ContactFeedback({ variant = 'panel' }) {
     <section className={`contact-feedback contact-feedback-${variant}`} aria-labelledby={`contact-feedback-title-${variant}`}>
       <div className="contact-feedback-heading">
         <h4 id={`contact-feedback-title-${variant}`}>联系与反馈</h4>
-        <p>{isGuide ? '在使用过程中遇到任何问题，敬请联系：' : '欢迎反馈问题、交流技术并提出批评建议。'}</p>
+        <p>在使用过程中遇到任何问题，敬请联系：</p>
       </div>
       <div className="contact-feedback-list">
-        {contactInfo.emails.map((contact) => (
+        {contactInfo.emails.map((contact, index) => (
           <div className="contact-feedback-row" key={contact.value}>
             <span>{contact.name}｜{contact.role}</span>
             <a href={getFeedbackMailto(contact.value)}>{contact.value}</a>
+            {index === contactInfo.emails.length - 1 && (
+              <span className="contact-feedback-copy-line">
+                <strong>{contactInfo.wechat.value}</strong>
+                <button type="button" onClick={copyWechat} aria-label={`复制微信号 ${contactInfo.wechat.value}`}>
+                  {isGuide ? '复制微信号' : '复制'}
+                </button>
+              </span>
+            )}
           </div>
         ))}
-        <div className="contact-feedback-row contact-feedback-wechat">
-          <span>{isGuide ? `${contactInfo.wechat.name}｜微信` : `${contactInfo.wechat.name}微信`}</span>
-          <span className="contact-feedback-copy-line">
-            <strong>{contactInfo.wechat.value}</strong>
-            <button type="button" onClick={copyWechat} aria-label={`复制微信号 ${contactInfo.wechat.value}`}>
-              {isGuide ? '复制微信号' : '复制'}
-            </button>
-          </span>
-        </div>
       </div>
       <div className="contact-feedback-footer">
         <p className="contact-feedback-closing">
