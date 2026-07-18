@@ -83,6 +83,21 @@ test('Lin Wan history endpoints require authentication and always scope access t
   assert.equal(calls.some((call) => /linwan_user_profile|training_records/.test(call.url.pathname)), false);
 });
 
+test('shared speech endpoint validates MIME type and empty audio before Aliyun', async (t) => {
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+  const port = server.address().port;
+
+  const unsupported = await requestRaw(port, '/api/speech/transcribe', 'text/plain', Buffer.from('not-audio'));
+  assert.equal(unsupported.status, 415);
+  assert.equal(unsupported.body.message, '当前录音格式不受支持，请重新录音。');
+
+  const empty = await requestRaw(port, '/api/speech/transcribe', 'audio/wav', Buffer.alloc(0));
+  assert.equal(empty.status, 400);
+  assert.equal(empty.body.message, '没有收到录音文件，请重新录音。');
+});
+
 function requestJson(port, pathname, headers = {}, method = 'GET') {
   return new Promise((resolve, reject) => {
     const request = http.request({
@@ -102,5 +117,30 @@ function requestJson(port, pathname, headers = {}, method = 'GET') {
     });
     request.on('error', reject);
     request.end();
+  });
+}
+
+function requestRaw(port, pathname, contentType, body) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path: pathname,
+      method: 'POST',
+      headers: {
+        'content-type': contentType,
+        'content-length': body.length
+      }
+    }, (response) => {
+      let responseBody = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { responseBody += chunk; });
+      response.on('end', () => resolve({
+        status: response.statusCode,
+        body: responseBody ? JSON.parse(responseBody) : null
+      }));
+    });
+    request.on('error', reject);
+    request.end(body);
   });
 }
