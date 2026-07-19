@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
 import jwt from 'jsonwebtoken';
+import { getScoringRubric } from '../src/scoringRubrics.js';
 
 const USER_ID = '60000000-0000-4000-8000-000000000001';
 const LOCAL_USER_ID = 'user_70000000-0000-4000-8000-000000000001';
@@ -22,6 +23,7 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   const harness = createHarness();
   const port = await listen(t, harness.fetch);
   const history = buildHistoryWithTail();
+  let attackReview = null;
 
   for (const trainingMode of MODES) {
     const before = harness.modelRequests.length;
@@ -30,8 +32,20 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
       history
     });
     assert.equal(reviewed.status, 200, trainingMode);
+    assert.equal(reviewed.body.structuredReview.score, 80, trainingMode);
+    assert.equal(reviewed.body.structuredReview.scoreLevel, '优势压制区', trainingMode);
+    if (trainingMode === 'attack') attackReview = reviewed.body;
     assertModelRequestClipped(harness.modelRequests[before], trainingMode);
   }
+
+  harness.setMissingReviewDimension(true);
+  const incompleteReview = await requestJson(port, '/api/debate/review', {}, 'POST', {
+    ...sessionPayload('defense'),
+    history
+  });
+  harness.setMissingReviewDimension(false);
+  assert.equal(incompleteReview.status, 502);
+  assert.match(incompleteReview.body.message, /评分维度缺失或无效/);
 
   const beforeEmpty = harness.modelRequests.length;
   const empty = await requestJson(port, '/api/debate/review', {}, 'POST', {
@@ -66,11 +80,17 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
     styleId: 'none',
     trainingMode: 'attack',
     messages: history,
-    review: '测试复盘',
-    score: 80
+    review: attackReview.content,
+    score: 31,
+    scoreLevel: '模型错误区间',
+    dimensionScores: attackReview.structuredReview.dimensionScores
   });
   assert.equal(saved.status, 201);
+  assert.equal(saved.body.record.score, attackReview.structuredReview.score);
+  assert.equal(saved.body.record.scoreLevel, attackReview.structuredReview.scoreLevel);
+  assert.deepEqual(saved.body.record.dimensionScores, attackReview.structuredReview.dimensionScores);
   assert.deepEqual(saved.body.record.messages, history.slice(0, 2));
+  assert.equal(harness.trainingRows[0].score, attackReview.structuredReview.score);
   assert.deepEqual(harness.trainingRows[0].messages, history.slice(0, 2));
 
   // Simulate a legacy database row that still contains the tail. The read boundary
@@ -82,7 +102,18 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
     auth(token)
   );
   assert.equal(reopened.status, 200);
+  assert.equal(reopened.body.records[0].score, attackReview.structuredReview.score);
+  assert.deepEqual(reopened.body.records[0].dimensionScores, attackReview.structuredReview.dimensionScores);
   assert.deepEqual(reopened.body.records[0].messages, history.slice(0, 2));
+
+  const ability = await requestJson(
+    port,
+    `/api/ability/estimate?spaceType=personal&localUserId=${LOCAL_USER_ID}`,
+    auth(token)
+  );
+  assert.equal(ability.status, 200);
+  assert.equal(ability.body.scoredRecordCount, 1);
+  assert.equal(ability.body.history[0].source.score, attackReview.structuredReview.score);
 
   const beforeLinWan = harness.modelRequests.length;
   const linWan = await requestJson(port, '/api/debate-experience-chat', auth(token), 'POST', {
@@ -98,6 +129,7 @@ function createHarness() {
   const modelRequests = [];
   const trainingRows = [];
   let sequence = 0;
+  let missingReviewDimension = false;
 
   async function fetchMock(input, init = {}) {
     const url = new URL(String(input));
@@ -105,13 +137,22 @@ function createHarness() {
     if (url.hostname === 'deepseek.completed.test') {
       const body = JSON.parse(init.body);
       modelRequests.push(body.messages);
+      const promptText = body.messages.map((message) => message.content).join('\n');
+      const mode = MODES.find((candidate) => promptText.includes(`mode: ${candidate}`)) || 'attack';
+      const { rubric } = getScoringRubric(mode);
       return Response.json({
         choices: [{
           message: {
             content: JSON.stringify({
-              score: 80,
+              score: 31,
+              scoreLevel: '模型错误区间',
               reviewText: '只基于已完成回答生成的复盘',
-              dimensionScores: [],
+              dimensionScores: rubric.dimensions.map((dimension) => ({
+                name: dimension.name,
+                score: 80,
+                maxScore: 100,
+                comment: '稳定完成当前维度任务'
+              })).slice(0, missingReviewDimension ? 4 : 5),
               battlefield: '已完成战场',
               mainWeakness: '表达压缩',
               strengths: ['回应有效'],
@@ -142,7 +183,14 @@ function createHarness() {
     throw new Error(`Unexpected request: ${method} ${url}`);
   }
 
-  return { fetch: fetchMock, modelRequests, trainingRows };
+  return {
+    fetch: fetchMock,
+    modelRequests,
+    trainingRows,
+    setMissingReviewDimension(value) {
+      missingReviewDimension = Boolean(value);
+    }
+  };
 }
 
 function buildHistoryWithTail() {

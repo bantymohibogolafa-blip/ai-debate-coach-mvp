@@ -34,11 +34,11 @@ export const scoringRubrics = {
       '为后续攻防留下可推进的战场'
     ],
     dimensions: [
-      { name: '辩题理解与定义判准', maxScore: 25 },
-      { name: '论证结构与逻辑链条', maxScore: 30 },
-      { name: '论据、数据与例证支撑', maxScore: 20 },
+      { name: '辩题理解与定义判准', maxScore: 27 },
+      { name: '论证结构与逻辑链条', maxScore: 32 },
+      { name: '论据、数据与例证支撑', maxScore: 21 },
       { name: '战场设计与可防守性', maxScore: 15 },
-      { name: '表达清晰度与时间控制', maxScore: 10 }
+      { name: '表达清晰度与时间控制', maxScore: 5 }
     ],
     ranges: {
       '30-49 逻辑崩塌区': [
@@ -58,8 +58,8 @@ export const scoringRubrics = {
         '85-89：框架高效，有现实解释力，既正面证明己方也预埋限制对方的空间。'
       ],
       '90-100 大师致胜区': [
-        '90-94：能把辩题提升到制度、人性或价值判断，明显影响评判理解。',
-        '95-100：提出极具原创性和穿透力的核心标准，使后续比赛围绕己方框架展开。'
+        '90-94：高水平校队立论，定义判准稳定、逻辑闭环，并能有效设计后续战场。',
+        '95-100：极优秀中学生立论，框架成熟且几乎没有实质漏洞；98分以上仅用于接近当前任务理想答案。'
       ]
     },
     penalties: [
@@ -91,11 +91,11 @@ export const scoringRubrics = {
       '把攻辩结果接回全场主线'
     ],
     dimensions: [
-      { name: '攻辩内容提炼', maxScore: 25 },
-      { name: '战场结算能力', maxScore: 30 },
-      { name: '漏洞归纳与反击转化', maxScore: 20 },
+      { name: '攻辩内容提炼', maxScore: 27 },
+      { name: '战场结算能力', maxScore: 32 },
+      { name: '漏洞归纳与反击转化', maxScore: 21 },
       { name: '与本方主线连接', maxScore: 15 },
-      { name: '表达简洁度与节奏', maxScore: 10 }
+      { name: '表达简洁度与节奏', maxScore: 5 }
     ],
     ranges: {
       '30-49 逻辑崩塌区': [
@@ -115,8 +115,8 @@ export const scoringRubrics = {
         '85-89：能让评委感到对方在关键战场失守，并铺好后续路线。'
       ],
       '90-100 大师致胜区': [
-        '90-94：能用攻辩结果重新定义后续比赛焦点。',
-        '95-100：从短暂攻辩中提炼决定胜负的核心矛盾，完成压制和升华。'
+        '90-94：高水平校队小结，准确结算关键交锋并把优势稳定接回本方主线。',
+        '95-100：极优秀中学生小结，能提炼决定胜负的核心矛盾且几乎无实质遗漏。'
       ]
     },
     penalties: [
@@ -148,11 +148,11 @@ export const scoringRubrics = {
       '在短促表达中完成攻守转换'
     ],
     dimensions: [
-      { name: '战场识别与控制', maxScore: 30 },
-      { name: '临场回应与反击', maxScore: 25 },
-      { name: '逻辑推进与攻守转换', maxScore: 20 },
+      { name: '战场识别与控制', maxScore: 32 },
+      { name: '临场回应与反击', maxScore: 27 },
+      { name: '逻辑推进与攻守转换', maxScore: 21 },
       { name: '表达效率与节奏感', maxScore: 15 },
-      { name: '团队协同与战术意识', maxScore: 10 }
+      { name: '团队协同与战术意识', maxScore: 5 }
     ],
     ranges: {
       '30-49 逻辑崩塌区': [
@@ -172,8 +172,8 @@ export const scoringRubrics = {
         '85-89：能抓住对方临场漏洞扩大，使对方被迫回应己方问题。'
       ],
       '90-100 大师致胜区': [
-        '90-94：主导自由辩节奏，不断产出有效战场结算。',
-        '95-100：几乎每次发言都能改变战场态势，同时处理细节和胜负标准。'
+        '90-94：高水平校队表现，多轮持续回应、反击并控制主要战场。',
+        '95-100：极优秀中学生表现，攻守转换成熟且几乎没有实质失守。'
       ]
     },
     penalties: [
@@ -206,11 +206,11 @@ export const scoringRubrics = {
       '表达是否短、准、狠'
     ],
     dimensions: [
-      { name: '问题精准度', maxScore: 25 },
-      { name: '连续追问能力', maxScore: 25 },
-      { name: '抓漏洞能力', maxScore: 20 },
+      { name: '问题精准度', maxScore: 27 },
+      { name: '连续追问能力', maxScore: 27 },
+      { name: '抓漏洞能力', maxScore: 21 },
       { name: '逻辑压迫与战场推进', maxScore: 20 },
-      { name: '表达简洁度与节奏控制', maxScore: 10 }
+      { name: '表达简洁度与节奏控制', maxScore: 5 }
     ],
     ranges: {
       '30-49 逻辑崩塌区': [
@@ -230,8 +230,8 @@ export const scoringRubrics = {
         '85-89：精准打击核心架构，使对方在连续追问中明显失守。'
       ],
       '90-100 大师致胜区': [
-        '90-94：通过少量关键问题压缩对方立场，迫使其承认不利前提。',
-        '95-100：每一问承接上一问，形成不可逃避的逻辑闭环。'
+        '90-94：高水平校队质询，问中核心并沿漏洞连续推进，形成有效锁定。',
+        '95-100：极优秀中学生质询，追问链成熟且几乎没有无效或断裂环节。'
       ]
     },
     penalties: [
@@ -264,11 +264,11 @@ export const scoringRubrics = {
       '是否能稳定表达并适度反压'
     ],
     dimensions: [
-      { name: '正面回应能力', maxScore: 25 },
-      { name: '逻辑防守能力', maxScore: 25 },
-      { name: '概念切割与陷阱识别', maxScore: 25 },
+      { name: '正面回应能力', maxScore: 27 },
+      { name: '逻辑防守能力', maxScore: 27 },
+      { name: '概念切割与陷阱识别', maxScore: 26 },
       { name: '反压能力', maxScore: 15 },
-      { name: '表达效率与稳定性', maxScore: 10 }
+      { name: '表达效率与稳定性', maxScore: 5 }
     ],
     ranges: {
       '30-49 逻辑崩塌区': [
@@ -288,8 +288,8 @@ export const scoringRubrics = {
         '85-89：能把质询转化为己方资源，指出对方标准不稳或预设错误。'
       ],
       '90-100 大师致胜区': [
-        '90-94：在被质询中反控节奏，每次回答都能重构问题。',
-        '95-100：极限追问下仍清晰、简洁、稳定地守住立场并完成更高层论证。'
+        '90-94：高水平校队防守，多轮正面回应并持续守住标准，能完成切割和反压。',
+        '95-100：极优秀中学生防守，高压下几乎没有实质失守，回应与反控均成熟。'
       ]
     },
     penalties: [
@@ -322,11 +322,11 @@ export const scoringRubrics = {
       '完成价值升华和终局说服'
     ],
     dimensions: [
-      { name: '战场整合与胜负比较', maxScore: 30 },
-      { name: '对攻防成果的吸收', maxScore: 20 },
-      { name: '价值升华与判断标准', maxScore: 25 },
+      { name: '战场整合与胜负比较', maxScore: 32 },
+      { name: '对攻防成果的吸收', maxScore: 21 },
+      { name: '价值升华与判断标准', maxScore: 27 },
       { name: '逻辑收束与表达感染力', maxScore: 15 },
-      { name: '时间控制与结构完整', maxScore: 10 }
+      { name: '时间控制与结构完整', maxScore: 5 }
     ],
     ranges: {
       '30-49 逻辑崩塌区': [
@@ -346,8 +346,8 @@ export const scoringRubrics = {
         '85-89：既能结算技术战场，又能升到价值层面，完整且有感染力。'
       ],
       '90-100 大师致胜区': [
-        '90-94：把具体争点提升为社会、人性或制度判断，同时完成裁决指引。',
-        '95-100：用高度凝练、有哲学或审美力量的表达重塑评委理解。'
+        '90-94：高水平校队结辩，完整整合战场、比较胜负并给出稳定裁决标准。',
+        '95-100：极优秀中学生结辩，技术结算与价值收束成熟且几乎无实质遗漏。'
       ]
     },
     penalties: [
@@ -423,6 +423,88 @@ export function getScoreLevel(score) {
   return scoreLevels.find((level) => boundedScore >= level.min && boundedScore <= level.max)?.label || '';
 }
 
+export function calculateWeightedScore(dimensionScores, rubric) {
+  const rubricDimensions = Array.isArray(rubric?.dimensions) ? rubric.dimensions : [];
+  if (!rubricDimensions.length || !Array.isArray(dimensionScores) || dimensionScores.length < rubricDimensions.length) {
+    throw scoringDimensionsError('评分维度缺失。');
+  }
+
+  const weightTotal = rubricDimensions.reduce((total, dimension) => total + Number(dimension.maxScore), 0);
+  if (!Number.isFinite(weightTotal) || Math.abs(weightTotal - 100) > 0.0001) {
+    throw scoringDimensionsError('评分权重配置无效。');
+  }
+
+  const usedIndexes = new Set();
+  const normalizedDimensions = rubricDimensions.map((dimension, rubricIndex) => {
+    const expectedName = normalizeDimensionName(dimension.name);
+    let providedIndex = dimensionScores.findIndex((item, index) => (
+      !usedIndexes.has(index) && normalizeDimensionName(item?.name) === expectedName
+    ));
+
+    if (providedIndex < 0 && !usedIndexes.has(rubricIndex)) {
+      providedIndex = rubricIndex;
+    }
+    if (providedIndex < 0) {
+      providedIndex = dimensionScores.findIndex((item, index) => !usedIndexes.has(index));
+    }
+
+    const provided = providedIndex >= 0 ? dimensionScores[providedIndex] : null;
+    const rawScore = provided?.score;
+    const numericScore = Number(rawScore);
+    const providedMaxScore = Number(provided?.maxScore ?? provided?.max_score ?? 100);
+    if (
+      !provided
+      || rawScore === null
+      || rawScore === undefined
+      || rawScore === ''
+      || !Number.isFinite(numericScore)
+      || !Number.isFinite(providedMaxScore)
+      || providedMaxScore <= 0
+    ) {
+      throw scoringDimensionsError(`评分维度“${dimension.name}”缺失或无效。`);
+    }
+
+    usedIndexes.add(providedIndex);
+    const normalizedScore = providedMaxScore === 100
+      ? numericScore
+      : (numericScore / providedMaxScore) * 100;
+
+    return {
+      name: dimension.name,
+      score: roundToOne(clamp(normalizedScore, 0, 100)),
+      maxScore: 100,
+      comment: String(provided?.comment || '').trim()
+    };
+  });
+
+  const weightedScore = rubricDimensions.reduce((total, dimension, index) => (
+    total + normalizedDimensions[index].score * (Number(dimension.maxScore) / 100)
+  ), 0);
+
+  return {
+    score: roundToOne(clamp(weightedScore, 30, 100)),
+    dimensionScores: normalizedDimensions
+  };
+}
+
+function scoringDimensionsError(message) {
+  const error = new Error(message);
+  error.code = 'SCORING_DIMENSIONS_INVALID';
+  return error;
+}
+
+function normalizeDimensionName(value) {
+  return String(value || '').trim().replace(/\s+/g, '');
+}
+
+function roundToOne(value) {
+  return Math.round((value + Number.EPSILON) * 10) / 10;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 export function buildReviewRubricInstruction(mode, difficulty = 'campus') {
   const { rubric, rubricId, isFallback } = getScoringRubric(mode);
   const dimensions = rubric.dimensions
@@ -435,6 +517,7 @@ export function buildReviewRubricInstruction(mode, difficulty = 'campus') {
   const penalties = rubric.penalties.map((item) => `- ${item}`).join('\n');
   const highScoreConditions = rubric.highScoreConditions.map((item) => `- ${item}`).join('\n');
   const focus = rubric.focus.map((item) => `- ${item}`).join('\n');
+  const fifthDimension = rubric.dimensions.at(-1);
   const fallbackNote = isFallback ? '\n当前训练模式未识别，已使用通用评分。你必须在 reviewText 中明确提示这一点。' : '';
 
   return `
@@ -465,18 +548,29 @@ ${highScoreConditions}
 难度修正规则：
 ${difficultyInstruction}
 
-训练型评分校准锚点：
-1. 这是高中生辩论训练产品的教练评分，不是全国总决赛裁判评分；必须客观，但不要过度压分。
-2. 用户只是有观点、但论据薄弱时：新手 70-78；校赛 62-70；市赛 55-65。
-3. 用户有清楚观点、简单论证，能回应基本问题时：新手 80-88；校赛 72-80；市赛 65-73。
-4. 用户观点清楚、逻辑完整、有一定例证，能完成当前训练目标时：新手 88-95；校赛 80-88；市赛 73-82。
-5. 用户表现较强，有战场意识、能反压、有较好表达时：新手 95-100；校赛 88-95；市赛 82-90。
-6. 用户表现非常强，接近优秀校队辩手时：新手 100；校赛 95-100；市赛 90-96。
-7. 如果用户完成了当前训练环节的基本任务，原则上不应低于 65 分。
-8. 如果用户结构清楚且没有重大逻辑崩塌，校赛模式原则上不应低于 72 分。
-9. 如果用户有明确战场意识，即使表达不完美，也应给到 75 分以上。
-10. 如果用户在市赛模式下表现完整，不应轻易低于 70 分。
-11. 只有完全答非所问、逻辑彻底崩塌、立场混乱、无法理解辩题、大量人身攻击或帮对方论证时，才进入 30-49 区间。
+校赛基准评分锚点（新手和市赛按下方难度规则调整）：
+1. 这是中学生辩论训练产品的教练评分，不是全国总决赛或职业辩手评分；必须客观、有区分度，但不得过度压分。
+2. 30-49：严重答非所问、立场混乱、逻辑崩塌、大量无关内容，或实质帮助对方论证。
+3. 50-64：只能完成零散表达，核心问题多次失守，缺少基本结构和有效回应。
+4. 65-74：完成基本训练责任，能回应一般问题，但逻辑、战场或论据明显薄弱。
+5. 75-84：达到普通校赛可用水平，结构基本清楚，能完成正常攻防并有一定战场意识。
+6. 85-89：明显优秀的校赛表现，逻辑完整、攻防有效，有明确概念切割或战场推进，只有若干次要问题。
+7. 90-94：高水平校队表现，多轮持续守住或控制战场，能重构问题、稳定标准或完成反压，表达和逻辑明显高于普通中学生。
+8. 95-97：极优秀中学生表现，接近高水平赛事成熟辩手，几乎没有实质漏洞。
+9. 98-100：极少使用，接近当前训练任务下的理想答案，但不要求达到全国冠军或职业辩手标准。
+10. 校赛 90 分代表在中学校赛训练者中表现明显优秀，不代表“全国总决赛大师”。
+11. 不得因为还能继续压缩、还能补充例证或还能更完美，就把高质量表现限制在 80-85；存在次要改进空间不妨碍进入 90 分以上。
+12. 高分首先取决于用户是否高质量完成“${rubric.coreGoal}”；只要核心任务完成度很高，就应允许各核心维度进入 90 分以上。
+
+第五维专项校准（${fifthDimension.name}，仅占 ${fifthDimension.maxScore}%）：
+1. 表达稍长不等于表达低效；内容较多但结构清楚、推进有效时，该维度不应低于80分。
+2. 高压多轮中为完成概念切割和逻辑说明而适度展开，属于合理表达。
+3. 90-95：清晰、稳定、基本高效，仅有少量可压缩空间。
+4. 85-89：整体流畅，部分冗长但不影响理解和推进。
+5. 78-84：有明显重复或篇幅偏长，但核心表达仍清楚。
+6. 70-77：多处冗长、节奏拖沓，开始影响攻防效率。
+7. 70以下：表达混乱、严重重复，难以识别核心回应。
+8. “可以继续精炼”通常只是次要改进点，不得单独成为主要失分来源。
 
 本环节特别要求：
 ${rubric.outputFocus}
@@ -484,7 +578,7 @@ ${rubric.outputFocus}
 AI评分总规则：
 1. 评分必须只根据当前训练环节对应 rubric。
 2. 不允许所有环节都使用攻辩训练标准。
-3. 必须先判断用户所处区间，再给具体分数。
+3. 你只负责给出五个维度的 0-100 分和文字评价；不要计算、猜测或输出最终总分与 scoreLevel，后端会按权重确定性计算。
 4. 不要因为语言流畅就给高分。
 5. 不要因为价值表达华丽但逻辑空洞就给高分。
 6. 不要因为用户表达很多就给高分。
@@ -493,15 +587,13 @@ AI评分总规则：
 9. 如果用户表现与当前环节目标严重不匹配，应明显扣分。
 10. 复盘语气要像辩论教练：reviewText 开头必须先具体肯定用户本轮一个真实亮点，再指出主要问题，最后给下一步训练建议；不得嘲讽、打击用户，也不要空泛夸奖。
 11. 鼓励必须具体，例如指出用户抓住了核心矛盾、没有完全失守、有基本战场意识、表达结构清楚等真实表现。
-12. 分数允许细分，总分和维度分都保留一位小数；不要总是输出整数，不要总是给58、62、75、80这类固定分。可以使用66.5、72.8、78.3、84.6、89.2、92.5等细分分数。
+12. 维度分允许细分并保留一位小数；不要总是输出整数或固定分，可以使用66.5、72.8、78.3、84.6、89.2、92.5等。
 13. 对明显优秀的表现要敢给高分。市赛难度可以更严格，但优秀结辩、优秀攻防不应被压在80分左右。
 14. 即使是市赛模式，也不等于全国冠军标准；市赛模式应更严格，但仍需对训练者保持客观、鼓励和可进步的评价。
 15. ${rubric.templateHint}
 
 复盘必须输出严格 JSON，不要包裹 Markdown 代码块，不要输出 JSON 之外的文字。JSON 结构如下：
 {
-  "score": 0,
-  "scoreLevel": "",
   "mode": "${rubric.appMode}",
   "modeDisplayName": "${rubric.displayName}",
   "dimensionScores": [
@@ -517,12 +609,11 @@ ${rubric.dimensions.map((dimension) => `    { "name": "${dimension.name}", "scor
 }
 
 JSON填写要求：
-1. score 必须是 30-100 的数字，保留一位小数。
-2. scoreLevel 必须从“逻辑崩塌区 / 基础及格区 / 标准竞技区 / 优势压制区 / 大师致胜区”中选择。
-3. dimensionScores 必须使用上方当前环节的五个维度，score 为 0-100 的一位小数，maxScore 固定为100。
-4. battlefield 要概括本轮核心战场归属或胜负焦点。
-5. reviewText 用自然语言说明本轮表现，必须先肯定一个具体亮点，再指出主要问题。
-6. template 给出该环节可直接复用的表达模板。
+1. 不要输出 score 和 scoreLevel，最终总分与区间由后端根据五维权重生成。
+2. dimensionScores 必须完整输出上方五个维度，名称保持一致；score 为 0-100 的一位小数，maxScore 固定为100。
+3. battlefield 要概括本轮核心战场归属或胜负焦点。
+4. reviewText 用自然语言说明本轮表现，必须先肯定一个具体亮点，再指出主要问题。
+5. template 给出该环节可直接复用的表达模板。
 `;
 }
 
@@ -549,9 +640,11 @@ function buildDifficultyScoringInstruction(difficulty) {
 
   return [
     '- 当前为校赛模式：作为主要基准评分，标准适中，关注完整论证、基本攻防、战场意识和表达清晰度。',
-    '- 完成基本训练责任应给70-78分；有清晰结构和有效攻防应给78-85分；表现优秀应给85-92分；明显高水平应给92-96分。',
-    '- 如果用户结构清楚且没有重大逻辑崩塌，原则上不应低于72分。',
-    '- 同样表现应低于新手模式约10-15分，高于市赛模式约10-15分。',
-    '- 评分保持客观，但语气必须有教练感和鼓励性，先肯定具体亮点，再指出主要问题。'
+    '- 30-49仅用于严重答非所问、立场混乱、逻辑崩塌、大量无关内容或实质帮助对方论证。',
+    '- 50-64表示零散表达、核心问题多次失守或缺少基本结构；65-74表示完成基本责任但核心能力明显薄弱。',
+    '- 75-84表示普通校赛可用水平；85-89表示明显优秀的校赛表现。',
+    '- 90-94表示高水平校队表现；95-97表示极优秀中学生表现；98-100仅用于当前任务下接近理想的答案。',
+    '- 校赛90分不代表全国总决赛大师。不得仅因还可精炼或补充次要例证，就把高质量表现限制在80-85分。',
+    '- 评分保持区分度和教练感：先肯定具体亮点，再指出真正影响当前模式任务完成度的问题。'
   ].join('\n');
 }
