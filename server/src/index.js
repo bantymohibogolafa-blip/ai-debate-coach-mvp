@@ -42,6 +42,14 @@ import {
   normalizeLinWanContextMessages,
   validateLinWanProfile
 } from './linwan.js';
+import {
+  buildReviewableMessages,
+  countMeaningfulUserMessages,
+  getLastMeaningfulUserIndex,
+  hasUnansweredAssistantTail,
+  isMeaningfulUserInput,
+  withCompletedTrainingMessages
+} from '../../shared/completedTrainingMessages.js';
 
 dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 
@@ -1955,7 +1963,7 @@ async function fetchAuthorizedLinWanTrainingProfile(userId, scope = {}) {
 }
 
 function buildLinWanTrainingProfileFromRows(rows = []) {
-  const recent = Array.isArray(rows) ? rows.slice(0, 10) : [];
+  const recent = Array.isArray(rows) ? rows.slice(0, 10).map(withCompletedTrainingMessages) : [];
   if (!recent.length) return normalizeDebateExperienceProfile(null);
   const scores = recent.map((row) => Number(row.score)).filter(Number.isFinite);
   const weakDimensions = summarizeRecordDimensions(recent).weak;
@@ -3155,41 +3163,6 @@ function isValidNickname(nickname) {
 function clampNumber(value, min, max) {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, value));
-}
-
-function isMeaningfulUserInput(value) {
-  if (typeof value !== 'string') return false;
-  const text = value.trim();
-  return Boolean(text && /[\p{L}\p{N}]/u.test(text));
-}
-
-function getLastMeaningfulUserIndex(messages) {
-  if (!Array.isArray(messages)) return -1;
-
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role === 'user' && isMeaningfulUserInput(message.content)) return index;
-  }
-
-  return -1;
-}
-
-function buildReviewableMessages(messages) {
-  const lastMeaningfulUserIndex = getLastMeaningfulUserIndex(messages);
-  return lastMeaningfulUserIndex < 0 ? [] : messages.slice(0, lastMeaningfulUserIndex + 1);
-}
-
-function hasUnansweredAssistantTail(messages) {
-  const lastMeaningfulUserIndex = getLastMeaningfulUserIndex(messages);
-  return lastMeaningfulUserIndex >= 0 && messages.slice(lastMeaningfulUserIndex + 1).some((message) => (
-    message?.role === 'ai' || message?.role === 'assistant'
-  ));
-}
-
-function countMeaningfulUserMessages(messages) {
-  return Array.isArray(messages)
-    ? messages.filter((message) => message?.role === 'user' && isMeaningfulUserInput(message.content)).length
-    : 0;
 }
 
 function parseNullableScore(value) {
@@ -4902,29 +4875,30 @@ async function supabaseRequest(pathname, options = {}) {
 }
 
 function mapTrainingRecordFromDb(record = {}) {
+  const completedRecord = withCompletedTrainingMessages(record);
   return {
-    id: record.id,
-    spaceType: record.space_type || (record.team_code ? 'team' : 'personal'),
-    teamCode: record.team_code,
-    localUserId: record.local_user_id,
-    appUserId: record.app_user_id || null,
-    nickname: record.nickname,
-    topic: record.topic,
-    userSide: record.user_side,
-    aiSide: record.ai_side,
-    difficulty: record.difficulty,
-    styleId: record.style_id,
-    trainingMode: record.training_mode || 'free_debate',
-    taskId: record.task_id || null,
-    messages: Array.isArray(record.messages) ? record.messages : [],
-    review: record.review || '',
-    score: record.score ?? null,
-    result: record.result || '',
-    battlefield: record.battlefield || '',
-    modeDisplayName: record.mode_display_name || '',
-    scoreLevel: record.score_level || '',
-    dimensionScores: Array.isArray(record.dimension_scores) ? record.dimension_scores : [],
-    createdAt: record.created_at
+    id: completedRecord.id,
+    spaceType: completedRecord.space_type || (completedRecord.team_code ? 'team' : 'personal'),
+    teamCode: completedRecord.team_code,
+    localUserId: completedRecord.local_user_id,
+    appUserId: completedRecord.app_user_id || null,
+    nickname: completedRecord.nickname,
+    topic: completedRecord.topic,
+    userSide: completedRecord.user_side,
+    aiSide: completedRecord.ai_side,
+    difficulty: completedRecord.difficulty,
+    styleId: completedRecord.style_id,
+    trainingMode: completedRecord.training_mode || 'free_debate',
+    taskId: completedRecord.task_id || null,
+    messages: completedRecord.messages,
+    review: completedRecord.review || '',
+    score: completedRecord.score ?? null,
+    result: completedRecord.result || '',
+    battlefield: completedRecord.battlefield || '',
+    modeDisplayName: completedRecord.mode_display_name || '',
+    scoreLevel: completedRecord.score_level || '',
+    dimensionScores: Array.isArray(completedRecord.dimension_scores) ? completedRecord.dimension_scores : [],
+    createdAt: completedRecord.created_at
   };
 }
 

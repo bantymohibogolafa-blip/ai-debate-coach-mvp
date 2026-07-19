@@ -2,6 +2,7 @@
   "name": "ai-debate-coach-mvp",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace server\" \"npm run dev --workspace client\"",
     "server": "npm run dev --workspace server",
