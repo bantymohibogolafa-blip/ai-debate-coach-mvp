@@ -15,6 +15,12 @@ import {
 } from './utils/mobileTrainingSetup.js';
 import { appendSpeechTranscript, stopPlaybackBeforeSpeechInput } from './utils/speechInput.js';
 import { buildTrainingMessageView } from './utils/trainingMessageView.js';
+import {
+  buildReviewableMessages,
+  hasUnansweredAssistantTail,
+  isMeaningfulUserInput,
+  withCompletedTrainingMessages
+} from '../../shared/completedTrainingMessages.js';
 
 const LINWAN_PLAYBACK_RATE = 1;
 const LINWAN_VOICE_VERSION = 'mimo-v2.5-tts:bing-tang:pcm16-v1';
@@ -1165,7 +1171,7 @@ function App() {
       });
       if (spaceType === 'team') query.set('teamCode', teamCode);
       const data = await getJson(`/api/training-records/my?${query.toString()}`);
-      const nextRecords = Array.isArray(data.records) ? data.records : [];
+      const nextRecords = Array.isArray(data.records) ? data.records.map(withCompletedTrainingMessages) : [];
       if (spaceType === 'team') {
         setTeamMemberRecords((current) => append ? [...current, ...nextRecords] : nextRecords);
         setTeamMemberRecordsPage({
@@ -1217,14 +1223,19 @@ function App() {
         }).toString()}`),
         getJson(`/api/team/stats?teamCode=${encodeURIComponent(teamCode)}&localUserId=${encodeURIComponent(userId)}`)
       ]);
-      const nextRecords = Array.isArray(recordsData.records) ? recordsData.records : [];
+      const nextRecords = Array.isArray(recordsData.records) ? recordsData.records.map(withCompletedTrainingMessages) : [];
       setTeamRecords((current) => append ? [...current, ...nextRecords] : nextRecords);
       setTeamRecordsPage({
         offset: Number(recordsData.nextOffset ?? nextOffset + nextRecords.length),
         hasMore: Boolean(recordsData.hasMore),
         isLoadingMore: false
       });
-      setTeamStats(statsData);
+      setTeamStats({
+        ...statsData,
+        recentRecords: Array.isArray(statsData?.recentRecords)
+          ? statsData.recentRecords.map(withCompletedTrainingMessages)
+          : []
+      });
     } catch (requestError) {
       setTeamDataError(getFriendlyError(requestError));
       setTeamRecordsPage((current) => ({ ...current, isLoadingMore: false }));
@@ -1530,7 +1541,8 @@ function App() {
   }
 
   async function saveTrainingRecord(reviewContent, reviewData = null, messagesForReview = reviewableMessages) {
-    if (!messagesForReview.some((item) => item.role === 'user' && isMeaningfulUserInput(item.content))) {
+    const completedMessages = buildReviewableMessages(messagesForReview);
+    if (!completedMessages.some((item) => item.role === 'user' && isMeaningfulUserInput(item.content))) {
       setSaveStatus('');
       return;
     }
@@ -1572,7 +1584,7 @@ function App() {
         styleId: config.celebrityDebater,
         trainingMode: config.trainingMode,
         taskId: activeTaskSession?.taskId || '',
-        messages: messagesForReview,
+        messages: completedMessages,
         review: reviewContent,
         score: recordScore,
         result: extractResultFromReview(reviewContent),
@@ -3548,7 +3560,7 @@ function App() {
                       </div>
 
                       <div className="conversation history-conversation">
-                        {(record.messages || []).map((item, index) => (
+                        {buildReviewableMessages(record.messages || []).map((item, index) => (
                           <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
                             <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
                             <p>{formatConversationContent(item.content, item.role)}</p>
@@ -3569,7 +3581,7 @@ function App() {
                             difficulty: record.difficulty,
                             userSide: record.userSide,
                             aiSide: record.aiSide,
-                            messages: record.messages || []
+                            messages: buildReviewableMessages(record.messages || [])
                           }}
                         />
                       </div>
@@ -4989,6 +5001,7 @@ function buildUserTrainingProfile(records = []) {
   const recentRecords = Array.isArray(records)
     ? records
         .filter(Boolean)
+        .map(withCompletedTrainingMessages)
         .slice()
         .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
         .slice(0, 10)
@@ -6848,6 +6861,7 @@ function ReviewReport({ reviewText, structuredReview, fallbackMode, assistantCon
 }
 
 function RecordDetail({ record, onClose }) {
+  const completedRecord = withCompletedTrainingMessages(record);
   return (
     <div className="history-detail">
       <div className="history-detail-header">
@@ -6870,7 +6884,7 @@ function RecordDetail({ record, onClose }) {
       </div>
 
       <div className="conversation history-conversation">
-        {record.messages.map((item, index) => (
+        {completedRecord.messages.map((item, index) => (
           <article className={`message ${item.role}`} key={`${item.role}-${index}`}>
             <span>{item.role === 'ai' ? 'AI 攻辩方' : '我的回答'}</span>
             <p>{formatConversationContent(item.content, item.role)}</p>
@@ -6891,7 +6905,7 @@ function RecordDetail({ record, onClose }) {
             difficulty: record.difficulty,
             userSide: record.userSide,
             aiSide: record.aiSide,
-            messages: record.messages || []
+            messages: completedRecord.messages
           }}
         />
       </div>
@@ -7167,35 +7181,6 @@ function extractScoreFromReview(reviewText) {
   }
 
   return formatScoreValue(match[1]);
-}
-
-function isMeaningfulUserInput(value) {
-  if (typeof value !== 'string') return false;
-  const text = value.trim();
-  return Boolean(text && /[\p{L}\p{N}]/u.test(text));
-}
-
-function getLastMeaningfulUserIndex(messages) {
-  if (!Array.isArray(messages)) return -1;
-
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role === 'user' && isMeaningfulUserInput(message.content)) return index;
-  }
-
-  return -1;
-}
-
-function buildReviewableMessages(messages) {
-  const lastMeaningfulUserIndex = getLastMeaningfulUserIndex(messages);
-  return lastMeaningfulUserIndex < 0 ? [] : messages.slice(0, lastMeaningfulUserIndex + 1);
-}
-
-function hasUnansweredAssistantTail(messages) {
-  const lastMeaningfulUserIndex = getLastMeaningfulUserIndex(messages);
-  return lastMeaningfulUserIndex >= 0 && messages.slice(lastMeaningfulUserIndex + 1).some((message) => (
-    message?.role === 'ai' || message?.role === 'assistant'
-  ));
 }
 
 function extractResultFromReview(reviewText) {
