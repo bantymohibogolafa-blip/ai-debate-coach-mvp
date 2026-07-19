@@ -24,6 +24,7 @@ import {
   normalizeTrainingMode
 } from './prompts.js';
 import {
+  calculateWeightedScore,
   getScoreLevel,
   getScoringRubric,
   normalizeScoringMode
@@ -261,7 +262,7 @@ app.post('/api/debate/review', async (req, res, next) => {
       completedRounds: countMeaningfulUserMessages(reviewableHistory)
     });
     const content = await callDeepSeek(messages, { maxTokens: 2200, temperature: 0.5 });
-    const structuredReview = parseReviewContent(content, payload.trainingMode);
+    const structuredReview = parseReviewContent(content, payload.trainingMode, payload.difficulty);
     const formattedContent = formatStructuredReview(structuredReview, content);
 
     res.json({ content: formattedContent, structuredReview });
@@ -1094,12 +1095,12 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const reviewableMessages = buildReviewableMessages(messages);
   const review = normalizeText(body.review);
-  const score = parseNullableScore(body.score);
+  let score = parseNullableScore(body.score);
   const result = normalizeText(body.result);
   const battlefield = normalizeText(body.battlefield);
   const modeDisplayName = normalizeText(body.modeDisplayName || body.mode_display_name);
-  const scoreLevel = normalizeText(body.scoreLevel || body.score_level);
-  const dimensionScores = normalizeDimensionScores(body.dimensionScores || body.dimension_scores);
+  let scoreLevel = normalizeText(body.scoreLevel || body.score_level);
+  let dimensionScores = normalizeDimensionScores(body.dimensionScores || body.dimension_scores);
 
   if (!isValidLocalUserId(localUserId)) {
     throw badRequest('用户身份无效，请刷新页面后重试。');
@@ -1171,6 +1172,23 @@ async function validateTrainingRecordPayload(body, authUser = null) {
 
   if (!isValidTrainingMode(trainingMode)) {
     throw badRequest('训练记录缺少有效训练模式。');
+  }
+
+  if (dimensionScores.length) {
+    try {
+      const weightedResult = calculateWeightedScore(dimensionScores, getScoringRubric(trainingMode).rubric);
+      score = weightedResult.score;
+      scoreLevel = getScoreLevel(score);
+      dimensionScores = weightedResult.dimensionScores.map((dimension) => ({
+        ...dimension,
+        comment: limitLength(normalizeText(dimension.comment), 240)
+      }));
+    } catch (error) {
+      if (error.code === 'SCORING_DIMENSIONS_INVALID') {
+        throw badRequest('训练记录的五维评分缺失或无效。');
+      }
+      throw error;
+    }
   }
 
   if (!reviewableMessages.length) {
@@ -2827,6 +2845,10 @@ function getPublicErrorMessage(error) {
     return '复盘生成失败，请稍后重试。';
   }
 
+  if (error.code === 'REVIEW_DIMENSIONS_INVALID') {
+    return '复盘评分维度缺失或无效，请重新生成。';
+  }
+
   if (error.status === 429) {
     return 'AI 服务繁忙或额度不足，请稍后重试。';
   }
@@ -3175,7 +3197,7 @@ function parseNullableScore(value) {
     return null;
   }
 
-  return clampNumber(Math.round(score), 0, 100);
+  return roundToOne(clampNumber(score, 0, 100));
 }
 
 function normalizeDimensionScores(value) {
@@ -3188,7 +3210,7 @@ function normalizeDimensionScores(value) {
       const rawScore = item?.score;
       const score = rawScore === null || rawScore === undefined || rawScore === ''
         ? null
-        : clampNumber(Math.round(Number(rawScore)), 0, maxScore);
+        : roundToOne(clampNumber(Number(rawScore), 0, maxScore));
       const comment = limitLength(normalizeText(item?.comment), 240);
 
       if (!name) return null;
@@ -5000,7 +5022,7 @@ function cleanOpeningQuestion(text) {
     .trim();
 }
 
-function parseReviewContent(content, trainingMode) {
+function parseReviewContent(content, trainingMode, difficulty = '') {
   const clean = normalizeText(content);
   const jsonText = extractJsonObject(clean);
 
@@ -5010,43 +5032,41 @@ function parseReviewContent(content, trainingMode) {
 
   try {
     const parsed = JSON.parse(jsonText);
-    return normalizeStructuredReview(parsed, trainingMode);
+    return normalizeStructuredReview(parsed, trainingMode, difficulty);
   } catch (error) {
     if (error.code === 'REVIEW_PARSE_FAILED') throw error;
+    if (error.code === 'SCORING_DIMENSIONS_INVALID') {
+      throw reviewParseError('复盘评分维度缺失或无效，请重新生成。', 'REVIEW_DIMENSIONS_INVALID');
+    }
     throw reviewParseError();
   }
 }
 
-function normalizeStructuredReview(parsed, trainingMode) {
+function normalizeStructuredReview(parsed, trainingMode, difficulty = '') {
   const { rubric, isFallback } = getScoringRubric(trainingMode);
-  const rawScore = Number(parsed?.score);
   const reviewText = normalizeText(parsed?.reviewText);
-  if (!Number.isFinite(rawScore) || rawScore < 30 || rawScore > 100 || !reviewText) {
+  if (!reviewText) {
     throw reviewParseError();
   }
-  const score = roundToOne(rawScore);
-  const dimensionScores = rubric.dimensions.map((dimension, index) => {
-    const provided = Array.isArray(parsed?.dimensionScores)
-      ? parsed.dimensionScores.find((item) => normalizeText(item?.name) === dimension.name) || parsed.dimensionScores[index]
-      : null;
-    const providedScore = provided?.score;
-    const numericProvidedScore = Number(providedScore);
-    const providedMaxScore = Number(provided?.maxScore ?? provided?.max_score ?? 100);
-    const normalizedScore = Number.isFinite(numericProvidedScore)
-      ? providedMaxScore && providedMaxScore !== 100
-        ? (numericProvidedScore / providedMaxScore) * 100
-        : numericProvidedScore
-      : null;
+  const weightedResult = calculateWeightedScore(parsed?.dimensionScores, rubric);
+  const score = weightedResult.score;
+  const dimensionScores = weightedResult.dimensionScores.map((dimension) => ({
+    ...dimension,
+    comment: limitLength(normalizeText(dimension.comment), 800)
+  }));
 
-    return {
-      name: dimension.name,
-      score: normalizedScore === null || providedScore === null || providedScore === undefined || providedScore === ''
-        ? null
-        : clampNumber(roundToOne(normalizedScore), 0, 100),
-      maxScore: 100,
-      comment: limitLength(normalizeText(provided?.comment), 800)
-    };
-  });
+  if (process.env.NODE_ENV !== 'production') {
+    console.debug('[scoring-calibration]', {
+      mode: rubric.appMode,
+      difficulty,
+      modelScore: Number.isFinite(Number(parsed?.score)) ? Number(parsed.score) : null,
+      modelScoreLevel: normalizeText(parsed?.scoreLevel) || null,
+      weightedScore: score,
+      dimensionScores: dimensionScores.map((dimension) => ({ name: dimension.name, score: dimension.score })),
+      weights: rubric.dimensions.map((dimension) => ({ name: dimension.name, weight: dimension.maxScore }))
+    });
+  }
+
   return {
     score,
     scoreLevel: getScoreLevel(score),
@@ -5063,9 +5083,9 @@ function normalizeStructuredReview(parsed, trainingMode) {
   };
 }
 
-function reviewParseError() {
-  const error = httpError(502, '复盘生成失败，请稍后重试。');
-  error.code = 'REVIEW_PARSE_FAILED';
+function reviewParseError(message = '复盘生成失败，请稍后重试。', code = 'REVIEW_PARSE_FAILED') {
+  const error = httpError(502, message);
+  error.code = code;
   return error;
 }
 
