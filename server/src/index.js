@@ -1713,30 +1713,66 @@ function validateLinWanTtsPayload(body = {}) {
 
 function normalizeDebateExperienceProfile(profile) {
   if (!profile || typeof profile !== 'object') return null;
-  const latest = profile.latestRecordSummary && typeof profile.latestRecordSummary === 'object'
-    ? profile.latestRecordSummary
-    : {};
+  const dimensions = Array.isArray(profile.dimensions)
+    ? profile.dimensions.slice(0, 6).map((dimension) => ({
+        key: limitLength(normalizeText(dimension?.key), 40),
+        label: limitLength(normalizeText(dimension?.label), 40),
+        score: dimension?.score !== null && dimension?.score !== undefined && Number.isFinite(Number(dimension.score))
+          ? clampNumber(Number(dimension.score), 0, 100)
+          : null,
+        estimate: dimension?.estimate !== null && dimension?.estimate !== undefined && Number.isFinite(Number(dimension.estimate))
+          ? clampNumber(Number(dimension.estimate), 300, 900)
+          : null,
+        confidence: Number.isFinite(Number(dimension?.confidence))
+          ? clampNumber(Math.round(Number(dimension.confidence)), 0, 100)
+          : 0,
+        trend: Number.isFinite(Number(dimension?.trend)) ? clampNumber(Number(dimension.trend), -100, 100) : 0,
+        records: Number.isFinite(Number(dimension?.records))
+          ? clampNumber(Math.floor(Number(dimension.records)), 0, 120)
+          : 0,
+        assessment: limitLength(normalizeText(dimension?.assessment), 100)
+      })).filter((dimension) => dimension.key && dimension.label)
+    : [];
+  const roleRecommendation = profile.roleRecommendation && typeof profile.roleRecommendation === 'object'
+    ? profile.roleRecommendation
+    : null;
 
   return {
-    recentTrainingCount: clampNumber(Number(profile.recentTrainingCount || 0), 0, 10),
-    frequentModes: normalizeStringList(profile.frequentModes, 4, 40),
-    averageScore: Number.isFinite(Number(profile.averageScore)) ? clampNumber(Number(profile.averageScore), 0, 100) : null,
-    scoreTrend: limitLength(normalizeText(profile.scoreTrend), 40),
-    weakDimensions: normalizeStringList(profile.weakDimensions, 5, 60),
-    recurringProblems: normalizeStringList(profile.recurringProblems, 6, 120),
-    latestRecordSummary: {
-      topic: limitLength(normalizeText(latest.topic), 120),
-      mode: limitLength(normalizeText(latest.mode), 40),
-      difficulty: limitLength(normalizeText(latest.difficulty), 40),
-      score: Number.isFinite(Number(latest.score)) ? clampNumber(Number(latest.score), 0, 100) : null,
-      scoreLevel: limitLength(normalizeText(latest.scoreLevel), 60),
-      userSide: limitLength(normalizeText(latest.userSide), 20),
-      aiSide: limitLength(normalizeText(latest.aiSide), 20),
-      battlefield: limitLength(normalizeText(latest.battlefield), 180),
-      reviewSummary: limitLength(normalizeText(latest.reviewSummary), 260),
-      createdAt: limitLength(normalizeText(latest.createdAt), 40)
-    },
-    recommendedFocus: limitLength(normalizeText(profile.recommendedFocus), 120)
+    model: limitLength(normalizeText(profile.model), 80),
+    recordCount: clampNumber(Math.floor(Number(profile.recordCount || 0)), 0, 120),
+    scoredRecordCount: clampNumber(Math.floor(Number(profile.scoredRecordCount || 0)), 0, 120),
+    confidence: Number.isFinite(Number(profile.confidence))
+      ? clampNumber(Math.round(Number(profile.confidence)), 0, 100)
+      : 0,
+    coverage: Number.isFinite(Number(profile.coverage))
+      ? clampNumber(Math.round(Number(profile.coverage)), 0, 100)
+      : 0,
+    observedDimensionCount: Number.isFinite(Number(profile.observedDimensionCount))
+      ? clampNumber(Math.floor(Number(profile.observedDimensionCount)), 0, 6)
+      : dimensions.filter((dimension) => dimension.records > 0).length,
+    totalDimensionCount: Number.isFinite(Number(profile.totalDimensionCount))
+      ? clampNumber(Math.floor(Number(profile.totalDimensionCount)), 1, 6)
+      : 6,
+    overall: profile.overall !== null && profile.overall !== undefined && Number.isFinite(Number(profile.overall))
+      ? clampNumber(Number(profile.overall), 0, 100)
+      : null,
+    overallEstimate: profile.overallEstimate !== null
+      && profile.overallEstimate !== undefined
+      && Number.isFinite(Number(profile.overallEstimate))
+      ? clampNumber(Math.round(Number(profile.overallEstimate)), 300, 900)
+      : null,
+    level: limitLength(normalizeText(profile.level), 40),
+    trend: Number.isFinite(Number(profile.trend)) ? clampNumber(Number(profile.trend), -600, 600) : 0,
+    dimensions,
+    roleRecommendation: roleRecommendation
+      ? {
+          bestRole: limitLength(normalizeText(roleRecommendation.bestRole), 40),
+          reason: limitLength(normalizeText(roleRecommendation.reason), 180),
+          secondaryRole: limitLength(normalizeText(roleRecommendation.secondaryRole), 40),
+          advice: limitLength(normalizeText(roleRecommendation.advice), 180)
+        }
+      : null,
+    note: limitLength(normalizeText(profile.note), 180)
   };
 }
 
@@ -1972,60 +2008,12 @@ async function fetchAuthorizedLinWanTrainingProfile(userId, scope = {}) {
     const teamCode = normalizeTeamCode(scope.teamCode);
     if (!isValidTeamCode(teamCode)) throw badRequest('林婉训练画像的团队空间无效。');
     await requireActiveMembership(teamCode, userId);
-    rows = await fetchMyTrainingRecords(teamCode, userId, 10);
+    rows = await fetchMyTrainingRecords(teamCode, userId, 120);
   } else {
-    rows = await fetchPersonalTrainingRecords('', 10, userId);
+    rows = await fetchPersonalTrainingRecords('', 120, userId);
   }
 
-  return buildLinWanTrainingProfileFromRows(rows);
-}
-
-function buildLinWanTrainingProfileFromRows(rows = []) {
-  const recent = Array.isArray(rows) ? rows.slice(0, 10).map(withCompletedTrainingMessages) : [];
-  if (!recent.length) return normalizeDebateExperienceProfile(null);
-  const scores = recent.map((row) => Number(row.score)).filter(Number.isFinite);
-  const weakDimensions = summarizeRecordDimensions(recent).weak;
-  const frequentModes = getFrequentTrainingModes(recent).slice(0, 3);
-  const latest = recent[0] || {};
-  const averageScore = scores.length
-    ? Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 10) / 10
-    : null;
-  const trendDelta = scores.length >= 2 ? scores[0] - scores.at(-1) : 0;
-  const scoreTrend = scores.length < 2 ? '暂无足够数据' : trendDelta >= 3 ? '近期上升' : trendDelta <= -3 ? '近期回落' : '近期稳定';
-
-  return normalizeDebateExperienceProfile({
-    recentTrainingCount: recent.length,
-    frequentModes,
-    averageScore,
-    scoreTrend,
-    weakDimensions,
-    recurringProblems: inferLinWanRecurringProblems(weakDimensions),
-    latestRecordSummary: {
-      topic: latest.topic || '未命名辩题',
-      mode: getTrainingModeLabel(latest.training_mode || 'free_debate'),
-      difficulty: latest.difficulty || '',
-      score: Number.isFinite(Number(latest.score)) ? Number(latest.score) : null,
-      scoreLevel: latest.score_level || '',
-      userSide: getSideLabel(latest.user_side),
-      aiSide: getSideLabel(latest.ai_side),
-      battlefield: latest.battlefield || '',
-      reviewSummary: limitLength(normalizeText(latest.review), 220),
-      createdAt: latest.created_at || ''
-    },
-    recommendedFocus: weakDimensions.length ? `优先训练：${weakDimensions.slice(0, 2).join('、')}` : ''
-  });
-}
-
-function inferLinWanRecurringProblems(weakDimensions = []) {
-  const text = weakDimensions.join(' ');
-  const problems = [];
-  if (/战场|控制|识别|主线/.test(text)) problems.push('容易被对方问题带走，需要先练战场识别');
-  if (/表达|节奏|时间|稳定/.test(text)) problems.push('回答容易变长，落点不够清楚，需要练表达压缩');
-  if (/防守|回应|切割|陷阱|反压/.test(text)) problems.push('防守时需要先处理问题预设，再回到己方标准');
-  if (/追问|问题|质询|漏洞|压迫/.test(text)) problems.push('攻辩问题还需要形成连续问题链');
-  if (/论据|例证|数据|论证|逻辑/.test(text)) problems.push('论据和结论之间还需要补足推理链');
-  if (/价值|升华|整合|收束|结算/.test(text)) problems.push('结尾需要更清楚地完成胜负比较和价值收束');
-  return problems.slice(0, 4);
+  return normalizeDebateExperienceProfile(buildAbilityEstimate(rows));
 }
 
 async function buildLinWanContext({
@@ -2690,21 +2678,43 @@ function stripDataUrlPrefix(value) {
 }
 
 function formatDebateExperienceProfile(profile) {
-  if (!profile || !profile.recentTrainingCount) {
+  if (!profile || !profile.scoredRecordCount) {
     return '暂无足够训练记录。请按通用赛场经验回答，并提醒用户完成几轮训练后你会更能判断训练路线。';
   }
 
-  const latest = profile.latestRecordSummary || {};
+  const dimensions = Array.isArray(profile.dimensions) ? profile.dimensions : [];
+  const observedDimensions = dimensions
+    .filter((dimension) => Number.isFinite(Number(dimension.score)) && Number(dimension.records) > 0)
+    .sort((left, right) => Number(left.score) - Number(right.score));
+  const insufficientDimensions = dimensions
+    .filter((dimension) => Number(dimension.records) <= 0)
+    .map((dimension) => ({
+      label: dimension.label,
+      assessment: dimension.assessment
+    }));
+  const dimensionLines = observedDimensions.map((dimension) => {
+    const trend = Number(dimension.trend || 0);
+    const trendText = Math.abs(trend) < 0.1 ? '持平' : `${trend > 0 ? '+' : ''}${trend.toFixed(1)}`;
+    return `- ${dimension.label}：${Number(dimension.score).toFixed(1)} / 100（趋势 ${trendText}，置信度 ${dimension.confidence}%，有效记录 ${dimension.records}）`;
+  });
+  const overallTrend = Number(profile.trend || 0);
+  const overallTrendText = Math.abs(overallTrend) < 0.1
+    ? '持平'
+    : `${overallTrend > 0 ? '+' : ''}${Math.round(overallTrend)}`;
+
   return [
-    `最近训练次数：${profile.recentTrainingCount}`,
-    `常练模式：${profile.frequentModes.join('、') || '暂无明显集中模式'}`,
-    `最近平均分：${profile.averageScore === null ? '暂无稳定均分' : `${profile.averageScore} / 100`}`,
-    `分数趋势：${profile.scoreTrend || '暂无足够趋势'}`,
-    `反复较弱维度：${profile.weakDimensions.join('、') || '暂未形成稳定短板'}`,
-    `反复问题：${profile.recurringProblems.join('；') || '暂未形成稳定问题'}`,
-    `最近一次训练：${latest.topic || '未提供'} / ${latest.mode || '未提供'} / ${latest.difficulty || '未提供'} / ${latest.score === null ? '未提供分数' : `${latest.score} / 100`}`,
-    `最近一次核心战场或问题：${latest.battlefield || latest.reviewSummary || '未提供'}`,
-    `当前建议重点：${profile.recommendedFocus || '未提供'}`
+    `权威画像模型：${profile.model || 'Fengbian Ability Estimate v1'}`,
+    `有效评分记录：${profile.scoredRecordCount} 条（当前空间共 ${profile.recordCount} 条）`,
+    `综合能力：${profile.overall === null ? '暂无估测' : `${Number(profile.overall).toFixed(1)} / 100`}`,
+    `能力估值：${profile.overallEstimate ?? '暂无'}；等级：${profile.level || '暂无估测'}；总体置信度：${profile.confidence}%`,
+    `能力覆盖度：${profile.observedDimensionCount || observedDimensions.length} / ${profile.totalDimensionCount || 6} 个维度（${profile.coverage || 0}% 权重覆盖）`,
+    `近阶段能力估值变化：${overallTrendText}`,
+    `已测能力：\n${dimensionLines.join('\n') || '- 暂无已测维度'}`,
+    `当前相对较弱的已观察能力：${observedDimensions.slice(0, 2).map((dimension) => dimension.label).join('、') || '暂无足够证据'}`,
+    `待测能力：${insufficientDimensions.map((dimension) => dimension.label).join('、') || '无'}`,
+    `补测建议：${insufficientDimensions.map((dimension) => `${dimension.label}可${dimension.assessment || '完成对应训练'}`).join('；') || '六个维度均已有训练覆盖'}`,
+    `辩位估测：${profile.roleRecommendation?.bestRole || '覆盖不足，暂不推荐'}${profile.roleRecommendation?.secondaryRole ? `；次选 ${profile.roleRecommendation.secondaryRole}` : ''}`,
+    '使用要求：以上字段与能力估测页来自同一计算结果。不得自行重算画像，不得把“当前相对最低”直接表述为长期严重短板；待测能力没有分数，不得作为用户短板。只有当用户询问画像、短板、辩位或训练方向，或者当前问题直接涉及待测能力时，才自然提醒完成对应测评，不要在每次回复中重复提醒。'
   ].join('\n');
 }
 
@@ -4537,6 +4547,15 @@ const abilityDimensions = [
   { key: 'expression', label: '表达效率', weight: 0.16 }
 ];
 
+const abilityAssessmentRecommendations = {
+  logic: '完成一次立论、攻辩或防守训练',
+  evidence: '完成一次立论或结辩训练',
+  defenseStability: '完成一次防守或自由辩训练',
+  counterPressure: '完成一次攻辩、防守或自由辩训练',
+  battlefieldControl: '完成一次自由辩、攻辩小结或结辩训练',
+  expression: '完成一次立论、自由辩或结辩训练'
+};
+
 const abilityModeWeights = {
   constructive: { logic: 0.45, evidence: 0.3, expression: 0.25 },
   summary: { battlefieldControl: 0.45, logic: 0.25, evidence: 0.15, expression: 0.15 },
@@ -4580,7 +4599,8 @@ function buildAbilityEstimate(records = []) {
       estimate: score === null ? null : toAbilityEstimate(score),
       confidence: current.dimensionConfidence[dimension.key] || 0,
       trend: score === null || previousScore === null ? 0 : roundToOne(score - previousScore),
-      records: current.dimensionCounts[dimension.key] || 0
+      records: current.dimensionCounts[dimension.key] || 0,
+      assessment: abilityAssessmentRecommendations[dimension.key] || '完成对应训练'
     };
   });
 
@@ -4589,14 +4609,17 @@ function buildAbilityEstimate(records = []) {
     recordCount: records.length,
     scoredRecordCount: scoredRecords.length,
     confidence: current.confidence,
+    coverage: current.coverage,
+    observedDimensionCount: current.observedDimensionCount,
+    totalDimensionCount: abilityDimensions.length,
     overall: current.overall,
     overallEstimate: current.overallEstimate,
     level: getAbilityLevel(current.overallEstimate),
     trend: previous ? current.overallEstimate - previous.overallEstimate : 0,
     dimensions,
     history,
-    roleRecommendation: buildRoleRecommendation(current.dimensionScores, current.overall),
-    note: '能力估测基于 AI 复盘分、训练模式、难度和近期权重实时计算；训练次数越多，置信度越高。'
+    roleRecommendation: buildRoleRecommendation(current.dimensionScores),
+    note: '能力估测仅汇总已有训练覆盖的维度；未测维度不评分、不参与综合结果，完成对应训练后再解锁。'
   };
 }
 
@@ -4620,36 +4643,55 @@ function buildAbilityHistorySource(record = {}) {
   };
 }
 
-function buildRoleRecommendation(scores = {}, overall = null) {
-  const safe = (key) => Number.isFinite(Number(scores[key])) ? Number(scores[key]) : Number(overall) || 0;
+function buildRoleRecommendation(scores = {}) {
+  const hasScore = (key) => (
+    scores[key] !== null
+    && scores[key] !== undefined
+    && Number.isFinite(Number(scores[key]))
+  );
   const roleScores = [
     {
       role: '一辩',
-      score: safe('logic') * 0.38 + safe('evidence') * 0.32 + safe('expression') * 0.3,
+      dimensions: { logic: 0.38, evidence: 0.32, expression: 0.3 },
       reason: '你的逻辑推进、例证支撑和表达清晰度更适合承担开局建构任务。'
     },
     {
       role: '二辩',
-      score: safe('counterPressure') * 0.45 + safe('logic') * 0.25 + safe('battlefieldControl') * 0.3,
+      dimensions: { counterPressure: 0.45, logic: 0.25, battlefieldControl: 0.3 },
       reason: '你的反压能力和战场判断更适合承担质询与拆解任务。'
     },
     {
       role: '三辩',
-      score: safe('battlefieldControl') * 0.4 + safe('counterPressure') * 0.3 + safe('defenseStability') * 0.3,
+      dimensions: { battlefieldControl: 0.4, counterPressure: 0.3, defenseStability: 0.3 },
       reason: '你的战场控制、攻守转换和防守稳定更适合自由辩中的临场交锋。'
     },
     {
       role: '四辩 / 结辩',
-      score: safe('battlefieldControl') * 0.35 + safe('logic') * 0.3 + safe('expression') * 0.35,
+      dimensions: { battlefieldControl: 0.35, logic: 0.3, expression: 0.35 },
       reason: '你的战场整合、逻辑收束和表达效率更适合完成终局总结。'
     },
     {
       role: '自由人 / 攻防核心',
-      score: ['logic', 'evidence', 'defenseStability', 'counterPressure', 'battlefieldControl', 'expression']
-        .reduce((sum, key) => sum + safe(key), 0) / 6,
+      dimensions: {
+        logic: 1 / 6,
+        evidence: 1 / 6,
+        defenseStability: 1 / 6,
+        counterPressure: 1 / 6,
+        battlefieldControl: 1 / 6,
+        expression: 1 / 6
+      },
       reason: '你的多维能力较均衡，适合在比赛中快速切换攻防任务。'
     }
-  ].sort((left, right) => right.score - left.score);
+  ]
+    .filter((candidate) => Object.keys(candidate.dimensions).every(hasScore))
+    .map((candidate) => ({
+      ...candidate,
+      score: Object.entries(candidate.dimensions)
+        .reduce((sum, [key, weight]) => sum + Number(scores[key]) * weight, 0)
+    }))
+    .sort((left, right) => right.score - left.score);
+
+  if (!roleScores.length) return null;
 
   const best = roleScores[0];
   const secondary = roleScores[1];
@@ -4670,6 +4712,8 @@ function calculateAbilitySnapshot(scoredRecords) {
       overall: null,
       overallEstimate: null,
       confidence: 0,
+      coverage: 0,
+      observedDimensionCount: 0,
       dimensionScores: Object.fromEntries(abilityDimensions.map((dimension) => [dimension.key, null])),
       dimensionConfidence: Object.fromEntries(abilityDimensions.map((dimension) => [dimension.key, 0])),
       dimensionCounts: Object.fromEntries(abilityDimensions.map((dimension) => [dimension.key, 0]))
@@ -4696,11 +4740,6 @@ function calculateAbilitySnapshot(scoredRecords) {
     });
   });
 
-  const globalAverage = roundToOne(
-    scoredRecords.reduce((sum, record) => {
-      return sum + clampNumber(Number(record.score) + (abilityDifficultyBonus[record.difficulty] || 0), 0, 100);
-    }, 0) / scoredRecords.length
-  );
   const dimensionScores = {};
   const dimensionConfidence = {};
   const dimensionCounts = {};
@@ -4711,17 +4750,25 @@ function calculateAbilitySnapshot(scoredRecords) {
     dimensionConfidence[dimension.key] = Math.min(100, Math.round((bucket.count / 5) * 100));
     dimensionScores[dimension.key] = bucket.weightTotal
       ? roundToOne(bucket.weightedTotal / bucket.weightTotal)
-      : roundToOne(globalAverage * 0.86);
+      : null;
   });
 
-  const overall = roundToOne(abilityDimensions.reduce((sum, dimension) => {
-    return sum + dimensionScores[dimension.key] * dimension.weight;
-  }, 0));
+  const observedDimensions = abilityDimensions.filter((dimension) => dimensionScores[dimension.key] !== null);
+  const observedWeight = observedDimensions.reduce((sum, dimension) => sum + dimension.weight, 0);
+  const overall = observedWeight
+    ? roundToOne(observedDimensions.reduce((sum, dimension) => {
+        return sum + dimensionScores[dimension.key] * dimension.weight;
+      }, 0) / observedWeight)
+    : null;
+  const coverage = Math.round(observedWeight * 100);
+  const recordConfidence = Math.min(100, Math.round((scoredRecords.length / 10) * 100));
 
   return {
     overall,
     overallEstimate: toAbilityEstimate(overall),
-    confidence: Math.min(100, Math.round((scoredRecords.length / 10) * 100)),
+    confidence: Math.min(recordConfidence, coverage),
+    coverage,
+    observedDimensionCount: observedDimensions.length,
     dimensionScores,
     dimensionConfidence,
     dimensionCounts

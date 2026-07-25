@@ -265,7 +265,22 @@ export function buildLinWanPreferencePrompt(profile) {
 }
 
 export function getTrainingProfileHighlights(profile) {
-  if (!profile || typeof profile !== 'object' || Number(profile.recentTrainingCount || 0) <= 0) return [];
+  if (!profile || typeof profile !== 'object') return [];
+  if (Number(profile.scoredRecordCount || 0) > 0 && Array.isArray(profile.dimensions)) {
+    return profile.dimensions
+      .filter((dimension) => (
+        Number.isFinite(Number(dimension?.score))
+        && Number(dimension?.records) > 0
+        && sanitizeInlineText(dimension?.label)
+      ))
+      .sort((left, right) => Number(left.score) - Number(right.score))
+      .slice(0, 2)
+      .map((dimension) => sliceVisibleCharacters(
+        `${sanitizeInlineText(dimension.label)} ${Number(dimension.score).toFixed(1)}`,
+        24
+      ));
+  }
+  if (Number(profile.recentTrainingCount || 0) <= 0) return [];
   const candidates = [
     ...(Array.isArray(profile.weakDimensions) ? profile.weakDimensions : []),
     ...(Array.isArray(profile.recurringProblems) ? profile.recurringProblems : []),

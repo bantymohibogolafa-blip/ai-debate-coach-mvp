@@ -114,6 +114,10 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(ability.status, 200);
   assert.equal(ability.body.scoredRecordCount, 1);
   assert.equal(ability.body.history[0].source.score, attackReview.structuredReview.score);
+  assert.equal(ability.body.observedDimensionCount, 3);
+  assert.equal(ability.body.coverage, 52);
+  assert.equal(ability.body.overall, 76, 'unmeasured dimensions do not depress the observed-dimension aggregate');
+  assert.equal(ability.body.roleRecommendation.bestRole, '二辩');
 
   const beforeLinWan = harness.modelRequests.length;
   const linWan = await requestJson(port, '/api/debate-experience-chat', auth(token), 'POST', {
@@ -123,10 +127,24 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   });
   assert.equal(linWan.status, 200);
   assertModelRequestClipped(harness.modelRequests[beforeLinWan], 'linwan');
-  assert.match(
-    harness.modelRequests[beforeLinWan].map((message) => message.content).join('\n'),
-    new RegExp(`最近一次训练：.*${attackReview.structuredReview.score} / 100`)
-  );
+  const linWanPrompt = harness.modelRequests[beforeLinWan].map((message) => message.content).join('\n');
+  assert.match(linWanPrompt, /权威画像模型：Fengbian Ability Estimate v1/);
+  assert.match(linWanPrompt, new RegExp(`综合能力：${ability.body.overall.toFixed(1)} / 100`));
+  const observedDimensions = ability.body.dimensions.filter((dimension) => dimension.records > 0);
+  const unobservedDimensions = ability.body.dimensions.filter((dimension) => dimension.records === 0);
+  assert.equal(observedDimensions.length > 0, true);
+  assert.equal(unobservedDimensions.length > 0, true);
+  observedDimensions.forEach((dimension) => {
+    assert.match(linWanPrompt, new RegExp(`${dimension.label}：${dimension.score.toFixed(1)} / 100`));
+  });
+  unobservedDimensions.forEach((dimension) => {
+    assert.equal(dimension.score, null);
+    assert.equal(linWanPrompt.includes(`${dimension.label}：0.0 / 100`), false);
+  });
+  assert.match(linWanPrompt, /待测能力：/);
+  assert.match(linWanPrompt, /不要在每次回复中重复提醒/);
+  assert.match(linWanPrompt, /使用要求：以上字段与能力估测页来自同一计算结果/);
+  assert.equal(linWanPrompt.includes(TAIL_MARKER), false);
 });
 
 function createHarness() {

@@ -510,10 +510,6 @@ function App() {
   const displayedRecords = isTeamSpace ? teamMemberRecords : personalRecords;
   const displayedRecordsPage = isTeamSpace ? teamMemberRecordsPage : personalRecordsPage;
   const displayedAbilityEstimate = isTeamSpace ? teamAbilityEstimate : personalAbilityEstimate;
-  const linWanTrainingProfile = useMemo(
-    () => buildUserTrainingProfile(displayedRecords),
-    [displayedRecords]
-  );
   const mobileTrainingValues = useMemo(
     () => ({ config, defensePrep, freeDebatePrep }),
     [config, defensePrep, freeDebatePrep]
@@ -3632,7 +3628,7 @@ function App() {
       {activeTab === 'experience' && (
         <DebateExperienceChat
           key={currentUser?.id || 'linwan-guest'}
-          trainingProfile={linWanTrainingProfile}
+          trainingProfile={displayedAbilityEstimate}
           trainingSpace={isTeamSpace ? { spaceType: 'team', teamCode: currentTeam.teamCode } : { spaceType: 'personal' }}
           isLoggedIn={isLoggedIn}
           currentUser={currentUser}
@@ -4104,6 +4100,13 @@ function AuthModal({ mode, form, error, isLoading, onSubmit, onChange, onModeCha
 
 function AbilityPanel({ estimate, isLoading, error, spaceLabel, scopeLabel, emptyMessage }) {
   const dimensions = Array.isArray(estimate?.dimensions) ? estimate.dimensions : [];
+  const observedDimensions = dimensions.filter((dimension) => (
+    Number(dimension?.records) > 0
+    && dimension?.score !== null
+    && dimension?.score !== undefined
+    && Number.isFinite(Number(dimension.score))
+  ));
+  const unobservedDimensions = dimensions.filter((dimension) => Number(dimension?.records) <= 0);
   const history = Array.isArray(estimate?.history) ? estimate.history : [];
 
   return (
@@ -4127,7 +4130,9 @@ function AbilityPanel({ estimate, isLoading, error, spaceLabel, scopeLabel, empt
             <div>
               <span>当前锋力值</span>
               <strong>{formatNullableNumber(estimate.overall)} / 100</strong>
-              <small>{estimate.level} · 置信度 {estimate.confidence || 0}%</small>
+              <small>
+                {estimate.level} · 置信度 {estimate.confidence || 0}% · 已覆盖 {estimate.observedDimensionCount || observedDimensions.length}/{estimate.totalDimensionCount || 6}
+              </small>
             </div>
             <p>{estimate.note}</p>
           </div>
@@ -4145,7 +4150,7 @@ function AbilityPanel({ estimate, isLoading, error, spaceLabel, scopeLabel, empt
           )}
 
           <div className="ability-grid">
-            {dimensions.map((dimension) => (
+            {observedDimensions.map((dimension) => (
               <article className="ability-card" key={dimension.key}>
                 <div>
                   <span>{dimension.label}</span>
@@ -4161,7 +4166,19 @@ function AbilityPanel({ estimate, isLoading, error, spaceLabel, scopeLabel, empt
             ))}
           </div>
 
-          <AbilityTrendCharts history={history} dimensions={dimensions} />
+          {unobservedDimensions.length > 0 && (
+            <div className="history-empty">
+              <strong>还有 {unobservedDimensions.length} 项能力待测评</strong>
+              <p>
+                {unobservedDimensions.map((dimension) => (
+                  `${dimension.label}：${dimension.assessment || '完成对应训练后解锁'}`
+                )).join('；')}
+              </p>
+              <small>待测能力不显示分数，也不会参与综合能力、短板或辩位判断。</small>
+            </div>
+          )}
+
+          <AbilityTrendCharts history={history} dimensions={observedDimensions} />
         </>
       )}
     </section>
@@ -5014,135 +5031,6 @@ function getRecommendedTrainingModeForDimension(name, fallbackMode = 'free_debat
   return matchedRule?.mode || fallbackMode || 'free_debate';
 }
 
-function buildUserTrainingProfile(records = []) {
-  const recentRecords = Array.isArray(records)
-    ? records
-        .filter(Boolean)
-        .map(withCompletedTrainingMessages)
-        .slice()
-        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
-        .slice(0, 10)
-    : [];
-
-  if (!recentRecords.length) {
-    return {
-      recentTrainingCount: 0,
-      frequentModes: [],
-      averageScore: null,
-      scoreTrend: '暂无足够数据',
-      weakDimensions: [],
-      recurringProblems: [],
-      latestRecordSummary: null,
-      recommendedFocus: ''
-    };
-  }
-
-  const scores = recentRecords
-    .map((record) => Number(record.score))
-    .filter((score) => Number.isFinite(score));
-  const averageScore = scores.length
-    ? Number((scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(1))
-    : null;
-  const modeCounts = new Map();
-  recentRecords.forEach((record) => {
-    const label = getOptionLabel(trainingModes, record.trainingMode) || record.modeDisplayName || '未知模式';
-    modeCounts.set(label, (modeCounts.get(label) || 0) + 1);
-  });
-  const frequentModes = [...modeCounts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([label]) => label);
-  const dimensionBuckets = new Map();
-
-  recentRecords.forEach((record) => {
-    const reviewData = normalizeStructuredReview(record);
-    const dimensions = Array.isArray(reviewData?.dimensionScores) ? reviewData.dimensionScores : [];
-    dimensions.forEach((dimension) => {
-      const score = Number(dimension?.score);
-      if (!dimension?.name || !Number.isFinite(score)) return;
-      const current = dimensionBuckets.get(dimension.name) || { total: 0, count: 0 };
-      current.total += score;
-      current.count += 1;
-      dimensionBuckets.set(dimension.name, current);
-    });
-  });
-
-  const weakDimensions = [...dimensionBuckets.entries()]
-    .map(([name, bucket]) => ({ name, average: bucket.total / bucket.count }))
-    .sort((a, b) => a.average - b.average)
-    .slice(0, 3)
-    .map((item) => item.name);
-  const recurringProblems = inferRecurringProblems(weakDimensions);
-  const latestRecord = recentRecords[0];
-  const latestReview = normalizeStructuredReview(latestRecord);
-  const recommendedFocus = buildRecommendedFocus(weakDimensions, frequentModes);
-
-  return {
-    recentTrainingCount: recentRecords.length,
-    frequentModes,
-    averageScore,
-    scoreTrend: getRecentScoreTrend(scores),
-    weakDimensions,
-    recurringProblems,
-    latestRecordSummary: {
-      topic: latestRecord.topic || '未命名辩题',
-      mode: getOptionLabel(trainingModes, latestRecord.trainingMode) || latestRecord.modeDisplayName || '未知模式',
-      difficulty: getOptionLabel(difficulties, latestRecord.difficulty) || latestRecord.difficulty || '',
-      score: Number.isFinite(Number(latestRecord.score)) ? Number(latestRecord.score) : null,
-      scoreLevel: latestRecord.scoreLevel || latestReview?.scoreLevel || '',
-      userSide: getOptionLabel(sides, latestRecord.userSide) || '',
-      aiSide: getOptionLabel(sides, latestRecord.aiSide) || '',
-      battlefield: latestRecord.battlefield || latestReview?.battlefield || '',
-      reviewSummary: summarizeText(latestReview?.mainWeakness || latestReview?.reviewText || latestRecord.review, 220),
-      createdAt: latestRecord.createdAt || ''
-    },
-    recommendedFocus
-  };
-}
-
-function inferRecurringProblems(weakDimensions = []) {
-  const problems = [];
-  const text = weakDimensions.join(' ');
-  if (/战场|控制|识别|主线/.test(text)) problems.push('容易被对方问题带走，需要先练战场识别');
-  if (/表达|节奏|时间|稳定/.test(text)) problems.push('回答容易变长，落点不够清楚，需要练表达压缩');
-  if (/防守|回应|切割|陷阱|反压/.test(text)) problems.push('防守时需要先处理问题预设，再回到己方标准');
-  if (/追问|问题|质询|漏洞|压迫/.test(text)) problems.push('攻辩问题还需要形成连续问题链');
-  if (/论据|例证|数据|论证|逻辑/.test(text)) problems.push('论据和结论之间还需要补足推理链');
-  if (/价值|升华|整合|收束|结算/.test(text)) problems.push('结尾需要更清楚地完成胜负比较和价值收束');
-  return problems.slice(0, 4);
-}
-
-function buildRecommendedFocus(weakDimensions = [], frequentModes = []) {
-  const text = weakDimensions.join(' ');
-  if (/切割|防守|回应|陷阱/.test(text)) return '先练防守切割，再练反压一句';
-  if (/战场|控制|识别/.test(text)) return '先练战场识别，再练自由辩追问链';
-  if (/表达|节奏|时间/.test(text)) return '先练三句话压缩表达';
-  if (/追问|质询|问题/.test(text)) return '先练攻辩问题链设计';
-  if (/价值|升华|整合|收束/.test(text)) return '先练战场整合和结辩终局感';
-  if (frequentModes.includes('自由辩论')) return '先稳定自由辩战场，再提升反击效率';
-  return '先练一个小目标：判断战场、压缩表达、明确落点';
-}
-
-function getRecentScoreTrend(scores = []) {
-  if (scores.length < 3) return '暂无足够趋势';
-  const latest = scores.slice(0, Math.ceil(scores.length / 2));
-  const earlier = scores.slice(Math.ceil(scores.length / 2));
-  const latestAverage = latest.reduce((sum, score) => sum + score, 0) / latest.length;
-  const earlierAverage = earlier.reduce((sum, score) => sum + score, 0) / earlier.length;
-  const delta = latestAverage - earlierAverage;
-  const spread = Math.max(...scores) - Math.min(...scores);
-  if (spread >= 18) return '波动较大';
-  if (delta >= 3) return '略有上升';
-  if (delta <= -3) return '略有回落';
-  return '整体稳定';
-}
-
-function summarizeText(text, maxLength = 220) {
-  const clean = String(text || '').replace(/\s+/g, ' ').trim();
-  if (clean.length <= maxLength) return clean;
-  return `${clean.slice(0, maxLength)}…`;
-}
-
 function WeaknessVideoRecommendations({ dimensions }) {
   const weakestDimensions = getWeakestDimensions(dimensions, 2);
 
@@ -5226,7 +5114,7 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
     }
   ];
   const openingMessage = '我是林婉，你的辩论顾问，也是你的辩论搭子。\n\n我会参考你最近的训练状态，不局限于某一场比赛，综合分析你的问题，提出我的建议。\n\n另外，我也有许多大赛经验。赛前准备、攻防设计、临场心态这些问题，都可以拿来问我，我会把能用的经验讲给你听。\n\n辩论赛的准备过程是痛苦且艰辛的，但没事，有我在，我们慢慢来。';
-  const hasTrainingProfile = Number(trainingProfile?.recentTrainingCount || 0) > 0;
+  const hasTrainingProfile = Number(trainingProfile?.scoredRecordCount || 0) > 0;
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState([]);
   const [isSending, setIsSending] = useState(false);
@@ -5962,7 +5850,7 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
       <TrainingProfileCard profile={trainingProfile} />
 
       <p className="experience-boundary-note">
-        当前训练画像基于你所在空间的训练数据，林婉会结合该画像与最近8轮对话进行分析。单轮细节问题，可以在对应记录下向复盘助手提问。
+        当前六维画像与能力估测页使用同一模型和同一空间数据，林婉会结合该画像与最近8轮对话进行分析。单轮细节问题，可以在对应记录下向复盘助手提问。
       </p>
       {!isLoggedIn && <p className="linwan-guest-note">游客聊天仅保留在当前页面，登录后可恢复云端历史并设置“我的林婉”。</p>}
 
@@ -6393,17 +6281,31 @@ function MobileTrainingSetup({
 }
 
 function TrainingProfileCard({ profile }) {
-  const hasProfile = Number(profile?.recentTrainingCount || 0) > 0;
+  const hasProfile = Number(profile?.scoredRecordCount || 0) > 0;
   const [isExpanded, setIsExpanded] = useState(false);
+  const observedDimensions = Array.isArray(profile?.dimensions)
+    ? profile.dimensions
+        .filter((dimension) => Number.isFinite(Number(dimension?.score)) && Number(dimension?.records) > 0)
+        .slice()
+        .sort((left, right) => Number(left.score) - Number(right.score))
+    : [];
+  const unobservedDimensions = Array.isArray(profile?.dimensions)
+    ? profile.dimensions.filter((dimension) => Number(dimension?.records) <= 0)
+    : [];
+  const weakest = observedDimensions.slice(0, 2);
+  const overallTrend = Number(profile?.trend || 0);
+  const trendText = !Number.isFinite(overallTrend) || Math.abs(overallTrend) < 0.1
+    ? '持平'
+    : `${overallTrend > 0 ? '+' : ''}${Math.round(overallTrend)}`;
 
   if (!hasProfile) {
     return (
       <article className="training-profile-card empty">
         <div>
-          <span>近期训练画像</span>
+          <span>统一六维能力画像</span>
           <h3>暂无足够训练记录</h3>
         </div>
-        <p>林婉将先按通用赛场经验回答。完成几轮训练后，她会更了解你的训练状态。</p>
+        <p>林婉将先按通用赛场经验回答。完成训练后，她会读取与能力估测页完全相同的六维结果。</p>
       </article>
     );
   }
@@ -6412,35 +6314,45 @@ function TrainingProfileCard({ profile }) {
     <article className="training-profile-card">
       <div className="training-profile-heading">
         <div>
-          <span>近期训练画像</span>
-          <h3>当前训练状态</h3>
+          <span>统一六维能力画像</span>
+          <h3>{profile.level || '当前能力状态'}</h3>
         </div>
-        <strong>{profile.recentTrainingCount} 次</strong>
+        <strong>{profile.overallEstimate ?? '--'}</strong>
       </div>
       <div className="training-profile-mobile-summary">
-        <span>{profile.averageScore !== null && profile.averageScore !== undefined ? `均分 ${profile.averageScore}` : '暂无稳定均分'}</span>
-        <span>{profile.frequentModes?.length ? `常练 ${profile.frequentModes.join('、')}` : '暂无集中模式'}</span>
-        <strong>{profile.weakDimensions?.length ? `短板：${profile.weakDimensions.join('、')}` : '暂未形成稳定短板'}</strong>
-        <p>{profile.recommendedFocus || '先保持训练，再观察稳定问题'}</p>
+        <span>{profile.overall !== null && profile.overall !== undefined ? `综合 ${formatScoreValue(profile.overall)}` : '暂无综合分'}</span>
+        <span>已覆盖 {profile.observedDimensionCount || observedDimensions.length}/{profile.totalDimensionCount || 6}</span>
+        <strong>{weakest.length ? `相对较弱：${weakest.map((item) => item.label).join('、')}` : '暂未形成可观察短板'}</strong>
+        <p>与能力估测页使用同一模型和同一空间数据。</p>
       </div>
       <div className={`training-profile-grid ${isExpanded ? 'mobile-expanded' : ''}`} id="training-profile-details">
         <div>
-          <span>常练模式</span>
-          <strong>{profile.frequentModes?.length ? profile.frequentModes.join('、') : '暂无明显集中模式'}</strong>
+          <span>综合能力</span>
+          <strong>{profile.overall !== null && profile.overall !== undefined ? `${formatScoreValue(profile.overall)} / 100` : '暂无估测'}</strong>
         </div>
         <div>
-          <span>最近均分</span>
-          <strong>{profile.averageScore !== null && profile.averageScore !== undefined ? `${profile.averageScore} / 100` : '暂无稳定均分'}</strong>
+          <span>覆盖与置信度</span>
+          <strong>{profile.observedDimensionCount || observedDimensions.length}/{profile.totalDimensionCount || 6} 项 · 置信度 {profile.confidence || 0}%</strong>
         </div>
         <div>
-          <span>反复短板</span>
-          <strong>{profile.weakDimensions?.length ? profile.weakDimensions.join('、') : '暂未形成稳定短板'}</strong>
+          <span>相对较弱能力</span>
+          <strong>{weakest.length ? weakest.map((item) => `${item.label} ${formatScoreValue(item.score)}`).join('、') : '暂无足够证据'}</strong>
         </div>
         <div>
-          <span>当前建议</span>
-          <strong>{profile.recommendedFocus || '先保持训练，再观察稳定问题'}</strong>
+          <span>近阶段变化</span>
+          <strong>{trendText} · 推荐辩位 {profile.roleRecommendation?.bestRole || '覆盖不足，待补测'}</strong>
         </div>
       </div>
+      {unobservedDimensions.length > 0 && (
+        <div className="history-empty">
+          <strong>待测能力：{unobservedDimensions.map((dimension) => dimension.label).join('、')}</strong>
+          <p>
+            {unobservedDimensions.map((dimension) => (
+              `${dimension.label}可${dimension.assessment || '通过对应训练完成测评'}`
+            )).join('；')}。林婉不会在测评前把这些能力判断为短板。
+          </p>
+        </div>
+      )}
       <button
         type="button"
         className="training-profile-toggle"

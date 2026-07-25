@@ -41,7 +41,7 @@ function getManifestContent(manifest) {
     ? manifest.trainingProfile.highlights.filter((item) => typeof item === 'string' && item.trim()).slice(0, 2)
     : [];
   if (manifest.trainingProfile?.used && highlights.length) {
-    lines.push(`近期训练画像：${highlights.join('、')}`);
+    lines.push(`统一六维画像：${highlights.join('、')}`);
   }
   const rounds = Number(manifest.recentChat?.rounds || 0);
   if (manifest.recentChat?.used && rounds > 0) {

@@ -160,6 +160,43 @@ test('team stats require membership and do not expose another ordinary member pr
   assert.equal(recordB.review, 'B团队私人复盘');
 });
 
+test('Lin Wan team profile uses the same member-scoped ability estimate as the ability endpoint', async (t) => {
+  const harness = createIsolationHarness();
+  const port = await listen(t, harness.fetch);
+  const tokenA = signToken(USER_A);
+
+  const ability = await requestJson(
+    port,
+    `/api/ability/estimate?spaceType=team&teamCode=TEAMISO&localUserId=${LOCAL_A}`,
+    auth(tokenA)
+  );
+  assert.equal(ability.status, 200);
+  assert.equal(ability.body.scoredRecordCount, 1);
+  assert.equal(ability.body.roleRecommendation, null, 'untested role dimensions cannot be filled from the overall score');
+
+  harness.calls.length = 0;
+  harness.modelRequests.length = 0;
+  const chat = await requestJson(port, '/api/debate-experience-chat', auth(tokenA), 'POST', {
+    question: '请按我的团队训练表现给出下一步建议',
+    trainingScope: {
+      spaceType: 'team',
+      teamCode: 'TEAMISO'
+    }
+  });
+
+  assert.equal(chat.status, 200);
+  const trainingCall = harness.calls.find((call) => call.table === 'training_records');
+  assert.equal(trainingCall.url.searchParams.get('space_type'), 'eq.team');
+  assert.equal(trainingCall.url.searchParams.get('team_code'), 'eq.TEAMISO');
+  assert.equal(trainingCall.url.searchParams.get('app_user_id'), `eq.${USER_A}`);
+  assert.equal(trainingCall.url.searchParams.get('limit'), '120');
+
+  const modelContext = harness.modelRequests[0].messages.map((message) => message.content).join('\n');
+  assert.equal(modelContext.includes('权威画像模型：Fengbian Ability Estimate v1'), true);
+  assert.equal(modelContext.includes(`综合能力：${ability.body.overall.toFixed(1)} / 100`), true);
+  assert.equal(modelContext.includes(`有效评分记录：${ability.body.scoredRecordCount} 条`), true);
+});
+
 test('shared speech endpoint validates MIME type and empty audio before Aliyun', async (t) => {
   const port = await listen(t);
   const unsupported = await requestRaw(port, '/api/speech/transcribe', 'text/plain', Buffer.from('not-audio'));
@@ -189,6 +226,7 @@ function createIsolationHarness(options = {}) {
     trainingRecord(LOCAL_A, USER_A, 'A团队训练', 'team', 'TEAMISO', 'A团队私人复盘'),
     trainingRecord(LOCAL_B, USER_B, 'B团队训练', 'team', 'TEAMISO', 'B团队私人复盘')
   ];
+  trainingRecords[3].training_mode = 'defense';
 
   async function fetchMock(input, init = {}) {
     const url = new URL(String(input));
@@ -227,7 +265,14 @@ function createIsolationHarness(options = {}) {
     if (table === 'linwan_messages' && method === 'DELETE') return Response.json([]);
     if (table === 'training_records' && method === 'GET') {
       if (url.searchParams.get('space_type') === 'eq.team') {
-        return Response.json(trainingRecords.filter((row) => row.space_type === 'team' && row.team_code === eqValue(url, 'team_code')));
+        const appUserId = eqValue(url, 'app_user_id');
+        const localUserId = eqValue(url, 'local_user_id');
+        return Response.json(trainingRecords.filter((row) => (
+          row.space_type === 'team'
+          && row.team_code === eqValue(url, 'team_code')
+          && (!appUserId || row.app_user_id === appUserId)
+          && (!localUserId || row.local_user_id === localUserId)
+        )));
       }
       const appUserFilter = url.searchParams.get('app_user_id');
       const localUser = eqValue(url, 'local_user_id');
