@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
 import jwt from 'jsonwebtoken';
+import { getScoringRubric } from '../src/scoringRubrics.js';
 
 const USER_A = '10000000-0000-4000-8000-000000000001';
 const USER_B = '10000000-0000-4000-8000-000000000002';
@@ -193,7 +194,8 @@ test('Lin Wan team profile uses the same member-scoped ability estimate as the a
   assert.equal(trainingCall.url.searchParams.get('order'), 'created_at.desc,id.desc');
 
   const modelContext = harness.modelRequests[0].messages.map((message) => message.content).join('\n');
-  assert.equal(modelContext.includes('权威画像模型：Fengbian Ability Estimate v2'), true);
+  assert.equal(modelContext.includes('权威画像模型：Fengbian Ability Estimate v3'), true);
+  assert.equal(modelContext.includes('能力投射：五维复盘子维度投射 + 五维能力画像'), true);
   assert.equal(modelContext.includes('聚合算法：断点分包 + 包内指数加权 + 包间动态融合'), true);
   assert.equal(modelContext.includes(`综合能力：${ability.body.overall.toFixed(1)} / 100`), true);
   assert.equal(modelContext.includes(`有效评分记录：${ability.body.scoredRecordCount} 条`), true);
@@ -254,6 +256,7 @@ function createIsolationHarness(options = {}) {
   ];
   trainingRecords.push(...(Array.isArray(options.additionalTrainingRecords) ? options.additionalTrainingRecords : []));
   trainingRecords[3].training_mode = 'defense';
+  trainingRecords[3].dimension_scores = uniformDimensionScores('defense', 75);
 
   async function fetchMock(input, init = {}) {
     const url = new URL(String(input));
@@ -331,7 +334,14 @@ function profile(userId, preferredName) {
 }
 
 function trainingRecord(localUserId, appUserId, topic, spaceType = 'personal', teamCode = null, review = '测试复盘') {
-  return { id: `${topic}-id`, space_type: spaceType, team_code: teamCode, local_user_id: localUserId, app_user_id: appUserId, nickname: '测试', topic, user_side: 'affirmative', ai_side: 'negative', difficulty: 'novice', style_id: 'none', training_mode: 'free_debate', messages: [{ role: 'user', content: `${topic}内容` }], review, battlefield: `${topic}战场`, dimension_scores: [{ name: '逻辑', score: 75 }], score: 80, created_at: '2026-07-18T00:00:00.000Z' };
+  return { id: `${topic}-id`, space_type: spaceType, team_code: teamCode, local_user_id: localUserId, app_user_id: appUserId, nickname: '测试', topic, user_side: 'affirmative', ai_side: 'negative', difficulty: 'novice', style_id: 'none', training_mode: 'free_debate', messages: [{ role: 'user', content: `${topic}内容` }], review, battlefield: `${topic}战场`, dimension_scores: uniformDimensionScores('free_debate', 75), score: 80, created_at: '2026-07-18T00:00:00.000Z' };
+}
+
+function uniformDimensionScores(trainingMode, score) {
+  return getScoringRubric(trainingMode).rubric.dimensions.map((dimension) => ({
+    name: dimension.name,
+    score
+  }));
 }
 
 function eqValue(url, key) {

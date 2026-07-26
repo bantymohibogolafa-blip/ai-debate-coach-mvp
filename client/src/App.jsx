@@ -320,7 +320,6 @@ const defaultTaskForm = {
 const abilityDimensionMeta = [
   { key: 'overall', label: '综合锋力', color: '#c8502d' },
   { key: 'logic', label: '逻辑推进', color: '#2d7f7a' },
-  { key: 'evidence', label: '例证支撑', color: '#415f9d' },
   { key: 'defenseStability', label: '防守稳定', color: '#6e5aa8' },
   { key: 'counterPressure', label: '反压能力', color: '#9c4f24' },
   { key: 'battlefieldControl', label: '战场控制', color: '#9b3f58' },
@@ -4131,7 +4130,7 @@ function AbilityPanel({ estimate, isLoading, error, spaceLabel, scopeLabel, empt
               <span>当前锋力值</span>
               <strong>{formatNullableNumber(estimate.overall)} / 100</strong>
               <small>
-                {estimate.level} · 置信度 {estimate.confidence || 0}% · 已覆盖 {estimate.observedDimensionCount || observedDimensions.length}/{estimate.totalDimensionCount || 6}
+                {estimate.level} · 已覆盖 {estimate.observedDimensionCount || observedDimensions.length}/{estimate.totalDimensionCount || 5}
               </small>
             </div>
             <p>{estimate.note}</p>
@@ -5850,7 +5849,7 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
       <TrainingProfileCard profile={trainingProfile} />
 
       <p className="experience-boundary-note">
-        当前六维画像与能力估测页使用同一模型和同一空间数据，林婉会结合该画像与最近8轮对话进行分析。单轮细节问题，可以在对应记录下向复盘助手提问。
+        当前五维画像与能力估测页使用同一模型和同一空间数据，林婉会结合该画像与最近8轮对话进行分析。单轮细节问题，可以在对应记录下向复盘助手提问。
       </p>
       {!isLoggedIn && <p className="linwan-guest-note">游客聊天仅保留在当前页面，登录后可恢复云端历史并设置“我的林婉”。</p>}
 
@@ -6302,10 +6301,10 @@ function TrainingProfileCard({ profile }) {
     return (
       <article className="training-profile-card empty">
         <div>
-          <span>统一六维能力画像</span>
+          <span>统一五维能力画像</span>
           <h3>暂无足够训练记录</h3>
         </div>
-        <p>林婉将先按通用赛场经验回答。完成训练后，她会读取与能力估测页完全相同的六维结果。</p>
+        <p>林婉将先按通用赛场经验回答。完成训练后，她会读取与能力估测页完全相同的五维结果。</p>
       </article>
     );
   }
@@ -6314,14 +6313,14 @@ function TrainingProfileCard({ profile }) {
     <article className="training-profile-card">
       <div className="training-profile-heading">
         <div>
-          <span>统一六维能力画像</span>
+          <span>统一五维能力画像</span>
           <h3>{profile.level || '当前能力状态'}</h3>
         </div>
         <strong>{profile.overallEstimate ?? '--'}</strong>
       </div>
       <div className="training-profile-mobile-summary">
         <span>{profile.overall !== null && profile.overall !== undefined ? `综合 ${formatScoreValue(profile.overall)}` : '暂无综合分'}</span>
-        <span>已覆盖 {profile.observedDimensionCount || observedDimensions.length}/{profile.totalDimensionCount || 6}</span>
+        <span>已覆盖 {profile.observedDimensionCount || observedDimensions.length}/{profile.totalDimensionCount || 5}</span>
         <strong>{weakest.length ? `相对较弱：${weakest.map((item) => item.label).join('、')}` : '暂未形成可观察短板'}</strong>
         <p>与能力估测页使用同一模型和同一空间数据。</p>
       </div>
@@ -6331,8 +6330,8 @@ function TrainingProfileCard({ profile }) {
           <strong>{profile.overall !== null && profile.overall !== undefined ? `${formatScoreValue(profile.overall)} / 100` : '暂无估测'}</strong>
         </div>
         <div>
-          <span>覆盖与置信度</span>
-          <strong>{profile.observedDimensionCount || observedDimensions.length}/{profile.totalDimensionCount || 6} 项 · 置信度 {profile.confidence || 0}%</strong>
+          <span>能力覆盖</span>
+          <strong>{profile.observedDimensionCount || observedDimensions.length}/{profile.totalDimensionCount || 5} 项 · {profile.coverage || 0}% 权重覆盖</strong>
         </div>
         <div>
           <span>相对较弱能力</span>

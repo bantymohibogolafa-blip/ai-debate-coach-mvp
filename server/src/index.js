@@ -1716,7 +1716,7 @@ function validateLinWanTtsPayload(body = {}) {
 function normalizeDebateExperienceProfile(profile) {
   if (!profile || typeof profile !== 'object') return null;
   const dimensions = Array.isArray(profile.dimensions)
-    ? profile.dimensions.slice(0, 6).map((dimension) => ({
+    ? profile.dimensions.slice(0, 5).map((dimension) => ({
         key: limitLength(normalizeText(dimension?.key), 40),
         label: limitLength(normalizeText(dimension?.label), 40),
         score: dimension?.score !== null && dimension?.score !== undefined && Number.isFinite(Number(dimension.score))
@@ -1725,9 +1725,6 @@ function normalizeDebateExperienceProfile(profile) {
         estimate: dimension?.estimate !== null && dimension?.estimate !== undefined && Number.isFinite(Number(dimension.estimate))
           ? clampNumber(Number(dimension.estimate), 300, 900)
           : null,
-        confidence: Number.isFinite(Number(dimension?.confidence))
-          ? clampNumber(Math.round(Number(dimension.confidence)), 0, 100)
-          : 0,
         trend: Number.isFinite(Number(dimension?.trend)) ? clampNumber(Number(dimension.trend), -100, 100) : 0,
         records: Number.isFinite(Number(dimension?.records))
           ? clampNumber(Math.floor(Number(dimension.records)), 0, 1000000)
@@ -1745,20 +1742,18 @@ function normalizeDebateExperienceProfile(profile) {
   return {
     model: limitLength(normalizeText(profile.model), 80),
     algorithm: limitLength(normalizeText(profile.algorithm), 80),
+    projection: limitLength(normalizeText(profile.projection), 80),
     recordCount: clampNumber(Math.floor(Number(profile.recordCount || 0)), 0, 1000000),
     scoredRecordCount: clampNumber(Math.floor(Number(profile.scoredRecordCount || 0)), 0, 1000000),
-    confidence: Number.isFinite(Number(profile.confidence))
-      ? clampNumber(Math.round(Number(profile.confidence)), 0, 100)
-      : 0,
     coverage: Number.isFinite(Number(profile.coverage))
       ? clampNumber(Math.round(Number(profile.coverage)), 0, 100)
       : 0,
     observedDimensionCount: Number.isFinite(Number(profile.observedDimensionCount))
-      ? clampNumber(Math.floor(Number(profile.observedDimensionCount)), 0, 6)
+      ? clampNumber(Math.floor(Number(profile.observedDimensionCount)), 0, 5)
       : dimensions.filter((dimension) => dimension.records > 0).length,
     totalDimensionCount: Number.isFinite(Number(profile.totalDimensionCount))
-      ? clampNumber(Math.floor(Number(profile.totalDimensionCount)), 1, 6)
-      : 6,
+      ? clampNumber(Math.floor(Number(profile.totalDimensionCount)), 1, 5)
+      : 5,
     overall: profile.overall !== null && profile.overall !== undefined && Number.isFinite(Number(profile.overall))
       ? clampNumber(Number(profile.overall), 0, 100)
       : null,
@@ -2701,7 +2696,7 @@ function formatDebateExperienceProfile(profile) {
   const dimensionLines = observedDimensions.map((dimension) => {
     const trend = Number(dimension.trend || 0);
     const trendText = Math.abs(trend) < 0.1 ? '持平' : `${trend > 0 ? '+' : ''}${trend.toFixed(1)}`;
-    return `- ${dimension.label}：${Number(dimension.score).toFixed(1)} / 100（趋势 ${trendText}，置信度 ${dimension.confidence}%，有效记录 ${dimension.records}）`;
+    return `- ${dimension.label}：${Number(dimension.score).toFixed(1)} / 100（趋势 ${trendText}，有效记录 ${dimension.records}）`;
   });
   const overallTrend = Number(profile.trend || 0);
   const overallTrendText = Math.abs(overallTrend) < 0.1
@@ -2709,17 +2704,18 @@ function formatDebateExperienceProfile(profile) {
     : `${overallTrend > 0 ? '+' : ''}${Math.round(overallTrend)}`;
 
   return [
-    `权威画像模型：${profile.model || 'Fengbian Ability Estimate v2'}`,
+    `权威画像模型：${profile.model || 'Fengbian Ability Estimate v3'}`,
+    `能力投射：${profile.projection || '五维复盘子维度投射 + 五维能力画像'}`,
     `聚合算法：${profile.algorithm || '断点分包 + 包内指数加权 + 包间动态融合'}`,
     `有效评分记录：${profile.scoredRecordCount} 条（当前空间共 ${profile.recordCount} 条）`,
     `综合能力：${profile.overall === null ? '暂无估测' : `${Number(profile.overall).toFixed(1)} / 100`}`,
-    `能力估值：${profile.overallEstimate ?? '暂无'}；等级：${profile.level || '暂无估测'}；总体置信度：${profile.confidence}%`,
-    `能力覆盖度：${profile.observedDimensionCount || observedDimensions.length} / ${profile.totalDimensionCount || 6} 个维度（${profile.coverage || 0}% 权重覆盖）`,
+    `能力估值：${profile.overallEstimate ?? '暂无'}；等级：${profile.level || '暂无估测'}`,
+    `能力覆盖度：${profile.observedDimensionCount || observedDimensions.length} / ${profile.totalDimensionCount || 5} 个维度（${profile.coverage || 0}% 权重覆盖）`,
     `近阶段能力估值变化：${overallTrendText}`,
     `已测能力：\n${dimensionLines.join('\n') || '- 暂无已测维度'}`,
     `当前相对较弱的已观察能力：${observedDimensions.slice(0, 2).map((dimension) => dimension.label).join('、') || '暂无足够证据'}`,
     `待测能力：${insufficientDimensions.map((dimension) => dimension.label).join('、') || '无'}`,
-    `补测建议：${insufficientDimensions.map((dimension) => `${dimension.label}可${dimension.assessment || '完成对应训练'}`).join('；') || '六个维度均已有训练覆盖'}`,
+    `补测建议：${insufficientDimensions.map((dimension) => `${dimension.label}可${dimension.assessment || '完成对应训练'}`).join('；') || '五个维度均已有训练覆盖'}`,
     `辩位估测：${profile.roleRecommendation?.bestRole || '覆盖不足，暂不推荐'}${profile.roleRecommendation?.secondaryRole ? `；次选 ${profile.roleRecommendation.secondaryRole}` : ''}`,
     '使用要求：以上字段与能力估测页来自同一计算结果。不得自行重算画像，不得把“当前相对最低”直接表述为长期严重短板；待测能力没有分数，不得作为用户短板。只有当用户询问画像、短板、辩位或训练方向，或者当前问题直接涉及待测能力时，才自然提醒完成对应测评，不要在每次回复中重复提醒。'
   ].join('\n');

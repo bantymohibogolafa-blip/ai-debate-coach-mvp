@@ -293,7 +293,6 @@ const defaultTaskForm = {
 const abilityDimensionMeta = [
   { key: 'overall', label: '综合锋力', color: '#c8502d' },
   { key: 'logic', label: '逻辑推进', color: '#2d7f7a' },
-  { key: 'evidence', label: '例证支撑', color: '#415f9d' },
   { key: 'defenseStability', label: '防守稳定', color: '#6e5aa8' },
   { key: 'counterPressure', label: '反压能力', color: '#9c4f24' },
   { key: 'battlefieldControl', label: '战场控制', color: '#9b3f58' },
@@ -3991,7 +3990,7 @@ function AbilityPanel({ estimate, isLoading, error, spaceLabel, scopeLabel, empt
             <div>
               <span>当前锋力值</span>
               <strong>{formatNullableNumber(estimate.overall)} / 100</strong>
-              <small>{estimate.level} · 置信度 {estimate.confidence || 0}%</small>
+              <small>{estimate.level} · 已覆盖 {estimate.observedDimensionCount || observedDimensions.length}/{estimate.totalDimensionCount || 5}</small>
             </div>
             <p>{estimate.note}</p>
           </div>

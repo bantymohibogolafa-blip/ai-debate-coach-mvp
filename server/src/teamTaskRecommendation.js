@@ -15,11 +15,6 @@ const abilityTaskProfiles = {
     tags: ['逻辑推进', '论证链条'],
     goal: '围绕一个核心判断，完成“定义—理由—结论”的完整论证链。'
   },
-  evidence: {
-    mode: 'constructive',
-    tags: ['例证支撑', '论据匹配'],
-    goal: '为核心论点补充一条可核验的事实、案例或因果依据，并说明它如何支持结论。'
-  },
   defenseStability: {
     mode: 'defense',
     tags: ['防守稳定', '前提切割'],
@@ -64,7 +59,6 @@ export function buildAbilityTaskRecommendations(members = [], records = []) {
       tags: taskProfile.tags,
       abilityDimensionKey: problem.key,
       abilityScore: problem.score,
-      abilityConfidence: problem.confidence
     });
   });
 
@@ -92,12 +86,11 @@ export function buildAbilityTaskRecommendations(members = [], records = []) {
           targetMembers: profile.nickname,
           mode: taskProfile.mode,
           difficulty: getDifficultyFromAbility(profile.abilityOverall),
-          reason: `${profile.nickname} 的能力估测中「${weak.label}」相对偏弱（${weak.score.toFixed(1)}，置信度 ${weak.confidence}%）。`,
+          reason: `${profile.nickname} 的能力估测中「${weak.label}」相对偏弱（${weak.score.toFixed(1)}，有效记录 ${weak.records} 条）。`,
           goal: taskProfile.goal,
           tags: taskProfile.tags,
           abilityDimensionKey: weak.key,
-          abilityScore: weak.score,
-          abilityConfidence: weak.confidence
+          abilityScore: weak.score
         }),
         memberAppUserId: profile.appUserId,
         memberName: profile.nickname,
@@ -131,7 +124,6 @@ function buildAbilityMemberProfiles(members, records) {
         appUserId: member.app_user_id || null,
         nickname: member.nickname || '未命名成员',
         abilityOverall: estimate.overall,
-        abilityConfidence: estimate.confidence,
         weaknesses: observed,
         strengths: [...observed].reverse()
       };
@@ -142,9 +134,8 @@ function buildTeamAbilityWeaknesses(profiles) {
   const buckets = new Map();
   profiles.forEach((profile) => {
     profile.weaknesses.forEach((dimension) => {
-      const current = buckets.get(dimension.key) || { total: 0, confidenceTotal: 0, memberCount: 0, label: dimension.label };
+      const current = buckets.get(dimension.key) || { total: 0, memberCount: 0, label: dimension.label };
       current.total += dimension.score;
-      current.confidenceTotal += dimension.confidence;
       current.memberCount += 1;
       buckets.set(dimension.key, current);
     });
@@ -154,7 +145,6 @@ function buildTeamAbilityWeaknesses(profiles) {
       key,
       label: item.label,
       score: item.total / item.memberCount,
-      confidence: Math.round(item.confidenceTotal / item.memberCount),
       memberCount: item.memberCount
     }))
     .sort((left, right) => left.score - right.score || right.memberCount - left.memberCount || left.key.localeCompare(right.key));
@@ -170,7 +160,7 @@ function getDifficultyFromAbility(overall) {
   return Number.isFinite(overall) && overall >= 82 ? 'city' : 'campus';
 }
 
-function buildTaskRecommendation({ type, title, assignmentType, targetMembers, mode, difficulty, reason, goal, tags, abilityDimensionKey, abilityScore, abilityConfidence }) {
+function buildTaskRecommendation({ type, title, assignmentType, targetMembers, mode, difficulty, reason, goal, tags, abilityDimensionKey, abilityScore }) {
   return {
     type,
     basis: 'ability_estimate',
@@ -187,7 +177,6 @@ function buildTaskRecommendation({ type, title, assignmentType, targetMembers, m
     recommendedReasonTags: [...new Set([...tags, modeLabels[mode]])].slice(0, 4),
     abilityDimensionKey,
     abilityScore: roundToOne(abilityScore),
-    abilityConfidence,
     suggestedDeadline: '3天内'
   };
 }

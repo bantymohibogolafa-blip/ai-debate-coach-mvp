@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildAbilityTaskRecommendations } from '../src/teamTaskRecommendation.js';
+import { getScoringRubric } from '../src/scoringRubrics.js';
 
 test('team task recommendations use ability estimates instead of raw-score averages', () => {
   const members = [
@@ -22,7 +23,9 @@ test('team task recommendations use ability estimates instead of raw-score avera
   assert.equal(result.teamRecommendation.basis, 'ability_estimate');
   assert.equal(result.teamRecommendation.difficulty, 'city', 'difficulty is selected from ability overall, not the raw average of 80');
   assert.equal(typeof result.teamRecommendation.abilityDimensionKey, 'string');
+  assert.equal(Object.hasOwn(result.teamRecommendation, 'abilityConfidence'), false);
   assert.equal(result.personalRecommendations.every((item) => item.basis === 'ability_estimate'), true);
+  assert.equal(result.personalRecommendations.every((item) => !Object.hasOwn(item, 'abilityConfidence')), true);
 });
 
 function member(id, nickname) {
@@ -42,6 +45,10 @@ function record(id, appUserId, trainingMode, score, createdAt) {
     training_mode: trainingMode,
     score,
     difficulty: 'city',
-    created_at: createdAt
+    created_at: createdAt,
+    dimension_scores: getScoringRubric(trainingMode).rubric.dimensions.map((dimension) => ({
+      name: dimension.name,
+      score
+    }))
   };
 }

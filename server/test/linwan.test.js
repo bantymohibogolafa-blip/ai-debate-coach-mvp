@@ -134,14 +134,14 @@ test('context manifest highlights the same observed dimensions supplied by the a
     scoredRecordCount: 4,
     dimensions: [
       { key: 'logic', label: '逻辑推进', score: 78.2, records: 4 },
-      { key: 'evidence', label: '例证支撑', score: 62.1, records: 0 },
+      { key: 'counterPressure', label: '反压能力', score: 62.1, records: 0 },
       { key: 'defenseStability', label: '防守稳定', score: 69.4, records: 2 },
       { key: 'battlefieldControl', label: '战场控制', score: 65.3, records: 3 }
     ]
   }, []);
 
   assert.deepEqual(manifest.trainingProfile.highlights, ['战场控制 65.3', '防守稳定 69.4']);
-  assert.equal(manifest.trainingProfile.highlights.includes('例证支撑 62.1'), false);
+  assert.equal(manifest.trainingProfile.highlights.includes('反压能力 62.1'), false);
 });
 
 test('context manifest omits unavailable training profile and tolerates legacy null manifests', () => {

@@ -1,39 +1,77 @@
+import { getScoringRubric } from './scoringRubrics.js';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const ABILITY_STAGE_GAP_DAYS = 30;
 export const ABILITY_STAGE_GAP_MS = ABILITY_STAGE_GAP_DAYS * DAY_MS;
 export const ABILITY_PACKAGE_DECAY_RATE = 0.15;
-export const ABILITY_MODEL_NAME = 'Fengbian Ability Estimate v2';
+export const ABILITY_MODEL_NAME = 'Fengbian Ability Estimate v3';
 export const ABILITY_ALGORITHM_NAME = '断点分包 + 包内指数加权 + 包间动态融合';
+export const ABILITY_PROJECTION_NAME = '五维复盘子维度投射 + 五维能力画像';
 
 export const abilityDimensions = [
-  { key: 'logic', label: '逻辑推进', weight: 0.18 },
-  { key: 'evidence', label: '例证支撑', weight: 0.16 },
-  { key: 'defenseStability', label: '防守稳定', weight: 0.16 },
-  { key: 'counterPressure', label: '反压能力', weight: 0.16 },
-  { key: 'battlefieldControl', label: '战场控制', weight: 0.18 },
-  { key: 'expression', label: '表达效率', weight: 0.16 }
+  { key: 'logic', label: '逻辑推进', weight: 3 / 14 },
+  { key: 'defenseStability', label: '防守稳定', weight: 4 / 21 },
+  { key: 'counterPressure', label: '反压能力', weight: 4 / 21 },
+  { key: 'battlefieldControl', label: '战场控制', weight: 3 / 14 },
+  { key: 'expression', label: '表达效率', weight: 4 / 21 }
 ];
 
 const abilityAssessmentRecommendations = {
   logic: '完成一次立论、攻辩或防守训练',
-  evidence: '完成一次立论或结辩训练',
   defenseStability: '完成一次防守或自由辩训练',
-  counterPressure: '完成一次攻辩、防守或自由辩训练',
-  battlefieldControl: '完成一次自由辩、攻辩小结或结辩训练',
-  expression: '完成一次立论、自由辩或结辩训练'
+  counterPressure: '完成一次攻辩、防守、自由辩或攻辩小结训练',
+  battlefieldControl: '完成一次立论、自由辩、攻辩小结或结辩训练',
+  expression: '完成任一正式训练并生成五维复盘'
 };
 
-// This preserves the existing business definition of which unified ability
-// dimensions a training mode updates. The values are coverage only; the new
-// package formula does not multiply by a mode weight.
-const abilityModeCoverage = {
-  constructive: ['logic', 'evidence', 'expression'],
-  summary: ['battlefieldControl', 'logic', 'evidence', 'expression'],
-  free_debate: ['battlefieldControl', 'counterPressure', 'defenseStability', 'expression'],
-  attack: ['counterPressure', 'battlefieldControl', 'logic'],
-  defense: ['defenseStability', 'counterPressure', 'logic'],
-  closing: ['battlefieldControl', 'logic', 'evidence', 'expression']
+// Each review subdimension can feed at most two unified abilities. Shares are
+// multiplied by the rubric weight before the target dimension is normalized.
+// “例证支撑” is no longer a standalone ability: the constructive evidence
+// subdimension is treated as part of argument validity and feeds logic.
+export const abilityModeProjection = {
+  constructive: {
+    '辩题理解与定义判准': { logic: 0.7, battlefieldControl: 0.3 },
+    '论证结构与逻辑链条': { logic: 1 },
+    '论据、数据与例证支撑': { logic: 1 },
+    '战场设计与可防守性': { battlefieldControl: 1 },
+    '表达清晰度与时间控制': { expression: 1 }
+  },
+  summary: {
+    '攻辩内容提炼': { battlefieldControl: 0.7, logic: 0.3 },
+    '战场结算能力': { battlefieldControl: 1 },
+    '漏洞归纳与反击转化': { counterPressure: 0.7, battlefieldControl: 0.3 },
+    '与本方主线连接': { logic: 0.6, battlefieldControl: 0.4 },
+    '表达简洁度与节奏': { expression: 1 }
+  },
+  free_debate: {
+    '战场识别与控制': { battlefieldControl: 1 },
+    '临场回应与反击': { defenseStability: 0.5, counterPressure: 0.5 },
+    '逻辑推进与攻守转换': { logic: 0.7, battlefieldControl: 0.3 },
+    '表达效率与节奏感': { expression: 1 },
+    '战术选择与临场判断': { battlefieldControl: 0.7, counterPressure: 0.3 }
+  },
+  attack: {
+    '问题精准度': { counterPressure: 0.6, logic: 0.4 },
+    '连续追问能力': { counterPressure: 0.7, battlefieldControl: 0.3 },
+    '抓漏洞能力': { logic: 0.6, counterPressure: 0.4 },
+    '逻辑压迫与战场推进': { battlefieldControl: 0.6, counterPressure: 0.4 },
+    '表达简洁度与节奏控制': { expression: 1 }
+  },
+  defense: {
+    '正面回应能力': { defenseStability: 0.8, logic: 0.2 },
+    '逻辑防守能力': { defenseStability: 0.6, logic: 0.4 },
+    '概念切割与陷阱识别': { defenseStability: 0.6, logic: 0.4 },
+    '反压能力': { counterPressure: 0.7, defenseStability: 0.3 },
+    '表达效率与稳定性': { expression: 0.7, defenseStability: 0.3 }
+  },
+  closing: {
+    '战场整合与胜负比较': { battlefieldControl: 0.8, logic: 0.2 },
+    '对攻防成果的吸收': { battlefieldControl: 1 },
+    '价值升华与判断标准': { battlefieldControl: 0.6, logic: 0.4 },
+    '逻辑收束与表达感染力': { logic: 0.6, expression: 0.4 },
+    '时间控制与结构完整': { expression: 0.7, logic: 0.3 }
+  }
 };
 
 const abilityDifficultyBonus = {
@@ -108,7 +146,7 @@ export function calculateDimensionProfile(records = [], dimensionKey) {
       recordId: record.id,
       timestamp: record.createdAt,
       timestampMs: record.timestampMs,
-      score: record.adjustedScore
+      score: record.projectedScores[dimensionKey]
     }));
   const stages = splitTrainingStages(updates);
   let finalScore = null;
@@ -165,13 +203,10 @@ export function calculateAbilityProfile(records = []) {
       ) / observedWeight
     : null;
   const coverage = Math.round(observedWeight * 100);
-  const recordConfidence = Math.min(100, Math.round((normalizedRecords.length / 10) * 100));
-
   return {
     validRecords: normalizedRecords,
     overall,
     overallEstimate: toAbilityEstimate(overall),
-    confidence: Math.min(recordConfidence, coverage),
     coverage,
     observedDimensionCount: observedDimensions.length,
     dimensions
@@ -216,7 +251,6 @@ export function buildAbilityEstimate(records = [], { historyLimit = 120 } = {}) 
       label: dimension.label,
       score: roundNullable(score),
       estimate: toAbilityEstimate(score),
-      confidence: Math.min(100, Math.round((currentDimension.recordCount / 5) * 100)),
       trend: score === null || previousScore === null ? 0 : roundToOne(score - previousScore),
       records: currentDimension.recordCount,
       packages: currentDimension.packageCount,
@@ -228,9 +262,9 @@ export function buildAbilityEstimate(records = [], { historyLimit = 120 } = {}) 
   return {
     model: ABILITY_MODEL_NAME,
     algorithm: ABILITY_ALGORITHM_NAME,
+    projection: ABILITY_PROJECTION_NAME,
     recordCount: records.length,
     scoredRecordCount: validRecords.length,
-    confidence: current.confidence,
     coverage: current.coverage,
     observedDimensionCount: current.observedDimensionCount,
     totalDimensionCount: abilityDimensions.length,
@@ -276,7 +310,7 @@ export function buildAbilityEstimate(records = [], { historyLimit = 120 } = {}) 
         })
       )
     },
-    note: '能力画像按维度独立计算：相邻有效更新间隔达到30天时开启新阶段，阶段内按后续有效更新次数指数加权，阶段之间按当前阶段样本数动态融合。'
+    note: '五维复盘先按子维度权重投射为五维能力；各能力再独立聚合：相邻有效更新间隔达到30天时开启新阶段，阶段内按后续有效更新次数指数加权，阶段之间按当前阶段样本数动态融合。'
   };
 }
 
@@ -293,17 +327,31 @@ function normalizeAbilityRecord(record = {}) {
   const timestampMs = Date.parse(createdAt);
   if (score === null || !Number.isFinite(timestampMs)) return null;
 
-  const trainingMode = abilityModeCoverage[record.training_mode || record.trainingMode]
+  const trainingMode = abilityModeProjection[record.training_mode || record.trainingMode]
     ? (record.training_mode || record.trainingMode)
     : 'free_debate';
   const difficulty = record.difficulty || '';
   const difficultyBonus = abilityDifficultyBonus[difficulty] || 0;
+  const rawProjectedScores = projectAbilityDimensions({
+    ...record,
+    training_mode: trainingMode
+  });
+  const projectedScores = Object.fromEntries(
+    Object.entries(rawProjectedScores).map(([key, value]) => [
+      key,
+      clamp(value + difficultyBonus, 0, 100)
+    ])
+  );
+  const coveredDimensions = Object.keys(projectedScores);
+  if (!coveredDimensions.length) return null;
+
   const id = String(record.id || '').trim();
   const stableKey = [
     id,
     trainingMode,
     difficulty,
     score,
+    ...coveredDimensions.sort().map((key) => `${key}:${projectedScores[key]}`),
     record.topic || '',
     record.user_side || record.userSide || '',
     record.ai_side || record.aiSide || ''
@@ -317,9 +365,55 @@ function normalizeAbilityRecord(record = {}) {
     stableKey,
     rawScore: score,
     adjustedScore: clamp(score + difficultyBonus, 0, 100),
+    projectedScores,
     trainingMode,
-    coveredDimensions: abilityModeCoverage[trainingMode]
+    coveredDimensions
   };
+}
+
+export function projectAbilityDimensions(record = {}) {
+  const requestedMode = record.training_mode || record.trainingMode;
+  const trainingMode = abilityModeProjection[requestedMode] ? requestedMode : 'free_debate';
+  const projection = abilityModeProjection[trainingMode];
+  const rubric = getScoringRubric(trainingMode).rubric;
+  const providedScores = Array.isArray(record.dimension_scores)
+    ? record.dimension_scores
+    : Array.isArray(record.dimensionScores)
+      ? record.dimensionScores
+      : [];
+  const scoreByName = new Map();
+
+  providedScores.forEach((dimension) => {
+    const name = String(dimension?.name || '').trim();
+    const score = parseFiniteScore(dimension?.score);
+    if (!name || score === null || score < 0 || score > 100 || scoreByName.has(name)) return;
+    scoreByName.set(name, score);
+  });
+
+  const accumulators = new Map();
+  rubric.dimensions.forEach((rubricDimension) => {
+    const score = scoreByName.get(rubricDimension.name);
+    const targets = projection[rubricDimension.name];
+    const rubricWeight = Number(rubricDimension.maxScore);
+    if (!Number.isFinite(score) || !targets || !Number.isFinite(rubricWeight) || rubricWeight <= 0) return;
+
+    Object.entries(targets).forEach(([dimensionKey, share]) => {
+      const numericShare = Number(share);
+      if (!abilityDimensions.some((dimension) => dimension.key === dimensionKey)) return;
+      if (!Number.isFinite(numericShare) || numericShare <= 0) return;
+      const current = accumulators.get(dimensionKey) || { weightedTotal: 0, weightTotal: 0 };
+      const weight = rubricWeight * numericShare;
+      current.weightedTotal += score * weight;
+      current.weightTotal += weight;
+      accumulators.set(dimensionKey, current);
+    });
+  });
+
+  return Object.fromEntries(
+    [...accumulators.entries()]
+      .filter(([, value]) => value.weightTotal > 0)
+      .map(([key, value]) => [key, value.weightedTotal / value.weightTotal])
+  );
 }
 
 function compareAbilityRecords(left, right) {
@@ -373,8 +467,8 @@ function buildRoleRecommendation(scores = {}) {
   const roleScores = [
     {
       role: '一辩',
-      dimensions: { logic: 0.38, evidence: 0.32, expression: 0.3 },
-      reason: '你的逻辑推进、例证支撑和表达清晰度更适合承担开局建构任务。'
+      dimensions: { logic: 0.45, battlefieldControl: 0.25, expression: 0.3 },
+      reason: '你的逻辑推进、开局战场设计和表达清晰度更适合承担开局建构任务。'
     },
     {
       role: '二辩',
@@ -394,12 +488,11 @@ function buildRoleRecommendation(scores = {}) {
     {
       role: '自由人 / 攻防核心',
       dimensions: {
-        logic: 1 / 6,
-        evidence: 1 / 6,
-        defenseStability: 1 / 6,
-        counterPressure: 1 / 6,
-        battlefieldControl: 1 / 6,
-        expression: 1 / 6
+        logic: 1 / 5,
+        defenseStability: 1 / 5,
+        counterPressure: 1 / 5,
+        battlefieldControl: 1 / 5,
+        expression: 1 / 5
       },
       reason: '你的多维能力较均衡，适合在比赛中快速切换攻防任务。'
     }
