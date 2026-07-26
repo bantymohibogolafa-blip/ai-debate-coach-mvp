@@ -128,7 +128,8 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(linWan.status, 200);
   assertModelRequestClipped(harness.modelRequests[beforeLinWan], 'linwan');
   const linWanPrompt = harness.modelRequests[beforeLinWan].map((message) => message.content).join('\n');
-  assert.match(linWanPrompt, /权威画像模型：Fengbian Ability Estimate v1/);
+  assert.match(linWanPrompt, /权威画像模型：Fengbian Ability Estimate v2/);
+  assert.match(linWanPrompt, /聚合算法：断点分包 \+ 包内指数加权 \+ 包间动态融合/);
   assert.match(linWanPrompt, new RegExp(`综合能力：${ability.body.overall.toFixed(1)} / 100`));
   const observedDimensions = ability.body.dimensions.filter((dimension) => dimension.records > 0);
   const unobservedDimensions = ability.body.dimensions.filter((dimension) => dimension.records === 0);

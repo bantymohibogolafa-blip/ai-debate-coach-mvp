@@ -189,12 +189,38 @@ test('Lin Wan team profile uses the same member-scoped ability estimate as the a
   assert.equal(trainingCall.url.searchParams.get('space_type'), 'eq.team');
   assert.equal(trainingCall.url.searchParams.get('team_code'), 'eq.TEAMISO');
   assert.equal(trainingCall.url.searchParams.get('app_user_id'), `eq.${USER_A}`);
-  assert.equal(trainingCall.url.searchParams.get('limit'), '120');
+  assert.equal(trainingCall.url.searchParams.get('limit'), '500');
+  assert.equal(trainingCall.url.searchParams.get('order'), 'created_at.desc,id.desc');
 
   const modelContext = harness.modelRequests[0].messages.map((message) => message.content).join('\n');
-  assert.equal(modelContext.includes('权威画像模型：Fengbian Ability Estimate v1'), true);
+  assert.equal(modelContext.includes('权威画像模型：Fengbian Ability Estimate v2'), true);
+  assert.equal(modelContext.includes('聚合算法：断点分包 + 包内指数加权 + 包间动态融合'), true);
   assert.equal(modelContext.includes(`综合能力：${ability.body.overall.toFixed(1)} / 100`), true);
   assert.equal(modelContext.includes(`有效评分记录：${ability.body.scoredRecordCount} 条`), true);
+});
+
+test('ability estimate paginates through the complete account history', async (t) => {
+  const additionalTrainingRecords = Array.from({ length: 500 }, (_, index) => ({
+    ...trainingRecord(LOCAL_A, USER_A, `history-${index}`),
+    id: `history-${index}`,
+    score: 60 + (index % 21),
+    created_at: new Date(Date.UTC(2024, 0, 2 + index)).toISOString()
+  }));
+  const harness = createIsolationHarness({ additionalTrainingRecords });
+  const port = await listen(t, harness.fetch);
+
+  const result = await requestJson(
+    port,
+    `/api/ability/estimate?spaceType=personal&localUserId=${LOCAL_A}`,
+    auth(signToken(USER_A))
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.scoredRecordCount, 501);
+  const trainingCalls = harness.calls.filter((call) => call.table === 'training_records');
+  assert.equal(trainingCalls.length, 2);
+  assert.deepEqual(trainingCalls.map((call) => call.url.searchParams.get('offset')), ['0', '500']);
+  assert.equal(trainingCalls.every((call) => call.url.searchParams.get('limit') === '500'), true);
 });
 
 test('shared speech endpoint validates MIME type and empty audio before Aliyun', async (t) => {
@@ -226,6 +252,7 @@ function createIsolationHarness(options = {}) {
     trainingRecord(LOCAL_A, USER_A, 'A团队训练', 'team', 'TEAMISO', 'A团队私人复盘'),
     trainingRecord(LOCAL_B, USER_B, 'B团队训练', 'team', 'TEAMISO', 'B团队私人复盘')
   ];
+  trainingRecords.push(...(Array.isArray(options.additionalTrainingRecords) ? options.additionalTrainingRecords : []));
   trainingRecords[3].training_mode = 'defense';
 
   async function fetchMock(input, init = {}) {
@@ -267,19 +294,19 @@ function createIsolationHarness(options = {}) {
       if (url.searchParams.get('space_type') === 'eq.team') {
         const appUserId = eqValue(url, 'app_user_id');
         const localUserId = eqValue(url, 'local_user_id');
-        return Response.json(trainingRecords.filter((row) => (
+        return Response.json(paginateRows(trainingRecords.filter((row) => (
           row.space_type === 'team'
           && row.team_code === eqValue(url, 'team_code')
           && (!appUserId || row.app_user_id === appUserId)
           && (!localUserId || row.local_user_id === localUserId)
-        )));
+        )), url));
       }
       const appUserFilter = url.searchParams.get('app_user_id');
       const localUser = eqValue(url, 'local_user_id');
       const rows = appUserFilter === 'is.null'
         ? trainingRecords.filter((row) => row.space_type === 'personal' && row.local_user_id === localUser && row.app_user_id === null)
         : trainingRecords.filter((row) => row.space_type === 'personal' && row.app_user_id === String(appUserFilter || '').replace(/^eq\./, ''));
-      return Response.json(rows);
+      return Response.json(paginateRows(rows, url));
     }
     if (table === 'team_members' && method === 'GET') {
       const members = [
@@ -309,6 +336,12 @@ function trainingRecord(localUserId, appUserId, topic, spaceType = 'personal', t
 
 function eqValue(url, key) {
   return String(url.searchParams.get(key) || '').replace(/^eq\./, '');
+}
+
+function paginateRows(rows, url) {
+  const offset = Number(url.searchParams.get('offset') || 0);
+  const limit = Number(url.searchParams.get('limit') || rows.length);
+  return rows.slice(offset, offset + limit);
 }
 
 function signToken(userId) {

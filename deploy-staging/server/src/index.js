@@ -30,6 +30,7 @@ import {
   normalizeScoringMode
 } from './scoringRubrics.js';
 import { getPolishOptions, getPolishTypeProfile } from './polishPrompts.js';
+import { buildAbilityEstimate as buildAbilityEstimateV2 } from '../../../server/src/abilityProfile.js';
 
 dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 
@@ -618,12 +619,12 @@ app.get('/api/ability/estimate', optionalAuth, async (req, res, next) => {
         throw httpError(401, '该功能需要登录后使用。登录后可跨设备保存团队身份和任务进度。');
       }
       await requireActiveMembership(teamCode, req.user.id);
-      records = await fetchMyTrainingRecords(teamCode, req.user.id, 120);
+      records = await fetchAllMyAbilityTrainingRecords(teamCode, req.user.id);
     } else {
-      records = await fetchPersonalTrainingRecords(localUserId, 120, req.user?.id);
+      records = await fetchAllPersonalAbilityTrainingRecords(localUserId, req.user?.id);
     }
 
-    res.json(buildAbilityEstimate(records));
+    res.json(buildAbilityEstimateV2(records));
   } catch (error) {
     next(error);
   }
@@ -2738,9 +2739,9 @@ function applyRecordPageQuery(query, page = {}) {
     query.set('created_at', `gte.${since}`);
   }
   if (page.sortBy === 'score') {
-    query.set('order', 'score.desc.nullslast,created_at.desc');
+    query.set('order', 'score.desc.nullslast,created_at.desc,id.desc');
   } else {
-    query.set('order', 'created_at.desc');
+    query.set('order', 'created_at.desc,id.desc');
   }
   query.set('limit', String(page.limit || 20));
   query.set('offset', String(page.offset || 0));
@@ -3715,6 +3716,61 @@ async function fetchLegacyTrainingRecords(localUserId, limit) {
   }
 }
 
+const abilityRecordBatchSize = 500;
+
+async function fetchAllPersonalAbilityTrainingRecords(localUserId, appUserId = '') {
+  return fetchAllAbilityTrainingRecords((offset) => (
+    fetchPersonalTrainingRecords(
+      localUserId,
+      abilityRecordBatchSize,
+      appUserId,
+      { offset, sortBy: 'date' }
+    )
+  ));
+}
+
+async function fetchAllMyAbilityTrainingRecords(teamCode, appUserId) {
+  return fetchAllAbilityTrainingRecords((offset) => (
+    fetchMyTrainingRecords(
+      teamCode,
+      appUserId,
+      abilityRecordBatchSize,
+      { offset, sortBy: 'date' }
+    )
+  ));
+}
+
+async function fetchAllAbilityTrainingRecords(fetchPage) {
+  const records = [];
+  const seenRecordIds = new Set();
+  let offset = 0;
+
+  while (true) {
+    const page = await fetchPage(offset);
+    if (!Array.isArray(page) || !page.length) break;
+
+    let added = 0;
+    page.forEach((record) => {
+      const recordId = normalizeText(record?.id);
+      const identity = recordId || [
+        normalizeText(record?.created_at),
+        normalizeText(record?.training_mode),
+        normalizeText(record?.topic),
+        String(record?.score ?? '')
+      ].join('|');
+      if (seenRecordIds.has(identity)) return;
+      seenRecordIds.add(identity);
+      records.push(record);
+      added += 1;
+    });
+
+    if (page.length < abilityRecordBatchSize || added === 0) break;
+    offset += page.length;
+  }
+
+  return records;
+}
+
 async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '', page = {}) {
   const identityFilter = appUserId ? { app_user_id: `eq.${appUserId}` } : { local_user_id: `eq.${localUserId}` };
   const query = new URLSearchParams({
@@ -4122,221 +4178,6 @@ async function fetchAllTeamRecordsForStats(teamCode) {
     if (!isSupabaseSchemaError(error)) throw error;
     return fetchLegacyTeamTrainingRecords(teamCode, 1000);
   }
-}
-
-const abilityDimensions = [
-  { key: 'logic', label: '逻辑推进', weight: 0.18 },
-  { key: 'evidence', label: '例证支撑', weight: 0.16 },
-  { key: 'defenseStability', label: '防守稳定', weight: 0.16 },
-  { key: 'counterPressure', label: '反压能力', weight: 0.16 },
-  { key: 'battlefieldControl', label: '战场控制', weight: 0.18 },
-  { key: 'expression', label: '表达效率', weight: 0.16 }
-];
-
-const abilityModeWeights = {
-  constructive: { logic: 0.45, evidence: 0.3, expression: 0.25 },
-  summary: { battlefieldControl: 0.45, logic: 0.25, evidence: 0.15, expression: 0.15 },
-  free_debate: { battlefieldControl: 0.35, counterPressure: 0.25, defenseStability: 0.2, expression: 0.2 },
-  attack: { counterPressure: 0.55, battlefieldControl: 0.25, logic: 0.2 },
-  defense: { defenseStability: 0.55, counterPressure: 0.25, logic: 0.2 },
-  closing: { battlefieldControl: 0.35, logic: 0.25, evidence: 0.15, expression: 0.25 }
-};
-
-const abilityDifficultyBonus = {
-  novice: -4,
-  campus: 2,
-  city: 7
-};
-
-function buildAbilityEstimate(records = []) {
-  const scoredRecords = records
-    .filter((record) => Number.isFinite(Number(record.score)))
-    .sort((left, right) => new Date(left.created_at) - new Date(right.created_at));
-  const history = scoredRecords.map((_, index) => {
-    const record = scoredRecords[index];
-    const snapshot = calculateAbilitySnapshot(scoredRecords.slice(0, index + 1));
-    return {
-      index: index + 1,
-      date: record.created_at,
-      overall: snapshot.overall,
-      overallEstimate: snapshot.overallEstimate,
-      dimensions: snapshot.dimensionScores,
-      source: buildAbilityHistorySource(record)
-    };
-  });
-  const current = calculateAbilitySnapshot(scoredRecords);
-  const previous = history.length > 1 ? history[Math.max(0, history.length - 6)] : null;
-  const dimensions = abilityDimensions.map((dimension) => {
-    const score = current.dimensionScores[dimension.key];
-    const previousScore = previous?.dimensions?.[dimension.key] ?? null;
-    return {
-      key: dimension.key,
-      label: dimension.label,
-      score,
-      estimate: score === null ? null : toAbilityEstimate(score),
-      confidence: current.dimensionConfidence[dimension.key] || 0,
-      trend: score === null || previousScore === null ? 0 : roundToOne(score - previousScore),
-      records: current.dimensionCounts[dimension.key] || 0
-    };
-  });
-
-  return {
-    model: 'Fengbian Ability Estimate v1',
-    recordCount: records.length,
-    scoredRecordCount: scoredRecords.length,
-    confidence: current.confidence,
-    overall: current.overall,
-    overallEstimate: current.overallEstimate,
-    level: getAbilityLevel(current.overallEstimate),
-    trend: previous ? current.overallEstimate - previous.overallEstimate : 0,
-    dimensions,
-    history,
-    roleRecommendation: buildRoleRecommendation(current.dimensionScores, current.overall),
-    note: '能力估测基于 AI 复盘分、训练模式、难度和近期权重实时计算；训练次数越多，置信度越高。'
-  };
-}
-
-function buildAbilityHistorySource(record = {}) {
-  const score = Number(record.score);
-
-  return {
-    recordId: record.id || '',
-    topic: record.topic || '',
-    createdAt: record.created_at || '',
-    mode: record.training_mode || '',
-    modeDisplayName: record.mode_display_name || '',
-    difficulty: record.difficulty || '',
-    userSide: record.user_side || '',
-    aiSide: record.ai_side || '',
-    score: Number.isFinite(score) ? roundToOne(score) : null,
-    teamCode: record.team_code || '',
-    spaceType: record.space_type || '',
-    taskId: record.task_id || '',
-    nickname: record.nickname || ''
-  };
-}
-
-function buildRoleRecommendation(scores = {}, overall = null) {
-  const safe = (key) => Number.isFinite(Number(scores[key])) ? Number(scores[key]) : Number(overall) || 0;
-  const roleScores = [
-    {
-      role: '一辩',
-      score: safe('logic') * 0.38 + safe('evidence') * 0.32 + safe('expression') * 0.3,
-      reason: '你的逻辑推进、例证支撑和表达清晰度更适合承担开局建构任务。'
-    },
-    {
-      role: '二辩',
-      score: safe('counterPressure') * 0.45 + safe('logic') * 0.25 + safe('battlefieldControl') * 0.3,
-      reason: '你的反压能力和战场判断更适合承担质询与拆解任务。'
-    },
-    {
-      role: '三辩',
-      score: safe('battlefieldControl') * 0.4 + safe('counterPressure') * 0.3 + safe('defenseStability') * 0.3,
-      reason: '你的战场控制、攻守转换和防守稳定更适合自由辩中的临场交锋。'
-    },
-    {
-      role: '四辩 / 结辩',
-      score: safe('battlefieldControl') * 0.35 + safe('logic') * 0.3 + safe('expression') * 0.35,
-      reason: '你的战场整合、逻辑收束和表达效率更适合完成终局总结。'
-    },
-    {
-      role: '自由人 / 攻防核心',
-      score: ['logic', 'evidence', 'defenseStability', 'counterPressure', 'battlefieldControl', 'expression']
-        .reduce((sum, key) => sum + safe(key), 0) / 6,
-      reason: '你的多维能力较均衡，适合在比赛中快速切换攻防任务。'
-    }
-  ].sort((left, right) => right.score - left.score);
-
-  const best = roleScores[0];
-  const secondary = roleScores[1];
-
-  return {
-    bestRole: best?.role || '暂无推荐',
-    reason: best?.reason || '训练记录还不够多，暂时无法稳定判断适合辩位。',
-    secondaryRole: secondary?.role || '',
-    advice: secondary
-      ? `如果继续加强${secondary.role}所需的关键能力，可以进一步拓展你的比赛定位。`
-      : '继续完成不同模式训练后，系统会给出更稳定的辩位建议。'
-  };
-}
-
-function calculateAbilitySnapshot(scoredRecords) {
-  if (!scoredRecords.length) {
-    return {
-      overall: null,
-      overallEstimate: null,
-      confidence: 0,
-      dimensionScores: Object.fromEntries(abilityDimensions.map((dimension) => [dimension.key, null])),
-      dimensionConfidence: Object.fromEntries(abilityDimensions.map((dimension) => [dimension.key, 0])),
-      dimensionCounts: Object.fromEntries(abilityDimensions.map((dimension) => [dimension.key, 0]))
-    };
-  }
-
-  const buckets = Object.fromEntries(
-    abilityDimensions.map((dimension) => [dimension.key, { weightedTotal: 0, weightTotal: 0, count: 0 }])
-  );
-  const total = scoredRecords.length;
-
-  scoredRecords.forEach((record, index) => {
-    const modeWeights = abilityModeWeights[record.training_mode || 'free_debate'] || abilityModeWeights.free_debate;
-    const recencyWeight = Math.pow(0.9, total - index - 1);
-    const adjustedScore = clampNumber(Number(record.score) + (abilityDifficultyBonus[record.difficulty] || 0), 0, 100);
-
-    Object.entries(modeWeights).forEach(([dimensionKey, dimensionWeight]) => {
-      const bucket = buckets[dimensionKey];
-      if (!bucket) return;
-      const weight = recencyWeight * dimensionWeight;
-      bucket.weightedTotal += adjustedScore * weight;
-      bucket.weightTotal += weight;
-      bucket.count += 1;
-    });
-  });
-
-  const globalAverage = roundToOne(
-    scoredRecords.reduce((sum, record) => {
-      return sum + clampNumber(Number(record.score) + (abilityDifficultyBonus[record.difficulty] || 0), 0, 100);
-    }, 0) / scoredRecords.length
-  );
-  const dimensionScores = {};
-  const dimensionConfidence = {};
-  const dimensionCounts = {};
-
-  abilityDimensions.forEach((dimension) => {
-    const bucket = buckets[dimension.key];
-    dimensionCounts[dimension.key] = bucket.count;
-    dimensionConfidence[dimension.key] = Math.min(100, Math.round((bucket.count / 5) * 100));
-    dimensionScores[dimension.key] = bucket.weightTotal
-      ? roundToOne(bucket.weightedTotal / bucket.weightTotal)
-      : roundToOne(globalAverage * 0.86);
-  });
-
-  const overall = roundToOne(abilityDimensions.reduce((sum, dimension) => {
-    return sum + dimensionScores[dimension.key] * dimension.weight;
-  }, 0));
-
-  return {
-    overall,
-    overallEstimate: toAbilityEstimate(overall),
-    confidence: Math.min(100, Math.round((scoredRecords.length / 10) * 100)),
-    dimensionScores,
-    dimensionConfidence,
-    dimensionCounts
-  };
-}
-
-function toAbilityEstimate(score) {
-  if (score === null || score === undefined) return null;
-  return Math.round(300 + clampNumber(Number(score), 0, 100) * 6);
-}
-
-function getAbilityLevel(estimate) {
-  if (!estimate) return '暂无估测';
-  if (estimate >= 820) return '强校队核心';
-  if (estimate >= 760) return '市赛强手';
-  if (estimate >= 700) return '校赛上游';
-  if (estimate >= 640) return '稳定参赛';
-  if (estimate >= 580) return '基础成型';
-  return '起步积累';
 }
 
 async function fetchTaskRecords(taskId, teamCode, { localUserId = '', limit = 1000 } = {}) {
