@@ -30,6 +30,7 @@ import {
   normalizeScoringMode
 } from './scoringRubrics.js';
 import { buildAbilityEstimate } from './abilityProfile.js';
+import { buildAbilityTaskRecommendations } from './teamTaskRecommendation.js';
 import { getPolishOptions, getPolishTypeProfile } from './polishPrompts.js';
 import {
   buildLinWanPreferencePrompt,
@@ -4464,67 +4465,7 @@ function getRecommendedModeForWeakDimension(name = '') {
 }
 
 function buildTeamTaskRecommendations(members = [], records = []) {
-  const recommendationRecords = getRecentRecommendationRecords(records);
-  const commonProblems = buildTeamCommonProblems(recommendationRecords);
-  const scored = recommendationRecords.map((record) => Number(record.score)).filter(Number.isFinite);
-  const averageScore = scored.length ? roundToOne(scored.reduce((sum, score) => sum + score, 0) / scored.length) : null;
-  const lowMode = getLowestAverageMode(recommendationRecords);
-  const teamRecommendations = commonProblems.slice(0, 3).map((problem, index) => {
-    const mode = problem.recommendedMode || lowMode || 'defense';
-    const tags = buildRecommendationTags(problem.title, mode);
-    return buildTaskRecommendation({
-      type: 'team_common',
-      title: index === 0 ? `全队专项：${problem.title}` : `全队补强：${problem.title}`,
-      assignmentType: 'all',
-      targetMembers: 'all',
-      mode,
-      difficulty: averageScore !== null && averageScore >= 82 ? 'city' : 'campus',
-      reason: `${problem.description}${lowMode ? ` 低分较集中的训练模式是${getTrainingModeLabel(lowMode)}。` : ''}`,
-      goal: buildRecommendationGoal(problem.title),
-      tags
-    });
-  });
-
-  const profiles = buildTeamMemberProfiles(members, recommendationRecords);
-  const personalRecommendations = profiles
-    .filter((profile) => profile.appUserId)
-    .slice(0, 8)
-    .map((profile) => {
-      const weakName = profile.weaknesses[0] || '表达落点';
-      if (profile.recentCount < 2) {
-        return {
-          type: 'personalized',
-          memberAppUserId: profile.appUserId,
-          memberName: profile.nickname,
-          insufficientData: true,
-          reason: '该成员团队空间训练记录少于 2 条，暂不生成个性化任务。'
-        };
-      }
-      const mode = getRecommendedModeForWeakDimension(weakName);
-      return {
-        ...buildTaskRecommendation({
-          type: 'personalized',
-          title: `${profile.nickname}专项：${weakName}`,
-          assignmentType: 'selected',
-          targetMembers: profile.nickname,
-          mode,
-          difficulty: profile.averageScore !== null && profile.averageScore >= 82 ? 'city' : 'campus',
-          reason: `${profile.nickname} 最近团队训练中「${weakName}」相对偏弱。${profile.suggestion}`,
-          goal: buildRecommendationGoal(weakName),
-          tags: buildRecommendationTags(weakName, mode)
-        }),
-        memberAppUserId: profile.appUserId,
-        memberName: profile.nickname,
-        assignedUserIds: [profile.appUserId]
-      };
-    });
-
-  return {
-    hasEnoughData: recommendationRecords.length >= 3,
-    teamRecommendation: teamRecommendations[0] || null,
-    teamRecommendations,
-    personalRecommendations
-  };
+  return buildAbilityTaskRecommendations(members, records);
 }
 
 function buildTaskRecommendation({ type, title, assignmentType, targetMembers, mode, difficulty, reason, goal, tags }) {
