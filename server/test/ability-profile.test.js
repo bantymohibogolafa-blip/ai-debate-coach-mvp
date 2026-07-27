@@ -6,6 +6,7 @@ import {
   abilityDimensions,
   abilityModeProjection,
   buildAbilityEstimate,
+  buildRecentBehaviorEvidence,
   buildPackageWeightDebug,
   calculateAbilityProfile,
   calculateDimensionProfile,
@@ -30,6 +31,35 @@ test('ability estimate exposes coverage and sample counts without confidence fie
   assert.equal(estimate.scoredRecordCount, 1);
   assert.equal(Object.hasOwn(estimate, 'confidence'), false);
   assert.equal(estimate.dimensions.every((dimension) => !Object.hasOwn(dimension, 'confidence')), true);
+});
+
+test('recent behavior evidence uses at most five valid reviews and returns three deduplicated problems', () => {
+  const records = Array.from({ length: 7 }, (_, index) => ({
+    ...record(`evidence-${index + 1}`, 70 + index, `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`, 'constructive'),
+    review: [
+      '一、总分：80 / 100',
+      '',
+      `六、最大漏洞：\n${index >= 5 ? '最近共同问题' : `过早问题${index + 1}`}`,
+      '',
+      '七、主要优势：\n- 能识别问题',
+      '',
+      `八、主要问题：\n- ${index === 6 ? '表达没有落点' : '最近共同问题'}\n- 暂无明确问题。`,
+      '',
+      '九、复盘说明：\n说明'
+    ].join('\n')
+  }));
+
+  assert.deepEqual(
+    buildRecentBehaviorEvidence(records).map((item) => item.text),
+    ['最近共同问题', '表达没有落点', '过早问题5']
+  );
+  assert.equal(buildRecentBehaviorEvidence(records).every((item) => item.recordId), true);
+});
+
+test('behavior evidence ignores legacy or malformed reviews instead of affecting the estimate', () => {
+  const source = record('legacy', 80, '2026-01-01T00:00:00.000Z', 'constructive');
+  assert.deepEqual(buildRecentBehaviorEvidence([{ ...source, review: '旧版自由文本复盘' }]), []);
+  assert.equal(buildAbilityEstimate([{ ...source, review: '旧版自由文本复盘' }]).scoredRecordCount, 1);
 });
 
 test('three continuous records use normalized exp(-0.15x) weights', () => {

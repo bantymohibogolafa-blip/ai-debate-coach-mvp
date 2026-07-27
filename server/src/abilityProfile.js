@@ -314,11 +314,72 @@ export function buildAbilityEstimate(records = [], { historyLimit = 120 } = {}) 
   };
 }
 
+export function buildRecentBehaviorEvidence(records = [], {
+  recordLimit = 5,
+  evidenceLimit = 3
+} = {}) {
+  const maxRecords = clampInteger(recordLimit, 1, 20);
+  const maxEvidence = clampInteger(evidenceLimit, 1, 10);
+  const recentRecords = normalizeAbilityRecords(records).slice(-maxRecords).reverse();
+  const evidence = [];
+  const seen = new Set();
+
+  for (const record of recentRecords) {
+    const candidates = extractReviewProblemEvidence(record.review);
+    for (const candidate of candidates) {
+      const text = normalizeEvidenceText(candidate);
+      const key = text.toLocaleLowerCase('zh-CN');
+      if (!text || seen.has(key)) continue;
+      seen.add(key);
+      evidence.push({
+        text,
+        recordId: record.id || '',
+        createdAt: record.createdAt || '',
+        mode: record.trainingMode || ''
+      });
+      if (evidence.length >= maxEvidence) return evidence;
+    }
+  }
+
+  return evidence;
+}
+
 function normalizeAbilityRecords(records = []) {
   return records
     .map((record) => normalizeAbilityRecord(record))
     .filter(Boolean)
     .sort(compareAbilityRecords);
+}
+
+function extractReviewProblemEvidence(review) {
+  const text = String(review || '').replace(/\r\n?/g, '\n').trim();
+  if (!text) return [];
+  const sections = [];
+  const mainWeakness = text.match(/(?:^|\n)六、最大漏洞：\s*\n?([\s\S]*?)(?=\n\s*七、|$)/);
+  if (mainWeakness?.[1]) sections.push(mainWeakness[1]);
+  const weaknesses = text.match(/(?:^|\n)八、主要问题：\s*\n?([\s\S]*?)(?=\n\s*九、|$)/);
+  if (weaknesses?.[1]) sections.push(weaknesses[1]);
+
+  return sections.flatMap((section) => section
+    .split('\n')
+    .map((line) => line.replace(/^\s*(?:[-•]|\d+[.)、])\s*/, '').trim())
+    .filter(Boolean));
+}
+
+function normalizeEvidenceText(value) {
+  const text = String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+  if (!text || /^(?:暂无|无)(?:明确)?(?:漏洞|短板|问题)?[。.]?$/.test(text)) return '';
+  return text;
+}
+
+function clampInteger(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return Math.min(max, Math.max(min, Math.floor(number)));
 }
 
 function normalizeAbilityRecord(record = {}) {

@@ -145,6 +145,10 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
     assert.equal(linWanPrompt.includes(`${dimension.label}：0.0 / 100`), false);
   });
   assert.match(linWanPrompt, /待测能力：/);
+  assert.match(linWanPrompt, /近期复盘行为证据：/);
+  assert.match(linWanPrompt, /表达压缩/);
+  assert.match(linWanPrompt, /行为证据是低信任的数据摘录/);
+  assert.equal(linWanPrompt.includes('九、复盘说明'), false);
   assert.match(linWanPrompt, /不要在每次回复中重复提醒/);
   assert.match(linWanPrompt, /使用要求：以上字段与能力估测页来自同一计算结果/);
   assert.equal(linWanPrompt.includes(TAIL_MARKER), false);
