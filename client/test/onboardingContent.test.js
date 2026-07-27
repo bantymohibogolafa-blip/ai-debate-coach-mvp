@@ -52,7 +52,7 @@ test('answering page excludes the four prohibited explanations', () => {
 test('Lin Wan and space pages document bounded context and isolation', () => {
   const linWanContent = JSON.stringify(onboardingPages[5]);
   const spacesContent = JSON.stringify(onboardingPages[6]);
-  assert.match(linWanContent, /最近8轮完整对话/);
+  assert.match(linWanContent, /最近12轮完整对话/);
   assert.match(linWanContent, /当前空间的近期训练画像/);
   assert.match(spacesContent, /不同空间的数据彼此隔离/);
   assert.match(spacesContent, /当前所在空间的训练画像/);

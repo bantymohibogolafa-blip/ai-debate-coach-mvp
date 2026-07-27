@@ -100,7 +100,7 @@ export function mapLinWanProfileRow(row, displayName = '') {
 }
 
 export function getRecentCompletedLinWanRounds(messages = [], options = {}) {
-  const maxRounds = clampInteger(options.maxRounds ?? 8, 1, 8);
+  const maxRounds = clampInteger(options.maxRounds ?? 12, 1, 12);
   const currentQuestion = sanitizeMessageContent(options.currentQuestion ?? '');
   const normalized = normalizeLinWanContextMessages(messages);
   if (currentQuestion && normalized.at(-1)?.role === 'user' && normalized.at(-1)?.content === currentQuestion) {
@@ -152,7 +152,7 @@ export function normalizeLinWanContextMessages(messages = [], options = {}) {
 
 export function createLinWanContextManifest(profile, trainingProfile, recentMessages) {
   const normalizedProfile = mapLinWanProfileRow(profileToRow(profile));
-  const recent = getRecentCompletedLinWanRounds(recentMessages, { maxRounds: 8 });
+  const recent = getRecentCompletedLinWanRounds(recentMessages, { maxRounds: 12 });
   const trainingHighlights = getTrainingProfileHighlights(trainingProfile);
   const customPreferenceUsed = Boolean(normalizedProfile.customPreference);
 
@@ -197,8 +197,8 @@ export function normalizeLinWanContextManifest(manifest) {
   const highlights = Array.isArray(trainingProfile.highlights)
     ? trainingProfile.highlights.map(sanitizeInlineText).filter(Boolean).slice(0, 2)
     : [];
-  const rounds = clampInteger(recentChat.rounds ?? 0, 0, 8);
-  const messages = clampInteger(recentChat.messages ?? rounds * 2, 0, 16);
+  const rounds = clampInteger(recentChat.rounds ?? 0, 0, 12);
+  const messages = clampInteger(recentChat.messages ?? rounds * 2, 0, 24);
 
   return {
     version: 1,
@@ -212,7 +212,7 @@ export function normalizeLinWanContextManifest(manifest) {
       highlights
     },
     recentChat: {
-      used: recentChat.used === true && rounds > 0,
+      used: recentChat.used === true && messages > 0,
       rounds,
       messages
     }

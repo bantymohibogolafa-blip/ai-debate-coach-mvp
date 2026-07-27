@@ -328,7 +328,7 @@ app.post('/api/debate-experience-chat', optionalAuth, async (req, res, next) => 
     const payload = validateDebateExperienceChatPayload(req.body);
     const linWanUserId = req.user?.id || '';
     const authorizedTrainingProfile = req.user
-      ? await fetchAuthorizedLinWanTrainingProfile(req.user.id, payload.trainingScope)
+      ? await fetchOptionalLinWanTrainingProfile(req.user.id, payload.trainingScope)
       : payload.userTrainingProfile;
     const context = await buildLinWanContext({
       userId: linWanUserId,
@@ -2034,6 +2034,18 @@ async function fetchAuthorizedLinWanTrainingProfile(userId, scope = {}) {
   });
 }
 
+async function fetchOptionalLinWanTrainingProfile(userId, scope = {}) {
+  try {
+    return await fetchAuthorizedLinWanTrainingProfile(userId, scope);
+  } catch (error) {
+    if ([400, 401, 403].includes(Number(error?.status))) throw error;
+    console.error('[linwan-profile] Ability profile unavailable; continuing without it', {
+      category: normalizeText(error?.code || error?.name || 'upstream_error')
+    });
+    return null;
+  }
+}
+
 async function buildLinWanContext({
   userId,
   displayName = '',
@@ -2048,7 +2060,7 @@ async function buildLinWanContext({
       ])
     : [getDefaultLinWanProfile(''), guestChatHistory];
   const recentMessages = getRecentCompletedLinWanRounds(storedMessages, {
-    maxRounds: 8,
+    maxRounds: 12,
     currentQuestion
   });
   const contextManifest = createLinWanContextManifest(profile, userTrainingProfile, recentMessages);

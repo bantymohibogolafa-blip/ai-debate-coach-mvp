@@ -121,6 +121,53 @@ test('isolates 10 concurrent rounds per account in storage and actual model mess
   assert.equal(persistedB.filter((row) => row.role === 'user' && row.content.includes('绿色月亮999-B')).length, 10);
 });
 
+test('daily Lin Wan injects the latest twelve complete rounds in chronological order without duplicating the current input', async (t) => {
+  const historicalMessages = Array.from({ length: 28 }, (_, index) => ({
+    id: `history-${index + 1}`,
+    user_id: USER_A,
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `历史-A-${index + 1}`,
+    created_at: new Date(Date.UTC(2026, 6, 18, 0, 0, index + 1)).toISOString(),
+    context_manifest: null
+  }));
+  const harness = createIsolationHarness({ messages: historicalMessages });
+  const port = await listen(t, harness.fetch);
+  const currentQuestion = '本次最新消息-只应出现一次';
+  const reviewAssistantMarker = '复盘助手私有上下文-不得读取';
+
+  const result = await requestJson(port, '/api/debate-experience-chat', auth(signToken(USER_A)), 'POST', {
+    question: currentQuestion,
+    reviewContext: { review: reviewAssistantMarker },
+    chatHistory: [{ role: 'user', content: SECRET_B }]
+  });
+
+  assert.equal(result.status, 200);
+  const modelMessages = harness.modelRequests[0].messages;
+  const historicalContext = modelMessages.filter((item) => /^历史-A-/.test(item.content));
+  assert.deepEqual(historicalContext.map((item) => item.content), (
+    Array.from({ length: 24 }, (_, index) => `历史-A-${index + 5}`)
+  ));
+  assert.equal(modelMessages.at(-1).content, currentQuestion);
+  assert.equal(modelMessages.filter((item) => item.content === currentQuestion).length, 1);
+  assert.equal(modelMessages.some((item) => item.content.includes(reviewAssistantMarker)), false);
+  assert.equal(modelMessages.some((item) => item.content.includes(SECRET_B)), false);
+});
+
+test('daily Lin Wan continues without an ability profile when the profile data source fails', async (t) => {
+  const harness = createIsolationHarness({ failTrainingProfileUser: USER_A });
+  const port = await listen(t, harness.fetch);
+  const result = await requestJson(port, '/api/debate-experience-chat', auth(signToken(USER_A)), 'POST', {
+    question: '画像失败时仍然回答'
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(harness.modelRequests.length, 1);
+  const modelMessages = harness.modelRequests[0].messages;
+  assert.equal(modelMessages.at(-1).content, '画像失败时仍然回答');
+  assert.equal(modelMessages.some((item) => item.content.includes('权威画像模型：')), false);
+  assert.equal(modelMessages.some((item) => item.content.includes(SECRET_A)), true);
+});
+
 test('account-owned personal records cannot be read through guest or forged local identity paths', async (t) => {
   const harness = createIsolationHarness();
   const port = await listen(t, harness.fetch);
@@ -237,12 +284,13 @@ function createIsolationHarness(options = {}) {
   const calls = [];
   const modelRequests = [];
   let sequence = 0;
-  const messages = [
+  const defaultMessages = [
     message(USER_A, 'user', `账户A：${SECRET_A}`, 'a-u'),
     message(USER_A, 'assistant', '已记录账户A测试内容', 'a-a'),
     message(USER_B, 'user', `账户B：${SECRET_B}`, 'b-u'),
     message(USER_B, 'assistant', '已记录账户B测试内容', 'b-a')
   ];
+  const messages = Array.isArray(options.messages) ? [...options.messages] : defaultMessages;
   const profiles = new Map([
     [USER_A, profile(USER_A, '账户A称呼')],
     [USER_B, profile(USER_B, '账户B称呼')]
@@ -294,6 +342,12 @@ function createIsolationHarness(options = {}) {
     }
     if (table === 'linwan_messages' && method === 'DELETE') return Response.json([]);
     if (table === 'training_records' && method === 'GET') {
+      if (
+        options.failTrainingProfileUser
+        && url.searchParams.get('app_user_id') === `eq.${options.failTrainingProfileUser}`
+      ) {
+        throw new Error('simulated ability profile data source failure');
+      }
       if (url.searchParams.get('space_type') === 'eq.team') {
         const appUserId = eqValue(url, 'app_user_id');
         const localUserId = eqValue(url, 'local_user_id');

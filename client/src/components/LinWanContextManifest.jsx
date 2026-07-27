@@ -45,7 +45,7 @@ function getManifestContent(manifest) {
   }
   const rounds = Number(manifest.recentChat?.rounds || 0);
   if (manifest.recentChat?.used && rounds > 0) {
-    lines.push(`历史对话：最近${Math.min(Math.max(Math.floor(rounds), 0), 8)}轮`);
+    lines.push(`历史对话：最近${Math.min(Math.max(Math.floor(rounds), 0), 12)}轮`);
   }
   return lines;
 }

@@ -64,7 +64,7 @@ export const onboardingPages = Object.freeze([
     intro: '林婉用于长期训练分析和赛前准备。她不是单场训练中的对手，而是帮助你观察反复问题、制定训练方向的辩论顾问。',
     bullets: Object.freeze([
       '会参考当前空间的近期训练画像；',
-      '会结合最近8轮完整对话；',
+      '会结合最近12轮完整对话；',
       '支持文字输入；',
       '支持阿里云语音转文字，语音结果不会自动发送；',
       '回答支持小米流式语音播放；',
@@ -80,7 +80,7 @@ export const onboardingPages = Object.freeze([
       Object.freeze({ title: '个人空间', description: '个人空间中的训练记录、能力估测和近期训练画像属于你个人。' }),
       Object.freeze({ title: '团队空间', description: '切换到某个团队空间后，你在该团队中的训练记录、能力估测和训练画像会单独计算。' }),
       Object.freeze({ title: '数据隔离', description: '不同空间的数据彼此隔离。切换空间后，页面显示的记录、画像和团队数据也会随之变化。' }),
-      Object.freeze({ title: '林婉', description: '林婉分析训练问题时，会使用你当前所在空间的训练画像，同时结合最近8轮对话。' })
+      Object.freeze({ title: '林婉', description: '林婉分析训练问题时，会使用你当前所在空间的训练画像，同时结合最近12轮完整对话。' })
     ]),
     bullets: Object.freeze([
       '查看团队任务；',

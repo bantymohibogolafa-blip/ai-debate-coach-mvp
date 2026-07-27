@@ -27,20 +27,19 @@ function completedRounds(count) {
   ]).flat();
 }
 
-test('getRecentCompletedLinWanRounds handles zero, one, eight, and more than eight rounds', () => {
+test('recent Lin Wan context keeps all rounds below twelve and only the latest twelve above it', () => {
   assert.deepEqual(getRecentCompletedLinWanRounds([]), []);
-  assert.equal(getRecentCompletedLinWanRounds(completedRounds(1)).length, 2);
-  assert.equal(getRecentCompletedLinWanRounds(completedRounds(8)).length, 16);
-  const recent = getRecentCompletedLinWanRounds(completedRounds(10));
-  assert.equal(recent.length, 16);
-  assert.equal(recent[0].content, '问题3');
-  assert.equal(recent.at(-1).content, '回答10');
+  assert.equal(getRecentCompletedLinWanRounds(completedRounds(3)).length, 6);
+  const recent = getRecentCompletedLinWanRounds(completedRounds(15));
+  assert.equal(recent.length, 24);
+  assert.equal(recent[0].content, '问题4');
+  assert.equal(recent.at(-1).content, '回答15');
 });
 
-test('completed rounds ignore orphan, empty, invalid, duplicate, and failed messages', () => {
+test('recent Lin Wan context keeps complete rounds and ignores orphan, empty, invalid, duplicate, and failed messages', () => {
   const history = [
     message('assistant', '孤立回答', 1),
-    message('user', '被下一条用户替代', 2),
+    message('user', '独立用户消息', 2),
     message('user', '有效问题', 3),
     message('assistant', '有效回答', 4),
     message('user', '孤立问题', 5),
@@ -54,7 +53,7 @@ test('completed rounds ignore orphan, empty, invalid, duplicate, and failed mess
   assert.deepEqual(recent.map((item) => item.content), ['有效问题', '有效回答']);
 });
 
-test('completed rounds are chronological and exclude the current question', () => {
+test('recent Lin Wan context is chronological and excludes the current question exactly once', () => {
   const outOfOrder = [
     message('assistant', '回答2', 4),
     message('user', '问题2', 3),
@@ -64,6 +63,7 @@ test('completed rounds are chronological and exclude the current question', () =
   ];
   const recent = getRecentCompletedLinWanRounds(outOfOrder, { currentQuestion: '当前问题' });
   assert.deepEqual(recent.map((item) => item.content), ['问题1', '回答1', '问题2', '回答2']);
+  assert.equal(recent.filter((item) => item.content === '当前问题').length, 0);
 });
 
 test('profile validation accepts valid values and preserves an intentionally empty name', () => {

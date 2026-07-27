@@ -5849,7 +5849,7 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
       <TrainingProfileCard profile={trainingProfile} />
 
       <p className="experience-boundary-note">
-        当前五维画像与能力估测页使用同一模型和同一空间数据，林婉会结合该画像与最近8轮对话进行分析。单轮细节问题，可以在对应记录下向复盘助手提问。
+        当前五维画像与能力估测页使用同一模型和同一空间数据，林婉会结合该画像与最近12轮完整对话进行分析。单轮细节问题，可以在对应记录下向复盘助手提问。
       </p>
       {!isLoggedIn && <p className="linwan-guest-note">游客聊天仅保留在当前页面，登录后可恢复云端历史并设置“我的林婉”。</p>}
 
