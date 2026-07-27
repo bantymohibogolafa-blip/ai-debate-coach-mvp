@@ -163,23 +163,27 @@ test('changing stance marks the existing strategy for reassessment with optimist
   assert.equal(stale.status, 409);
 });
 
-test('team task access is rechecked against active membership', async (t) => {
+test('retired team Super Lin Wan scope is rejected before reading team data', async (t) => {
   const harness = createHarness();
   const port = await listen(t, harness.fetch);
-  const allowed = await requestJson(
+  const formerMemberPath = await requestJson(
     port,
     `/api/prematch/tasks?spaceType=team&teamCode=${TEAM_CODE}&status=all`,
     auth(signToken(USER_A))
   );
-  assert.equal(allowed.status, 200);
-  assert.deepEqual(allowed.body.tasks.map((task) => task.id), [TASK_TEAM]);
+  assert.equal(formerMemberPath.status, 410);
+  assert.match(formerMemberPath.body.message, /团队备战看板/);
 
-  const denied = await requestJson(
+  const nonMemberPath = await requestJson(
     port,
     `/api/prematch/tasks?spaceType=team&teamCode=${TEAM_CODE}&status=all`,
     auth(signToken(USER_B))
   );
-  assert.equal(denied.status, 403);
+  assert.equal(nonMemberPath.status, 410);
+  assert.equal(
+    harness.calls.some((call) => call.table === 'prematch_tasks' || call.table === 'team_members'),
+    false
+  );
 });
 
 test('completed formal training links back as a structured summary only', async (t) => {

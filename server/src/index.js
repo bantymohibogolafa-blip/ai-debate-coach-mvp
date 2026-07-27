@@ -77,6 +77,7 @@ const teamsTable = process.env.SUPABASE_TEAMS_TABLE || 'teams';
 const teamMembersTable = process.env.SUPABASE_TEAM_MEMBERS_TABLE || 'team_members';
 const teamTasksTable = process.env.SUPABASE_TEAM_TASKS_TABLE || 'team_tasks';
 const teamTaskAssignmentsTable = process.env.SUPABASE_TEAM_TASK_ASSIGNMENTS_TABLE || 'team_task_assignments';
+const teamMatchesTable = process.env.SUPABASE_TEAM_MATCHES_TABLE || 'team_matches';
 const appUsersTable = process.env.SUPABASE_APP_USERS_TABLE || 'app_users';
 const linWanMessagesTable = process.env.SUPABASE_LINWAN_MESSAGES_TABLE || 'linwan_messages';
 const linWanProfileTable = process.env.SUPABASE_LINWAN_PROFILE_TABLE || 'linwan_user_profile';
@@ -898,6 +899,102 @@ app.post('/api/team/update-password', requireAuth, async (req, res, next) => {
   }
 });
 
+app.get('/api/team/preparation', requireAuth, async (req, res, next) => {
+  try {
+    const { teamCode, localUserId } = validateTeamTaskQuery(req.query, req.user);
+    res.json(await fetchTeamPreparationBoard(teamCode, localUserId));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team/preparation/matches', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validateTeamMatchPayload(req.body, req.user);
+    const match = await createTeamMatch(payload);
+    res.status(201).json({ match: mapTeamMatchFromDb(match) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/team/preparation/matches/:matchId', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validateTeamMatchPayload(req.body, req.user, { matchId: req.params.matchId });
+    const match = await updateTeamMatch(payload);
+    res.json({ match: mapTeamMatchFromDb(match) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team/preparation/matches/:matchId/archive', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validateTeamMatchIdentity(req.body, req.user, req.params.matchId);
+    const match = await archiveTeamMatch(payload);
+    res.json({ match: mapTeamMatchFromDb(match) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team/preparation/tasks', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validateTeamPreparationTaskPayload(req.body, req.user);
+    const task = await createTeamPreparationTask(payload);
+    res.status(201).json({ task: mapTeamTaskFromDb(task) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/team/preparation/tasks/:taskId', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validateTeamPreparationTaskPayload(req.body, req.user, {
+      taskId: req.params.taskId
+    });
+    const task = await updateTeamPreparationTask(payload);
+    res.json({ task: mapTeamTaskFromDb(task) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/team/preparation/tasks/:taskId', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validateTeamPreparationTaskIdentity(req.query, req.user, req.params.taskId);
+    await deleteTeamPreparationTask(payload);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/team/preparation/tasks/:taskId/assignments/:assigneeId', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validateTeamPreparationAssignmentPayload(
+      req.body,
+      req.user,
+      req.params.taskId,
+      req.params.assigneeId
+    );
+    const assignment = await updateTeamPreparationAssignment(payload);
+    res.json({ assignment: mapTeamTaskAssignment(assignment, req.user.id, true) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team/preparation/tasks/:taskId/completion', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validateTeamPreparationOverallPayload(req.body, req.user, req.params.taskId);
+    await setTeamPreparationTaskCompletion(payload);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/team/tasks/create', requireAuth, async (req, res, next) => {
   try {
     const payload = validateTeamTaskPayload(req.body, req.user);
@@ -1353,9 +1450,20 @@ async function validateTrainingRecordPayload(body, authUser = null) {
         throw httpError(403, '该训练任务已关闭，不能继续提交任务记录。');
       }
       await requireTaskAssignedToUser(task, authUser.id);
-      topic = normalizeText(task.topic);
-      userSide = normalizeSide(task.user_side || userSide);
-      aiSide = normalizeSide(task.ai_side || getOpponentSide(userSide));
+      let authoritativeTopic = task.topic;
+      let authoritativeSide = task.user_side;
+      if (task.task_category === 'current_match' && task.match_id) {
+        const match = await requireTeamMatch(task.match_id, normalizedTeamCode, { active: true });
+        authoritativeTopic = match.debate_topic;
+        authoritativeSide = match.stance;
+      }
+      topic = normalizeText(authoritativeTopic);
+      userSide = normalizeSide(authoritativeSide || userSide);
+      aiSide = normalizeSide(
+        task.task_category === 'current_match'
+          ? getOpponentSide(userSide)
+          : task.ai_side || getOpponentSide(userSide)
+      );
       difficulty = normalizeDifficulty(task.difficulty);
       styleId = normalizeCelebrityDebater(task.style_id || 'none');
       trainingMode = normalizeTrainingMode(task.mode);
@@ -1768,6 +1876,134 @@ function validateTeamTaskClosePayload(body, authUser) {
   return { taskId, teamCode, localUserId };
 }
 
+function validateTeamMatchIdentity(input, authUser, rawMatchId) {
+  const teamCode = normalizeTeamCode(input.teamCode || input.team_code);
+  const localUserId = authUser?.id;
+  const matchId = normalizeText(rawMatchId || input.matchId || input.match_id);
+  if (!isValidTeamCode(teamCode) || !isUuid(localUserId) || !isUuid(matchId)) {
+    throw badRequest('比赛、团队或用户身份无效，请刷新后重试。');
+  }
+  return { teamCode, localUserId, matchId };
+}
+
+function validateTeamMatchPayload(body, authUser, options = {}) {
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const localUserId = authUser?.id;
+  const matchId = normalizeText(options.matchId || body.matchId || body.match_id);
+  const competitionName = limitLength(normalizeText(body.competitionName || body.competition_name), 160);
+  const debateTopic = limitLength(normalizeText(body.debateTopic || body.debate_topic), 500);
+  const stance = normalizeText(body.stance || 'undecided');
+  const competitionTime = normalizeOptionalDate(body.competitionTime || body.competition_time);
+  const formatInfo = limitLength(normalizeText(body.formatInfo || body.format_info), 1000);
+  const announcement = limitLength(normalizeText(body.announcement), 5000);
+
+  if (!isValidTeamCode(teamCode) || !isUuid(localUserId)) {
+    throw badRequest('团队或用户身份无效，请刷新后重试。');
+  }
+  if (matchId && !isUuid(matchId)) throw badRequest('比赛信息无效，请刷新后重试。');
+  if (!competitionName) throw badRequest('请填写比赛名称。');
+  if (debateTopic.length < 2) throw badRequest('请填写完整辩题。');
+  if (!['affirmative', 'negative', 'undecided'].includes(stance)) {
+    throw badRequest('请选择正方、反方或暂未确定。');
+  }
+
+  return {
+    teamCode,
+    localUserId,
+    matchId,
+    competitionName,
+    debateTopic,
+    stance,
+    competitionTime,
+    formatInfo,
+    announcement
+  };
+}
+
+function validateTeamPreparationTaskIdentity(input, authUser, rawTaskId) {
+  const teamCode = normalizeTeamCode(input.teamCode || input.team_code);
+  const matchId = normalizeText(input.matchId || input.match_id);
+  const taskId = normalizeText(rawTaskId || input.taskId || input.task_id);
+  const localUserId = authUser?.id;
+  if (
+    !isValidTeamCode(teamCode)
+    || !isUuid(localUserId)
+    || !isUuid(matchId)
+    || !isUuid(taskId)
+  ) {
+    throw badRequest('任务、比赛或团队信息无效，请刷新后重试。');
+  }
+  return { teamCode, matchId, taskId, localUserId };
+}
+
+function validateTeamPreparationTaskPayload(body, authUser, options = {}) {
+  const identity = validateTeamPreparationTaskIdentity(
+    body,
+    authUser,
+    options.taskId || body.taskId || body.task_id || crypto.randomUUID()
+  );
+  const isCreate = !options.taskId;
+  const taskSource = normalizeText(body.taskSource || body.task_source || 'manual');
+  const title = limitLength(normalizeText(body.title), 80);
+  const description = limitLength(normalizeText(body.description), 1000);
+  const mode = normalizeTrainingMode(normalizeText(body.mode || body.trainingMode || 'free_debate'));
+  const difficulty = normalizeDifficulty(normalizeText(body.difficulty || 'novice'));
+  const deadline = normalizeOptionalDate(body.deadline);
+  const rawAssignedUserIds = Array.isArray(body.assignedUserIds)
+    ? body.assignedUserIds
+    : Array.isArray(body.assigned_user_ids)
+      ? body.assigned_user_ids
+      : [];
+  const assignedUserIds = [...new Set(rawAssignedUserIds.map(normalizeText).filter(isUuid))];
+
+  if (!title) throw badRequest('请填写任务标题。');
+  if (!['training', 'manual'].includes(taskSource)) throw badRequest('请选择有效任务来源。');
+  if (taskSource === 'training' && !isValidTrainingMode(mode)) {
+    throw badRequest('请选择有效训练模式。');
+  }
+  if (taskSource === 'training' && !isValidDifficulty(difficulty)) {
+    throw badRequest('请选择有效训练难度。');
+  }
+  if (!assignedUserIds.length) throw badRequest('请至少指定一名负责人。');
+
+  return {
+    ...identity,
+    taskId: isCreate ? '' : identity.taskId,
+    taskSource,
+    title,
+    description,
+    mode: taskSource === 'training' ? mode : 'free_debate',
+    difficulty: taskSource === 'training' ? difficulty : 'novice',
+    deadline,
+    assignedUserIds
+  };
+}
+
+function validateTeamPreparationAssignmentPayload(body, authUser, rawTaskId, rawAssigneeId) {
+  const taskId = normalizeText(rawTaskId);
+  const assigneeId = normalizeText(rawAssigneeId);
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  const matchId = normalizeText(body.matchId || body.match_id);
+  const localUserId = authUser?.id;
+  const completed = Boolean(body.completed);
+  const completionNote = limitLength(normalizeText(body.completionNote || body.completion_note), 1000);
+  if (
+    !isUuid(taskId)
+    || !isUuid(assigneeId)
+    || !isUuid(matchId)
+    || !isUuid(localUserId)
+    || !isValidTeamCode(teamCode)
+  ) {
+    throw badRequest('任务负责人或团队信息无效，请刷新后重试。');
+  }
+  return { taskId, assigneeId, matchId, teamCode, localUserId, completed, completionNote };
+}
+
+function validateTeamPreparationOverallPayload(body, authUser, rawTaskId) {
+  const identity = validateTeamPreparationTaskIdentity(body, authUser, rawTaskId);
+  return { ...identity, completed: Boolean(body.completed) };
+}
+
 function validateAbilityEstimateQuery(query) {
   const spaceType = normalizeSpaceType(query.spaceType || query.space_type || query.scope);
   const teamCode = normalizeTeamCode(query.teamCode || query.team_code);
@@ -1787,12 +2023,12 @@ function validateAbilityEstimateQuery(query) {
 function validatePrematchScope(input = {}) {
   const spaceType = normalizeSpaceType(input.spaceType || input.space_type || input.scope);
   const teamCode = normalizeTeamCode(input.teamCode || input.team_code);
-  if (spaceType === 'team' && !isValidTeamCode(teamCode)) {
-    throw badRequest('团队备战空间无效，请重新选择团队。');
+  if (spaceType === 'team') {
+    throw httpError(410, '团队模式已改为团队备战看板；Super 林婉仅在个人模式提供。');
   }
   return {
-    spaceType,
-    teamCode: spaceType === 'team' ? teamCode : ''
+    spaceType: 'personal',
+    teamCode: ''
   };
 }
 
@@ -2710,23 +2946,12 @@ async function requireAuthorizedPrematchTask(taskId, userId, options = {}) {
   const task = await fetchPrematchTaskRow(taskId);
   if (!task) throw httpError(404, '备战任务不存在或已被删除。');
 
-  if (task.space_type === 'personal') {
-    if (normalizeText(task.owner_user_id) !== userId) {
-      throw httpError(404, '备战任务不存在或已被删除。');
-    }
-    return task;
+  if (task.space_type !== 'personal' || task.team_code) {
+    throw httpError(410, '团队 Super 林婉已停用，请使用团队备战看板。');
   }
 
-  if (task.space_type !== 'team' || !isValidTeamCode(normalizeTeamCode(task.team_code))) {
-    throw httpError(500, '备战任务空间数据无效。');
-  }
-  const membership = await requireActiveMembership(task.team_code, userId);
-  if (
-    options.manage
-    && normalizeText(task.owner_user_id) !== userId
-    && !isTeamManagerRole(membership.role)
-  ) {
-    throw httpError(403, '只有任务创建者或团队管理员可以修改、归档或删除该任务。');
+  if (normalizeText(task.owner_user_id) !== userId) {
+    throw httpError(404, '备战任务不存在或已被删除。');
   }
   return task;
 }
@@ -2748,14 +2973,9 @@ async function fetchPrematchTaskDetail(task, viewerUserId) {
 }
 
 async function canManagePrematchTask(task, userId) {
-  if (normalizeText(task.owner_user_id) === userId) return true;
-  if (task.space_type !== 'team') return false;
-  try {
-    const membership = await requireActiveMembership(task.team_code, userId);
-    return isTeamManagerRole(membership.role);
-  } catch {
-    return false;
-  }
+  return task.space_type === 'personal'
+    && !task.team_code
+    && normalizeText(task.owner_user_id) === userId;
 }
 
 async function updatePrematchTask(task, payload) {
@@ -3755,7 +3975,7 @@ function noMeaningfulUserInputError() {
 }
 
 function getPublicStatus(error) {
-  if ([400, 401, 403, 404, 409, 413, 415, 422, 429, 504].includes(error.status)) {
+  if ([400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 504].includes(error.status)) {
     return error.status;
   }
 
@@ -3833,6 +4053,9 @@ function getPublicErrorMessage(error) {
 
   if (error.code === 'SUPABASE_REQUEST_FAILED') {
     const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
+    if (/team_matches|match_id|task_category|task_source|completed_by|completion_note/i.test(detailText)) {
+      return '团队备战看板表结构尚未更新，请先在 Supabase 执行 supabase-team-preparation-board.sql。';
+    }
     if (/prematch_tasks|prematch_messages|prematch_training_links/i.test(detailText)) {
       return '赛前备战表结构尚未更新，请先在 Supabase 执行 supabase-prematch-prep.sql。';
     }
@@ -3855,7 +4078,7 @@ function getPublicErrorMessage(error) {
     return '语音生成失败，请稍后重试。';
   }
 
-  if ([400, 401, 403, 404, 409, 413, 415, 422].includes(error.status) && error.message) {
+  if ([400, 401, 403, 404, 409, 410, 413, 415, 422].includes(error.status) && error.message) {
     return error.message;
   }
 
@@ -4606,6 +4829,346 @@ async function updateTeamPassword({ teamCode, localUserId, currentPassword, next
   );
 }
 
+async function requireTeamMatch(matchId, teamCode, { active = false } = {}) {
+  const match = await getSingleByQuery(
+    teamMatchesTable,
+    new URLSearchParams({
+      select: '*',
+      id: `eq.${matchId}`,
+      team_code: `eq.${teamCode}`,
+      limit: '1'
+    })
+  );
+  if (!match) throw httpError(404, '比赛不存在或不属于当前团队。');
+  if (active && match.status !== 'active') {
+    throw httpError(409, '该比赛已经归档，不能继续修改备战内容。');
+  }
+  return match;
+}
+
+async function fetchActiveTeamMatch(teamCode) {
+  return getSingleByQuery(
+    teamMatchesTable,
+    new URLSearchParams({
+      select: '*',
+      team_code: `eq.${teamCode}`,
+      status: 'eq.active',
+      limit: '1'
+    })
+  );
+}
+
+async function fetchTeamPreparationBoard(teamCode, localUserId) {
+  const viewer = await requireActiveMembership(teamCode, localUserId);
+  const canManage = isTeamManagerRole(viewer.role);
+  const match = await fetchActiveTeamMatch(teamCode);
+  if (!match) {
+    return {
+      match: null,
+      tasks: [],
+      members: [],
+      permissions: { canManage }
+    };
+  }
+
+  const [tasks, members] = await Promise.all([
+    supabaseRequest(
+      `${teamTasksTable}?${new URLSearchParams({
+        select: '*',
+        team_code: `eq.${teamCode}`,
+        match_id: `eq.${match.id}`,
+        task_category: 'eq.current_match',
+        order: 'created_at.asc'
+      }).toString()}`
+    ),
+    fetchTeamMembers(teamCode)
+  ]);
+  const memberById = new Map(
+    members
+      .filter((member) => member.app_user_id)
+      .map((member) => [member.app_user_id, mapTeamMemberFromDb(member)])
+  );
+  const mappedTasks = await Promise.all(tasks.map(async (task) => {
+    const assignments = await fetchTaskAssignments(task.id, teamCode);
+    const mappedAssignments = assignments.map((assignment) => ({
+      ...mapTeamTaskAssignment(assignment, localUserId, canManage),
+      member: memberById.get(assignment.app_user_id) || {
+        appUserId: assignment.app_user_id,
+        localUserId: assignment.app_user_id,
+        nickname: '已退出成员',
+        status: 'left'
+      }
+    }));
+    return {
+      ...mapTeamTaskFromDb(task),
+      topic: match.debate_topic,
+      userSide: match.stance === 'undecided' ? null : match.stance,
+      aiSide: match.stance === 'undecided' ? null : getOpponentSide(match.stance),
+      assignments: mappedAssignments,
+      isCompleted: mappedAssignments.length > 0
+        && mappedAssignments.every((assignment) => assignment.status === 'completed'),
+      isMine: mappedAssignments.some((assignment) => assignment.appUserId === localUserId)
+    };
+  }));
+
+  return {
+    match: mapTeamMatchFromDb(match),
+    tasks: mappedTasks,
+    members: members
+      .filter((member) => member.status === 'active' && member.app_user_id)
+      .map(mapTeamMemberFromDb),
+    permissions: { canManage }
+  };
+}
+
+async function createTeamMatch(payload) {
+  await requireTeamManager(payload.teamCode, payload.localUserId);
+  if (await fetchActiveTeamMatch(payload.teamCode)) {
+    throw httpError(409, '当前团队已经有一场正在备战的比赛，请先归档后再创建。');
+  }
+  const now = new Date().toISOString();
+  try {
+    const rows = await supabaseRequest(teamMatchesTable, {
+      method: 'POST',
+      body: {
+        team_code: payload.teamCode,
+        competition_name: payload.competitionName,
+        debate_topic: payload.debateTopic,
+        stance: payload.stance,
+        competition_time: payload.competitionTime,
+        format_info: payload.formatInfo,
+        announcement: payload.announcement,
+        status: 'active',
+        created_by: payload.localUserId,
+        updated_by: payload.localUserId,
+        created_at: now,
+        updated_at: now
+      },
+      prefer: 'return=representation'
+    });
+    return rows[0];
+  } catch (error) {
+    if (String(error?.code || '').includes('23505') || /one_active|duplicate/i.test(String(error?.message || ''))) {
+      throw httpError(409, '当前团队已经有一场正在备战的比赛，请先归档后再创建。');
+    }
+    throw error;
+  }
+}
+
+async function updateTeamMatch(payload) {
+  await requireTeamManager(payload.teamCode, payload.localUserId);
+  await requireTeamMatch(payload.matchId, payload.teamCode, { active: true });
+  const rows = await supabaseRequest(
+    `${teamMatchesTable}?id=eq.${encodeURIComponent(payload.matchId)}&team_code=eq.${encodeURIComponent(payload.teamCode)}&status=eq.active`,
+    {
+      method: 'PATCH',
+      body: {
+        competition_name: payload.competitionName,
+        debate_topic: payload.debateTopic,
+        stance: payload.stance,
+        competition_time: payload.competitionTime,
+        format_info: payload.formatInfo,
+        announcement: payload.announcement,
+        updated_by: payload.localUserId,
+        updated_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    }
+  );
+  if (!rows[0]) throw httpError(409, '比赛已被归档，请刷新后重试。');
+  return rows[0];
+}
+
+async function archiveTeamMatch(payload) {
+  await requireTeamManager(payload.teamCode, payload.localUserId);
+  await requireTeamMatch(payload.matchId, payload.teamCode, { active: true });
+  const now = new Date().toISOString();
+  const rows = await supabaseRequest(
+    `${teamMatchesTable}?id=eq.${encodeURIComponent(payload.matchId)}&team_code=eq.${encodeURIComponent(payload.teamCode)}&status=eq.active`,
+    {
+      method: 'PATCH',
+      body: {
+        status: 'archived',
+        archived_at: now,
+        updated_by: payload.localUserId,
+        updated_at: now
+      },
+      prefer: 'return=representation'
+    }
+  );
+  if (!rows[0]) throw httpError(409, '比赛已被归档，请刷新后重试。');
+  return rows[0];
+}
+
+async function requireValidPreparationAssignees(teamCode, assignedUserIds) {
+  const members = await fetchTeamMembers(teamCode);
+  const activeIds = new Set(
+    members
+      .filter((member) => member.status === 'active' && member.app_user_id)
+      .map((member) => member.app_user_id)
+  );
+  if (assignedUserIds.some((id) => !activeIds.has(id))) {
+    throw badRequest('负责人中包含非当前团队有效成员。');
+  }
+}
+
+async function createTeamPreparationTask(payload) {
+  await requireTeamManager(payload.teamCode, payload.localUserId);
+  const match = await requireTeamMatch(payload.matchId, payload.teamCode, { active: true });
+  await requireValidPreparationAssignees(payload.teamCode, payload.assignedUserIds);
+  const now = new Date().toISOString();
+  const rows = await supabaseRequest(teamTasksTable, {
+    method: 'POST',
+    body: {
+      team_code: payload.teamCode,
+      match_id: payload.matchId,
+      task_category: 'current_match',
+      task_source: payload.taskSource,
+      title: payload.title,
+      topic: match.debate_topic,
+      user_side: match.stance === 'undecided' ? null : match.stance,
+      ai_side: match.stance === 'undecided' ? null : getOpponentSide(match.stance),
+      mode: payload.mode,
+      difficulty: payload.difficulty,
+      style_id: 'none',
+      required_count: 1,
+      deadline: payload.deadline,
+      description: payload.description,
+      assignment_type: 'selected',
+      created_by: payload.localUserId,
+      created_by_app_user_id: payload.localUserId,
+      status: 'active',
+      created_at: now,
+      updated_at: now
+    },
+    prefer: 'return=representation'
+  });
+  await createTaskAssignments(rows[0], payload.assignedUserIds);
+  return rows[0];
+}
+
+async function requireCurrentMatchTeamTask(taskId, teamCode, matchId) {
+  const task = await requireTeamTask(taskId, teamCode);
+  if (task.task_category !== 'current_match' || task.match_id !== matchId) {
+    throw httpError(404, '任务不存在或不属于当前比赛。');
+  }
+  await requireTeamMatch(matchId, teamCode, { active: true });
+  return task;
+}
+
+async function syncPreparationTaskAssignments(task, assignedUserIds) {
+  const existing = await fetchTaskAssignments(task.id, task.team_code);
+  const desired = new Set(assignedUserIds);
+  const existingIds = new Set(existing.map((assignment) => assignment.app_user_id));
+  for (const assignment of existing) {
+    if (desired.has(assignment.app_user_id)) continue;
+    await supabaseRequest(
+      `${teamTaskAssignmentsTable}?task_id=eq.${encodeURIComponent(task.id)}&team_code=eq.${encodeURIComponent(task.team_code)}&app_user_id=eq.${encodeURIComponent(assignment.app_user_id)}`,
+      { method: 'DELETE', prefer: 'return=minimal' }
+    );
+  }
+  await createTaskAssignments(
+    task,
+    assignedUserIds.filter((appUserId) => !existingIds.has(appUserId))
+  );
+}
+
+async function updateTeamPreparationTask(payload) {
+  await requireTeamManager(payload.teamCode, payload.localUserId);
+  const task = await requireCurrentMatchTeamTask(payload.taskId, payload.teamCode, payload.matchId);
+  await requireValidPreparationAssignees(payload.teamCode, payload.assignedUserIds);
+  const rows = await supabaseRequest(
+    `${teamTasksTable}?id=eq.${encodeURIComponent(task.id)}&team_code=eq.${encodeURIComponent(payload.teamCode)}&match_id=eq.${encodeURIComponent(payload.matchId)}`,
+    {
+      method: 'PATCH',
+      body: {
+        title: payload.title,
+        description: payload.description,
+        task_source: payload.taskSource,
+        mode: payload.mode,
+        difficulty: payload.difficulty,
+        deadline: payload.deadline,
+        updated_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    }
+  );
+  await syncPreparationTaskAssignments(rows[0], payload.assignedUserIds);
+  return rows[0];
+}
+
+async function deleteTeamPreparationTask(payload) {
+  await requireTeamManager(payload.teamCode, payload.localUserId);
+  await requireCurrentMatchTeamTask(payload.taskId, payload.teamCode, payload.matchId);
+  await supabaseRequest(
+    `${teamTasksTable}?id=eq.${encodeURIComponent(payload.taskId)}&team_code=eq.${encodeURIComponent(payload.teamCode)}&match_id=eq.${encodeURIComponent(payload.matchId)}&task_category=eq.current_match`,
+    { method: 'DELETE', prefer: 'return=minimal' }
+  );
+}
+
+async function updateTeamPreparationAssignment(payload) {
+  const viewer = await requireActiveMembership(payload.teamCode, payload.localUserId);
+  await requireCurrentMatchTeamTask(payload.taskId, payload.teamCode, payload.matchId);
+  if (!isTeamManagerRole(viewer.role) && payload.assigneeId !== payload.localUserId) {
+    throw httpError(403, '普通成员只能修改自己的完成状态。');
+  }
+  const existing = await getSingleByQuery(
+    teamTaskAssignmentsTable,
+    new URLSearchParams({
+      select: '*',
+      task_id: `eq.${payload.taskId}`,
+      team_code: `eq.${payload.teamCode}`,
+      app_user_id: `eq.${payload.assigneeId}`,
+      limit: '1'
+    })
+  );
+  if (!existing) throw httpError(404, '该成员不是此任务的负责人。');
+  const now = new Date().toISOString();
+  const rows = await supabaseRequest(
+    `${teamTaskAssignmentsTable}?id=eq.${encodeURIComponent(existing.id)}&task_id=eq.${encodeURIComponent(payload.taskId)}&team_code=eq.${encodeURIComponent(payload.teamCode)}`,
+    {
+      method: 'PATCH',
+      body: {
+        status: payload.completed ? 'completed' : 'assigned',
+        completed_at: payload.completed ? now : null,
+        completed_by: payload.completed ? payload.localUserId : null,
+        completed_by_role: payload.completed ? normalizeCompletionActorRole(viewer.role) : null,
+        completion_note: payload.completed ? payload.completionNote : '',
+        updated_at: now
+      },
+      prefer: 'return=representation'
+    }
+  );
+  return rows[0];
+}
+
+async function setTeamPreparationTaskCompletion(payload) {
+  const manager = await requireTeamManager(payload.teamCode, payload.localUserId);
+  await requireCurrentMatchTeamTask(payload.taskId, payload.teamCode, payload.matchId);
+  const now = new Date().toISOString();
+  await supabaseRequest(
+    `${teamTaskAssignmentsTable}?task_id=eq.${encodeURIComponent(payload.taskId)}&team_code=eq.${encodeURIComponent(payload.teamCode)}`,
+    {
+      method: 'PATCH',
+      body: {
+        status: payload.completed ? 'completed' : 'assigned',
+        completed_at: payload.completed ? now : null,
+        completed_by: payload.completed ? payload.localUserId : null,
+        completed_by_role: payload.completed ? normalizeCompletionActorRole(manager.role) : null,
+        completion_note: '',
+        updated_at: now
+      },
+      prefer: 'return=minimal'
+    }
+  );
+}
+
+function normalizeCompletionActorRole(role) {
+  if (isTeamOwnerRole(role)) return 'leader';
+  if (role === 'admin') return 'admin';
+  return 'member';
+}
+
 async function createTeamTask(payload) {
   await requireTeamManager(payload.teamCode, payload.localUserId);
   const activeMembers = await fetchTeamMembers(payload.teamCode);
@@ -4777,7 +5340,7 @@ async function fetchTaskAssignments(taskId, teamCode) {
   try {
     return await supabaseRequest(
       `${teamTaskAssignmentsTable}?${new URLSearchParams({
-        select: 'id,task_id,team_code,app_user_id,status,assigned_at,completed_count,completed_at',
+        select: 'id,task_id,team_code,app_user_id,status,assigned_at,completed_count,completed_at,completed_by,completed_by_role,completion_note,training_record_id,updated_at',
         task_id: `eq.${taskId}`,
         team_code: `eq.${teamCode}`,
         order: 'assigned_at.asc'
@@ -4850,6 +5413,9 @@ async function syncTaskAssignmentProgress(taskId, teamCode, appUserId) {
     requireTeamTask(taskId, teamCode),
     fetchTaskCompletedCount(taskId, teamCode, appUserId)
   ]);
+  // Current-match tasks are confirmed explicitly by the assignee. Merely
+  // running a linked training session must never complete the board task.
+  if (task.task_category === 'current_match') return;
   const requiredCount = Number(task.required_count) || 1;
   const isCompleted = completedCount >= requiredCount;
   const completedAt = isCompleted ? new Date().toISOString() : null;
@@ -5685,12 +6251,51 @@ function mapTeamTaskFromDb(task = {}) {
     deadline: task.deadline,
     description: task.description || '',
     assignmentType: task.assignment_type || 'all',
+    matchId: task.match_id || null,
+    taskCategory: task.task_category || 'daily_training',
+    taskSource: task.task_source || 'training',
     endedAt: task.ended_at || null,
     endedBy: task.ended_by || null,
     createdBy: task.created_by_app_user_id || task.created_by,
     status: task.status || 'active',
     createdAt: task.created_at,
     updatedAt: task.updated_at
+  };
+}
+
+function mapTeamMatchFromDb(match = {}) {
+  return {
+    id: match.id,
+    teamCode: match.team_code,
+    competitionName: match.competition_name,
+    debateTopic: match.debate_topic,
+    stance: match.stance,
+    competitionTime: match.competition_time,
+    formatInfo: match.format_info || '',
+    announcement: match.announcement || '',
+    status: match.status || 'active',
+    createdBy: match.created_by,
+    updatedBy: match.updated_by || null,
+    archivedAt: match.archived_at || null,
+    createdAt: match.created_at,
+    updatedAt: match.updated_at
+  };
+}
+
+function mapTeamTaskAssignment(assignment = {}, viewerUserId = '', canManage = false) {
+  const canSeeNote = canManage || assignment.app_user_id === viewerUserId;
+  return {
+    id: assignment.id,
+    taskId: assignment.task_id,
+    teamCode: assignment.team_code,
+    appUserId: assignment.app_user_id,
+    status: assignment.status || 'assigned',
+    completedAt: assignment.completed_at || null,
+    completedBy: canSeeNote ? (assignment.completed_by || null) : null,
+    completedByRole: canSeeNote ? (assignment.completed_by_role || null) : null,
+    completionNote: canSeeNote ? (assignment.completion_note || '') : '',
+    trainingRecordId: canSeeNote ? (assignment.training_record_id || null) : null,
+    updatedAt: assignment.updated_at || assignment.assigned_at
   };
 }
 

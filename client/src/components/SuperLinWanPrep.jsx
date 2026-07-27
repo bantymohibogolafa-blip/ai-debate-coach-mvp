@@ -60,8 +60,9 @@ export default function SuperLinWanPrep({
   isLoggedIn,
   currentUser,
   currentSpace,
-  currentTeam,
   initialTaskId = '',
+  initialDraft = null,
+  onDraftConsumed,
   onRequestLogin,
   onStartTraining
 }) {
@@ -82,12 +83,10 @@ export default function SuperLinWanPrep({
   const [actionStatus, setActionStatus] = useState('');
   const chatEndRef = useRef(null);
   const openingTaskRef = useRef('');
-  const scope = currentSpace?.type === 'team' && currentSpace?.teamCode
-    ? { spaceType: 'team', teamCode: currentSpace.teamCode }
-    : { spaceType: 'personal', teamCode: '' };
+  const draftRef = useRef('');
+  const scope = { spaceType: 'personal', teamCode: '' };
   const scopeKey = `${scope.spaceType}:${scope.teamCode}:${currentUser?.id || ''}`;
-  const canCreateInScope = scope.spaceType === 'personal'
-    || ['owner', 'captain', 'leader', 'admin'].includes(currentTeam?.role);
+  const canCreateInScope = true;
 
   const visibleTasks = useMemo(
     () => tasks.filter((task) => task.status === listFilter),
@@ -109,6 +108,19 @@ export default function SuperLinWanPrep({
     openingTaskRef.current = initialTaskId;
     void openTask(initialTaskId);
   }, [initialTaskId, isLoggedIn, currentUser?.id]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !initialDraft) return;
+    const draftKey = JSON.stringify(initialDraft);
+    if (draftRef.current === draftKey) return;
+    draftRef.current = draftKey;
+    setDetail(null);
+    setForm({ ...emptyForm, ...initialDraft });
+    setFormError('');
+    setIsCreating(true);
+    setActionStatus('已带入公开的比赛与任务信息；确认表单后才会创建个人任务。');
+    onDraftConsumed?.();
+  }, [initialDraft, isLoggedIn, currentUser?.id]);
 
   useEffect(() => {
     if (!detail?.messages?.length) return;
@@ -352,7 +364,7 @@ export default function SuperLinWanPrep({
     return (
       <section className="panel prematch-panel prematch-login-card">
         <div>
-          <p className="eyebrow">赛前备战</p>
+          <p className="eyebrow">赛前备战｜Super 林婉</p>
           <h2>与 Super 林婉一起准备一场具体比赛</h2>
           <p>任务、战略和对话会按账号独立保存。登录后可以跨设备继续，也不会混入日常林婉聊天。</p>
         </div>
@@ -412,17 +424,14 @@ export default function SuperLinWanPrep({
     <section className="prematch-hub">
       <section className="panel prematch-hero">
         <div>
-          <p className="eyebrow">赛前备战</p>
+          <p className="eyebrow">赛前备战｜Super 林婉</p>
           <h2>与 Super 林婉讨论辩题、制定战略，并安排下一步训练</h2>
           <p>每场比赛都是独立任务。这里共享你的林婉设置和真实能力画像，但不会读取日常聊天，也不会替代六大训练或复盘助手。</p>
-          <div className="prematch-scope-badge">
-            当前保存到：{scope.spaceType === 'team' ? `团队「${currentTeam?.teamName || scope.teamCode}」` : '个人任务'}
-          </div>
+          <div className="prematch-scope-badge">当前保存到：个人任务</div>
         </div>
         <button type="button" className="primary-button" disabled={!canCreateInScope} onClick={beginCreate}>
           创建备战任务
         </button>
-        {!canCreateInScope && <small>团队任务仅可由队长或管理员创建；你仍可参与已有团队任务。</small>}
       </section>
 
       {isCreating && (

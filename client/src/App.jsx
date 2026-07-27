@@ -7,6 +7,7 @@ import OnboardingGuide from './components/OnboardingGuide.jsx';
 import ReviewGeneratingCard from './components/ReviewGeneratingCard.jsx';
 import SpeechInputButton from './components/SpeechInputButton.jsx';
 import SuperLinWanPrep from './components/SuperLinWanPrep.jsx';
+import TeamPreparationBoard from './components/TeamPreparationBoard.jsx';
 import { getAbilityVideosForDimension } from './data/abilityVideoMap.js';
 import useSpeechInput from './hooks/useSpeechInput.js';
 import {
@@ -411,6 +412,7 @@ function App() {
   const [activeTaskSession, setActiveTaskSession] = useState(null);
   const [activePrepTrainingContext, setActivePrepTrainingContext] = useState(null);
   const [prepReturnTaskId, setPrepReturnTaskId] = useState('');
+  const [personalPrepDraft, setPersonalPrepDraft] = useState(null);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isTeamDataLoading, setIsTeamDataLoading] = useState(false);
@@ -1543,6 +1545,10 @@ function App() {
       requiredCount: task.requiredCount || 1,
       deadline: task.deadline || ''
     });
+    if (task.taskCategory === 'current_match') {
+      if (mode === 'defense') setDefensePrep(task.description || '');
+      if (mode === 'free_debate') setFreeDebatePrep(task.description || '');
+    }
     setSetupStep(roundSelectionModes.includes(mode) ? 'rounds' : mode === 'defense' ? 'rounds' : 'ready');
     setMobileSetupStep(mode === 'defense' || mode === 'free_debate' ? 'config' : 'confirm');
     setActiveTab('training');
@@ -2123,6 +2129,23 @@ function App() {
     setSelectedRecord(null);
   }
 
+  function bringTeamTaskToPersonalLinWan(draft) {
+    setPersonalPrepDraft({
+      ...draft,
+      debatePosition: 'undecided',
+      positionDetail: '',
+      competitionDate: '',
+      competitionLevel: '',
+      preparationDeadline: '',
+      opponentInfo: '',
+      priorityQuestion: ''
+    });
+    setPrepReturnTaskId('');
+    setCurrentTrainingSpace(personalSpace);
+    setActiveTab('preparation');
+    setSelectedRecord(null);
+  }
+
   function resetTraining() {
     if (isBusy || isRecording) return;
 
@@ -2296,7 +2319,7 @@ function App() {
     {
       title: '备战',
       items: [
-        { label: '赛前备战', value: 'preparation' }
+        { label: isTeamSpace ? '团队备战看板' : '赛前备战｜Super 林婉', value: 'preparation' }
       ]
     },
     {
@@ -3025,16 +3048,27 @@ function App() {
       )}
 
       {activeTab === 'preparation' && (
-        <SuperLinWanPrep
-          api={{ getJson, postJson, patchJson, deleteJson }}
-          isLoggedIn={isLoggedIn}
-          currentUser={currentUser}
-          currentSpace={currentSpace}
-          currentTeam={currentTeam}
-          initialTaskId={prepReturnTaskId}
-          onRequestLogin={requestLogin}
-          onStartTraining={startPrematchTraining}
-        />
+        isTeamSpace ? (
+          <TeamPreparationBoard
+            api={{ getJson, postJson, patchJson, deleteJson }}
+            currentTeam={currentTeam}
+            currentUser={currentUser}
+            onStartTraining={startTaskTraining}
+            onBringToPersonalLinWan={bringTeamTaskToPersonalLinWan}
+          />
+        ) : (
+          <SuperLinWanPrep
+            api={{ getJson, postJson, patchJson, deleteJson }}
+            isLoggedIn={isLoggedIn}
+            currentUser={currentUser}
+            currentSpace={currentSpace}
+            initialTaskId={prepReturnTaskId}
+            initialDraft={personalPrepDraft}
+            onDraftConsumed={() => setPersonalPrepDraft(null)}
+            onRequestLogin={requestLogin}
+            onStartTraining={startPrematchTraining}
+          />
+        )
       )}
 
       {activeTab === 'training' && (

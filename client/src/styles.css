@@ -10,6 +10,197 @@
   line-height: 1.5;
 }
 
+/* Team preparation board */
+.team-prep-board {
+  display: grid;
+  gap: 18px;
+}
+
+.team-prep-hero,
+.team-prep-task-toolbar,
+.team-prep-task-heading,
+.team-prep-actions,
+.team-match-meta,
+.team-prep-inline-fields {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.team-prep-hero {
+  background:
+    radial-gradient(circle at top right, rgba(191, 219, 254, 0.75), transparent 38%),
+    linear-gradient(135deg, #ffffff, #f8fafc);
+}
+
+.team-prep-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.team-prep-empty {
+  text-align: center;
+  padding: 42px 24px;
+}
+
+.team-match-topic {
+  margin: 18px 0;
+  font-size: 1.08rem;
+  font-weight: 700;
+  line-height: 1.7;
+}
+
+.team-match-meta {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  color: var(--muted);
+}
+
+.team-match-meta span {
+  border-radius: 999px;
+  background: #f1f5f9;
+  padding: 7px 11px;
+}
+
+.team-announcement > p {
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  line-height: 1.75;
+}
+
+.team-prep-task-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.team-prep-task {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 18px;
+  background: #fff;
+}
+
+.team-prep-task-heading {
+  align-items: flex-start;
+}
+
+.team-prep-task-heading span,
+.team-prep-task-heading small {
+  color: var(--muted);
+}
+
+.team-prep-task-heading h3 {
+  margin: 5px 0;
+}
+
+.team-prep-task-heading p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.65;
+}
+
+.team-prep-assignment-list {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.team-prep-assignment-list > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.team-prep-assignment-list em {
+  font-style: normal;
+  color: #b45309;
+}
+
+.team-prep-assignment-list em.completed {
+  color: #047857;
+}
+
+.team-prep-assignment-list small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.team-prep-form {
+  display: grid;
+  gap: 14px;
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.team-prep-form label {
+  display: grid;
+  gap: 7px;
+  font-weight: 700;
+}
+
+.team-prep-form input,
+.team-prep-form select,
+.team-prep-form textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 11px 12px;
+  font: inherit;
+  font-weight: 400;
+}
+
+.team-prep-form fieldset {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.team-prep-assignee-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.team-prep-assignee-picker label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.team-prep-assignee-picker input {
+  width: auto;
+}
+
+@media (max-width: 720px) {
+  .team-prep-hero,
+  .team-prep-task-toolbar,
+  .team-prep-task-heading,
+  .team-prep-inline-fields {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .team-prep-assignment-list > div {
+    grid-template-columns: 1fr auto;
+  }
+
+  .team-prep-assignment-list > div button {
+    grid-column: 1 / -1;
+  }
+
+  .team-prep-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

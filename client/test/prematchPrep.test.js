@@ -11,11 +11,19 @@ const prepSource = fs.readFileSync(
   fileURLToPath(new URL('../src/components/SuperLinWanPrep.jsx', import.meta.url)),
   'utf8'
 );
+const boardSource = fs.readFileSync(
+  fileURLToPath(new URL('../src/components/TeamPreparationBoard.jsx', import.meta.url)),
+  'utf8'
+);
 
-test('赛前备战拥有独立入口与独立任务 API', () => {
-  assert.match(appSource, /\{ label: '赛前备战', value: 'preparation' \}/);
+test('个人 Super 林婉与团队备战看板使用不同入口实现', () => {
+  assert.match(appSource, /isTeamSpace \? '团队备战看板' : '赛前备战｜Super 林婉'/);
   assert.match(prepSource, /\/api\/prematch\/tasks/);
   assert.match(prepSource, /\/chat`/);
+  assert.match(prepSource, /spaceType: 'personal'/);
+  assert.match(boardSource, /\/api\/team\/preparation/);
+  assert.equal(boardSource.includes('/api/prematch'), false);
+  assert.equal(boardSource.includes('/api/ability'), false);
   assert.equal(prepSource.includes('/api/linwan/history'), false);
   assert.equal(prepSource.includes('/api/debate-experience-chat'), false);
 });
@@ -34,6 +42,9 @@ test('不同备战任务以任务 ID 读取并支持归档、恢复与删除', (
   assert.match(prepSource, /clientRequestId/);
 });
 
-test('团队任务创建兼容现有队长和管理员角色', () => {
-  assert.match(prepSource, /\['owner', 'captain', 'leader', 'admin'\]/);
+test('带入个人 Super 林婉只预填个人表单而不自动创建', () => {
+  assert.match(boardSource, /onBringToPersonalLinWan/);
+  assert.match(appSource, /setPersonalPrepDraft/);
+  assert.match(prepSource, /确认表单后才会创建个人任务/);
+  assert.equal(boardSource.includes("api.postJson('/api/prematch/tasks'"), false);
 });
