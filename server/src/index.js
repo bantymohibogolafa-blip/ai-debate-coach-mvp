@@ -46,6 +46,17 @@ import {
   validateLinWanProfile
 } from './linwan.js';
 import {
+  buildSuperLinWanMessages,
+  createPrematchContextManifest,
+  getDefaultPrematchStrategy,
+  markPrematchStrategyForReassessment,
+  mergePrematchStrategy,
+  normalizePrematchContextManifest,
+  normalizePrematchResultSummary,
+  normalizePrematchStrategy,
+  parseSuperLinWanResponse
+} from './superLinwan.js';
+import {
   buildReviewableMessages,
   countMeaningfulUserMessages,
   getLastMeaningfulUserIndex,
@@ -69,6 +80,9 @@ const teamTaskAssignmentsTable = process.env.SUPABASE_TEAM_TASK_ASSIGNMENTS_TABL
 const appUsersTable = process.env.SUPABASE_APP_USERS_TABLE || 'app_users';
 const linWanMessagesTable = process.env.SUPABASE_LINWAN_MESSAGES_TABLE || 'linwan_messages';
 const linWanProfileTable = process.env.SUPABASE_LINWAN_PROFILE_TABLE || 'linwan_user_profile';
+const prematchTasksTable = process.env.SUPABASE_PREMATCH_TASKS_TABLE || 'prematch_tasks';
+const prematchMessagesTable = process.env.SUPABASE_PREMATCH_MESSAGES_TABLE || 'prematch_messages';
+const prematchTrainingLinksTable = process.env.SUPABASE_PREMATCH_TRAINING_LINKS_TABLE || 'prematch_training_links';
 const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '30d';
 const LINWAN_SPEAKING_STYLE = '以年轻高中辩论队学姐的状态自然说话。语气清醒、克制但不疏离，真诚、有精神，带自然的热情。表达中等偏快、紧凑利落，停顿短而自然，句尾收得干净，不拖腔。像在认真陪队友复盘和给建议，直接但不冷漠。不要高冷审判感、客服腔、播音腔、舞台朗诵感或过度甜美。';
 const XIAOMI_TTS_MODEL = normalizeText(process.env.XIAOMI_TTS_MODEL || 'mimo-v2.5-tts');
@@ -317,6 +331,184 @@ app.put('/api/linwan/profile', requireAuth, async (req, res, next) => {
   try {
     const profile = validateLinWanProfile(req.body);
     res.json({ profile: await saveLinWanProfile(req.user.id, profile) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/prematch/tasks', requireAuth, async (req, res, next) => {
+  try {
+    const scope = validatePrematchScope(req.query);
+    if (scope.spaceType === 'team') {
+      await requireActiveMembership(scope.teamCode, req.user.id);
+    }
+    const tasks = await fetchPrematchTasks(req.user.id, scope, req.query.status);
+    res.json({ tasks: tasks.map(mapPrematchTaskFromDb) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/prematch/tasks', requireAuth, async (req, res, next) => {
+  try {
+    const payload = validatePrematchTaskPayload(req.body);
+    if (payload.spaceType === 'team') {
+      await requireTeamManager(payload.teamCode, req.user.id);
+    }
+    const task = await createPrematchTask(req.user, payload);
+    const detail = await fetchPrematchTaskDetail(task, req.user.id);
+    res.status(201).json(detail);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/prematch/tasks/:taskId', requireAuth, async (req, res, next) => {
+  try {
+    const task = await requireAuthorizedPrematchTask(req.params.taskId, req.user.id);
+    res.json(await fetchPrematchTaskDetail(task, req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/prematch/tasks/:taskId', requireAuth, async (req, res, next) => {
+  try {
+    const task = await requireAuthorizedPrematchTask(req.params.taskId, req.user.id, { manage: true });
+    const payload = validatePrematchTaskPatch(req.body, task);
+    const updated = await updatePrematchTask(task, payload);
+    res.json(await fetchPrematchTaskDetail(updated, req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/prematch/tasks/:taskId/archive', requireAuth, async (req, res, next) => {
+  try {
+    const task = await requireAuthorizedPrematchTask(req.params.taskId, req.user.id, { manage: true });
+    const updated = await setPrematchTaskStatus(task, 'archived');
+    res.json({ task: mapPrematchTaskFromDb(updated) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/prematch/tasks/:taskId/restore', requireAuth, async (req, res, next) => {
+  try {
+    const task = await requireAuthorizedPrematchTask(req.params.taskId, req.user.id, { manage: true });
+    const updated = await setPrematchTaskStatus(task, 'active');
+    res.json({ task: mapPrematchTaskFromDb(updated) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/prematch/tasks/:taskId', requireAuth, async (req, res, next) => {
+  try {
+    const task = await requireAuthorizedPrematchTask(req.params.taskId, req.user.id, { manage: true });
+    await deletePrematchTask(task);
+    res.json({ message: '备战任务已删除，关联的正式训练记录仍会保留。' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next) => {
+  try {
+    const chatPayload = validatePrematchChatPayload(req.body);
+    let task = await requireAuthorizedPrematchTask(req.params.taskId, req.user.id);
+    if (task.status !== 'active') {
+      throw httpError(409, '该备战任务已归档，请恢复后继续讨论。');
+    }
+
+    const existingExchange = await fetchPrematchExchangeByRequestId(task.id, chatPayload.clientRequestId);
+    if (existingExchange) {
+      const appliedRequestIds = normalizePrematchStrategy(task.strategy_state).appliedRequestIds;
+      if (!appliedRequestIds.includes(chatPayload.clientRequestId)) {
+        const storedUpdate = existingExchange.assistantMessage.structuredUpdate || {};
+        task = await applyPrematchChatUpdate(task, {
+          structuredUpdate: storedUpdate,
+          taskSummary: storedUpdate.taskSummary,
+          clientRequestId: chatPayload.clientRequestId,
+          recovery: true
+        });
+      }
+      return res.json({
+        ...existingExchange,
+        task: mapPrematchTaskFromDb(task),
+        duplicated: true
+      });
+    }
+
+    const scope = {
+      spaceType: task.space_type,
+      teamCode: task.team_code || ''
+    };
+    const [profile, abilityProfile, recentMessages, trainingLinks] = await Promise.all([
+      fetchLinWanProfile(req.user.id, req.user.displayName),
+      fetchOptionalLinWanTrainingProfile(req.user.id, scope),
+      fetchPrematchRecentMessages(task.id, 24),
+      fetchPrematchTrainingLinks(task.id, 8)
+    ]);
+    const basePersonalityPrompt = buildDebateExperienceMessages({
+      question: '',
+      userTrainingProfile: null,
+      profile,
+      recentMessages: []
+    })[0].content;
+    const modelMessages = buildSuperLinWanMessages({
+      basePersonalityPrompt,
+      preferencePrompt: buildLinWanPreferencePrompt(profile),
+      abilityProfileText: formatDebateExperienceProfile(abilityProfile),
+      task: mapPrematchTaskFromDb(task),
+      strategy: task.strategy_state,
+      taskSummary: task.context_summary,
+      trainingLinks: trainingLinks.map(mapPrematchTrainingLinkFromDb),
+      recentMessages: recentMessages.map(mapPrematchMessageFromDb),
+      currentQuestion: chatPayload.question
+    });
+    logPrematchContextAudit(req.user.id, task.id, {
+      recentMessages,
+      trainingLinks,
+      abilityProfile
+    });
+    const rawResponse = await callDeepSeek(modelMessages, {
+      maxTokens: Math.max(1600, getLinWanResponseMaxTokens(profile) + 700),
+      temperature: 0.5
+    });
+    const parsedResponse = parseSuperLinWanResponse(rawResponse);
+    const answer = cleanLinWanReply(parsedResponse.answer);
+    if (!answer) throw httpError(502, 'Super 林婉暂时没有整理好回答，请重试。');
+
+    const contextManifest = createPrematchContextManifest(
+      profile,
+      abilityProfile,
+      recentMessages,
+      trainingLinks
+    );
+    const exchange = await persistPrematchExchange(task, req.user.id, {
+      question: chatPayload.question,
+      answer,
+      structuredUpdate: parsedResponse.structuredUpdate,
+      taskSummary: parsedResponse.taskSummary,
+      contextManifest,
+      clientRequestId: chatPayload.clientRequestId
+    });
+    task = await applyPrematchChatUpdate(task, {
+      structuredUpdate: parsedResponse.structuredUpdate,
+      taskSummary: parsedResponse.taskSummary,
+      clientRequestId: chatPayload.clientRequestId
+    });
+    const refreshedLinks = await fetchPrematchTrainingLinks(task.id, 20);
+
+    res.json({
+      task: mapPrematchTaskFromDb(task),
+      userMessage: exchange.userMessage,
+      assistantMessage: exchange.assistantMessage,
+      contextManifest,
+      trainingLinks: refreshedLinks.map(mapPrematchTrainingLinkFromDb),
+      duplicated: false
+    });
   } catch (error) {
     next(error);
   }
@@ -796,8 +988,16 @@ app.post('/api/training-records', optionalAuth, async (req, res, next) => {
     if (record.task_id && record.space_type === 'team' && record.app_user_id) {
       await syncTaskAssignmentProgress(record.task_id, record.team_code, record.app_user_id);
     }
+    const prematchLink = await tryLinkPrematchTrainingResult({
+      body: req.body,
+      authUser: req.user,
+      savedRecord: savedRecords[0]
+    });
 
-    res.status(201).json({ record: mapTrainingRecordFromDb(savedRecords[0]) });
+    res.status(201).json({
+      record: mapTrainingRecordFromDb(savedRecords[0]),
+      prematchLink
+    });
   } catch (error) {
     next(error);
   }
@@ -1017,6 +1217,19 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
   const rounds = Number(body.rounds);
   const defensePrep = normalizeText(body.defensePrep || body.defense_prep || '');
   const freeDebatePrep = normalizeText(body.freeDebatePrep || body.free_debate_prep || '');
+  const sourcePrepTaskId = normalizeText(body.sourcePrepTaskId || body.source_prep_task_id);
+  const prepTrainingGoal = limitLength(
+    normalizeText(body.prepTrainingGoal || body.prep_training_goal),
+    500
+  );
+  const prepStrategySummary = limitLength(
+    normalizeText(body.prepStrategySummary || body.prep_strategy_summary),
+    1600
+  );
+  const prepVerificationQuestion = limitLength(
+    normalizeText(body.prepVerificationQuestion || body.prep_verification_question),
+    500
+  );
   const history = Array.isArray(body.history) ? body.history : [];
 
   if (!topic) {
@@ -1058,6 +1271,9 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
   if (requirePrep && trainingMode === 'free_debate' && !freeDebatePrep) {
     throw badRequest('请至少填写一个主要论点，方便 AI 基于你的真实观点进行交锋。');
   }
+  if (sourcePrepTaskId && !isUuid(sourcePrepTaskId)) {
+    throw badRequest('来源备战任务无效，请返回任务后重新进入训练。');
+  }
 
   return {
     topic,
@@ -1071,6 +1287,10 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
     rounds,
     defensePrep,
     freeDebatePrep,
+    sourcePrepTaskId,
+    prepTrainingGoal,
+    prepStrategySummary,
+    prepVerificationQuestion,
     history: history
       .filter((item) => ['ai', 'assistant', 'user'].includes(item.role) && normalizeText(item.content))
       .map((item) => ({
@@ -1562,6 +1782,115 @@ function validateAbilityEstimateQuery(query) {
   }
 
   return { spaceType, teamCode, localUserId };
+}
+
+function validatePrematchScope(input = {}) {
+  const spaceType = normalizeSpaceType(input.spaceType || input.space_type || input.scope);
+  const teamCode = normalizeTeamCode(input.teamCode || input.team_code);
+  if (spaceType === 'team' && !isValidTeamCode(teamCode)) {
+    throw badRequest('团队备战空间无效，请重新选择团队。');
+  }
+  return {
+    spaceType,
+    teamCode: spaceType === 'team' ? teamCode : ''
+  };
+}
+
+function validatePrematchTaskPayload(body = {}) {
+  const scope = validatePrematchScope(body);
+  const debateTopic = limitLength(normalizeText(body.debateTopic || body.debate_topic), 500);
+  const stance = normalizeText(body.stance);
+  const debatePosition = normalizeText(body.debatePosition || body.debate_position);
+  const positionDetail = limitLength(normalizeText(body.positionDetail || body.position_detail), 160);
+  const title = limitLength(
+    normalizeText(body.title) || debateTopic.slice(0, 48),
+    80
+  );
+
+  if (debateTopic.length < 2) throw badRequest('请填写完整辩题。');
+  if (!['affirmative', 'negative', 'undecided'].includes(stance)) {
+    throw badRequest('请选择正方、反方或暂未确定。');
+  }
+  if (!['first', 'second', 'third', 'fourth', 'undecided', 'other'].includes(debatePosition)) {
+    throw badRequest('请选择有效辩位。');
+  }
+  if (!title) throw badRequest('请填写备战任务名称。');
+
+  return {
+    ...scope,
+    title,
+    debateTopic,
+    stance,
+    debatePosition,
+    positionDetail,
+    competitionName: limitLength(normalizeText(body.competitionName || body.competition_name), 160),
+    competitionDate: normalizeOptionalDate(body.competitionDate || body.competition_date),
+    competitionLevel: limitLength(normalizeText(body.competitionLevel || body.competition_level), 80),
+    format: limitLength(normalizeText(body.format), 240),
+    preparationDeadline: normalizeOptionalDate(body.preparationDeadline || body.preparation_deadline),
+    initialIdeas: limitLength(normalizeText(body.initialIdeas || body.initial_ideas), 2400),
+    opponentInfo: limitLength(normalizeText(body.opponentInfo || body.opponent_info), 1600),
+    priorityQuestion: limitLength(normalizeText(body.priorityQuestion || body.priority_question), 1000)
+  };
+}
+
+function validatePrematchTaskPatch(body = {}, currentTask = {}) {
+  const current = mapPrematchTaskFromDb(currentTask);
+  const editableKeys = [
+    'title',
+    'debateTopic',
+    'stance',
+    'debatePosition',
+    'positionDetail',
+    'competitionName',
+    'competitionDate',
+    'competitionLevel',
+    'format',
+    'preparationDeadline',
+    'initialIdeas',
+    'opponentInfo',
+    'priorityQuestion'
+  ];
+  const merged = {
+    ...current,
+    spaceType: current.spaceType,
+    teamCode: current.teamCode || ''
+  };
+  editableKeys.forEach((key) => {
+    if (Object.hasOwn(body, key)) merged[key] = body[key];
+  });
+  const payload = validatePrematchTaskPayload(merged);
+  const expectedVersion = Number(body.expectedVersion ?? body.version ?? current.version);
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    throw badRequest('任务版本无效，请刷新后重试。');
+  }
+
+  const changedFields = [];
+  if (payload.debateTopic !== current.debateTopic) changedFields.push('辩题');
+  if (payload.stance !== current.stance) changedFields.push('立场');
+  if (
+    payload.debatePosition !== current.debatePosition
+    || payload.positionDetail !== current.positionDetail
+  ) changedFields.push('辩位');
+
+  return {
+    ...payload,
+    expectedVersion,
+    changedFields
+  };
+}
+
+function validatePrematchChatPayload(body = {}) {
+  const question = limitLength(normalizeText(body.question), 1200);
+  const suppliedRequestId = normalizeText(body.clientRequestId || body.client_request_id);
+  if (!isMeaningfulUserInput(question)) throw badRequest('请先输入想和 Super 林婉讨论的内容。');
+  if (suppliedRequestId && !isUuid(suppliedRequestId)) {
+    throw badRequest('本轮消息标识无效，请重试。');
+  }
+  return {
+    question,
+    clientRequestId: suppliedRequestId || crypto.randomUUID()
+  };
 }
 
 function validateReviewAssistantPayload(body) {
@@ -2246,6 +2575,585 @@ function logLinWanContextAudit(userId, context, modelMessages) {
   });
 }
 
+function getPrematchTaskSelect() {
+  return [
+    'id',
+    'owner_user_id',
+    'space_type',
+    'team_code',
+    'title',
+    'debate_topic',
+    'stance',
+    'debate_position',
+    'position_detail',
+    'competition_name',
+    'competition_date',
+    'competition_level',
+    'format',
+    'preparation_deadline',
+    'initial_ideas',
+    'opponent_info',
+    'priority_question',
+    'status',
+    'current_stage',
+    'strategy_state',
+    'context_summary',
+    'version',
+    'archived_at',
+    'created_at',
+    'updated_at'
+  ].join(',');
+}
+
+async function fetchPrematchTasks(userId, scope = {}, requestedStatus = 'active') {
+  const status = normalizeText(requestedStatus) || 'active';
+  if (!['active', 'archived', 'all'].includes(status)) {
+    throw badRequest('备战任务状态筛选无效。');
+  }
+  const query = new URLSearchParams({
+    select: getPrematchTaskSelect(),
+    space_type: `eq.${scope.spaceType}`,
+    order: 'updated_at.desc,id.desc',
+    limit: '100'
+  });
+  if (scope.spaceType === 'team') {
+    query.set('team_code', `eq.${scope.teamCode}`);
+  } else {
+    query.set('owner_user_id', `eq.${userId}`);
+  }
+  if (status !== 'all') query.set('status', `eq.${status}`);
+
+  const rows = await supabaseRequest(`${prematchTasksTable}?${query.toString()}`);
+  if (scope.spaceType === 'personal') assertPrematchTasksOwnedByUser(rows, userId, 'task_list');
+  return rows;
+}
+
+async function createPrematchTask(user, payload) {
+  const now = new Date().toISOString();
+  const strategy = getDefaultPrematchStrategy();
+  strategy.updatedAt = now;
+  const rows = await supabaseRequest(prematchTasksTable, {
+    method: 'POST',
+    body: {
+      owner_user_id: user.id,
+      space_type: payload.spaceType,
+      team_code: payload.spaceType === 'team' ? payload.teamCode : null,
+      title: payload.title,
+      debate_topic: payload.debateTopic,
+      stance: payload.stance,
+      debate_position: payload.debatePosition,
+      position_detail: payload.positionDetail,
+      competition_name: payload.competitionName,
+      competition_date: payload.competitionDate,
+      competition_level: payload.competitionLevel,
+      format: payload.format,
+      preparation_deadline: payload.preparationDeadline,
+      initial_ideas: payload.initialIdeas,
+      opponent_info: payload.opponentInfo,
+      priority_question: payload.priorityQuestion,
+      status: 'active',
+      current_stage: 'understanding',
+      strategy_state: strategy,
+      context_summary: '',
+      version: 1,
+      created_at: now,
+      updated_at: now
+    },
+    prefer: 'return=representation'
+  });
+  const task = rows[0];
+  if (!task) throw httpError(502, '备战任务创建失败，请重试。');
+
+  try {
+    await supabaseRequest(prematchMessagesTable, {
+      method: 'POST',
+      body: {
+        task_id: task.id,
+        user_id: user.id,
+        role: 'assistant',
+        content: '好，这次我们就围绕这场比赛来准备。先把你们已经想到的方向，或者你现在最担心的问题告诉我。我们先判断战场，再决定下一步怎么练。',
+        structured_update: null,
+        context_manifest: {
+          version: 1,
+          source: 'prematch_task',
+          preferences: { used: false, customPreferenceUsed: false },
+          trainingProfile: { used: false, scoredRecords: 0, coverage: 0 },
+          taskContext: { recentMessages: 0, linkedTrainingResults: 0 }
+        },
+        created_at: new Date(Date.now() + 1).toISOString()
+      },
+      prefer: 'return=minimal'
+    });
+  } catch (error) {
+    console.error('[prematch] Opening message persistence failed', {
+      task: fingerprintUserId(task.id),
+      category: normalizeText(error?.code || error?.name || 'upstream_error')
+    });
+  }
+
+  return task;
+}
+
+async function fetchPrematchTaskRow(taskId) {
+  if (!isUuid(taskId)) throw badRequest('备战任务 ID 无效。');
+  return getSingleByQuery(
+    prematchTasksTable,
+    new URLSearchParams({
+      select: getPrematchTaskSelect(),
+      id: `eq.${taskId}`,
+      limit: '1'
+    })
+  );
+}
+
+async function requireAuthorizedPrematchTask(taskId, userId, options = {}) {
+  const task = await fetchPrematchTaskRow(taskId);
+  if (!task) throw httpError(404, '备战任务不存在或已被删除。');
+
+  if (task.space_type === 'personal') {
+    if (normalizeText(task.owner_user_id) !== userId) {
+      throw httpError(404, '备战任务不存在或已被删除。');
+    }
+    return task;
+  }
+
+  if (task.space_type !== 'team' || !isValidTeamCode(normalizeTeamCode(task.team_code))) {
+    throw httpError(500, '备战任务空间数据无效。');
+  }
+  const membership = await requireActiveMembership(task.team_code, userId);
+  if (
+    options.manage
+    && normalizeText(task.owner_user_id) !== userId
+    && !isTeamManagerRole(membership.role)
+  ) {
+    throw httpError(403, '只有任务创建者或团队管理员可以修改、归档或删除该任务。');
+  }
+  return task;
+}
+
+async function fetchPrematchTaskDetail(task, viewerUserId) {
+  const [messages, trainingLinks] = await Promise.all([
+    fetchPrematchRecentMessages(task.id, 100),
+    fetchPrematchTrainingLinks(task.id, 100)
+  ]);
+  return {
+    task: mapPrematchTaskFromDb(task),
+    messages: messages.map(mapPrematchMessageFromDb),
+    trainingLinks: trainingLinks.map(mapPrematchTrainingLinkFromDb),
+    permissions: {
+      canChat: task.status === 'active',
+      canManage: await canManagePrematchTask(task, viewerUserId)
+    }
+  };
+}
+
+async function canManagePrematchTask(task, userId) {
+  if (normalizeText(task.owner_user_id) === userId) return true;
+  if (task.space_type !== 'team') return false;
+  try {
+    const membership = await requireActiveMembership(task.team_code, userId);
+    return isTeamManagerRole(membership.role);
+  } catch {
+    return false;
+  }
+}
+
+async function updatePrematchTask(task, payload) {
+  const now = new Date().toISOString();
+  let strategy = normalizePrematchStrategy(task.strategy_state);
+  let currentStage = task.current_stage;
+  if (payload.changedFields.length) {
+    const reason = `${payload.changedFields.join('、')}已修改，已有战略需要重新评估。`;
+    strategy = markPrematchStrategyForReassessment(
+      strategy,
+      reason,
+      `重新检查${payload.changedFields.join('、')}变化对当前战略的影响`
+    );
+    currentStage = 'understanding';
+  }
+  const query = new URLSearchParams({
+    id: `eq.${task.id}`,
+    version: `eq.${payload.expectedVersion}`
+  });
+  const rows = await supabaseRequest(`${prematchTasksTable}?${query.toString()}`, {
+    method: 'PATCH',
+    body: {
+      title: payload.title,
+      debate_topic: payload.debateTopic,
+      stance: payload.stance,
+      debate_position: payload.debatePosition,
+      position_detail: payload.positionDetail,
+      competition_name: payload.competitionName,
+      competition_date: payload.competitionDate,
+      competition_level: payload.competitionLevel,
+      format: payload.format,
+      preparation_deadline: payload.preparationDeadline,
+      initial_ideas: payload.initialIdeas,
+      opponent_info: payload.opponentInfo,
+      priority_question: payload.priorityQuestion,
+      current_stage: currentStage,
+      strategy_state: strategy,
+      version: payload.expectedVersion + 1,
+      updated_at: now
+    },
+    prefer: 'return=representation'
+  });
+  if (!rows[0]) throw httpError(409, '任务已在其他设备更新，请刷新后再修改。');
+  return rows[0];
+}
+
+async function setPrematchTaskStatus(task, status) {
+  const now = new Date().toISOString();
+  const query = new URLSearchParams({
+    id: `eq.${task.id}`,
+    version: `eq.${task.version}`
+  });
+  const rows = await supabaseRequest(`${prematchTasksTable}?${query.toString()}`, {
+    method: 'PATCH',
+    body: {
+      status,
+      archived_at: status === 'archived' ? now : null,
+      version: Number(task.version || 1) + 1,
+      updated_at: now
+    },
+    prefer: 'return=representation'
+  });
+  if (!rows[0]) throw httpError(409, '任务已在其他设备更新，请刷新后重试。');
+  return rows[0];
+}
+
+async function deletePrematchTask(task) {
+  await supabaseRequest(
+    `${prematchTasksTable}?id=eq.${encodeURIComponent(task.id)}`,
+    { method: 'DELETE' }
+  );
+}
+
+async function fetchPrematchRecentMessages(taskId, limit = 24) {
+  const rows = await supabaseRequest(
+    `${prematchMessagesTable}?${new URLSearchParams({
+      select: 'id,task_id,user_id,role,content,structured_update,context_manifest,client_request_id,created_at',
+      task_id: `eq.${taskId}`,
+      order: 'created_at.desc,id.desc',
+      limit: String(Math.floor(clampNumber(limit, 1, 100)))
+    }).toString()}`
+  );
+  assertPrematchRowsBelongToTask(rows, taskId, 'messages');
+  return rows.reverse();
+}
+
+async function fetchPrematchTrainingLinks(taskId, limit = 20) {
+  const rows = await supabaseRequest(
+    `${prematchTrainingLinksTable}?${new URLSearchParams({
+      select: 'id,task_id,training_record_id,user_id,training_mode,training_goal,verification_question,strategy_summary,result_summary,created_at',
+      task_id: `eq.${taskId}`,
+      order: 'created_at.desc,id.desc',
+      limit: String(Math.floor(clampNumber(limit, 1, 100)))
+    }).toString()}`
+  );
+  assertPrematchRowsBelongToTask(rows, taskId, 'training_links');
+  return rows.reverse();
+}
+
+async function fetchPrematchExchangeByRequestId(taskId, clientRequestId) {
+  if (!isUuid(taskId) || !isUuid(clientRequestId)) return null;
+  const rows = await supabaseRequest(
+    `${prematchMessagesTable}?${new URLSearchParams({
+      select: 'id,task_id,user_id,role,content,structured_update,context_manifest,client_request_id,created_at',
+      task_id: `eq.${taskId}`,
+      client_request_id: `eq.${clientRequestId}`,
+      order: 'created_at.asc,id.asc',
+      limit: '2'
+    }).toString()}`
+  );
+  assertPrematchRowsBelongToTask(rows, taskId, 'idempotent_exchange');
+  const mapped = rows.map(mapPrematchMessageFromDb);
+  const userMessage = mapped.find((message) => message.role === 'user');
+  const assistantMessage = mapped.find((message) => message.role === 'assistant');
+  return userMessage && assistantMessage ? { userMessage, assistantMessage } : null;
+}
+
+async function persistPrematchExchange(task, userId, {
+  question,
+  answer,
+  structuredUpdate,
+  taskSummary,
+  contextManifest,
+  clientRequestId
+}) {
+  const createdAt = Date.now();
+  const body = [
+    {
+      task_id: task.id,
+      user_id: userId,
+      role: 'user',
+      content: limitLength(redactSensitiveText(question), 1200),
+      structured_update: null,
+      context_manifest: null,
+      client_request_id: clientRequestId,
+      created_at: new Date(createdAt).toISOString()
+    },
+    {
+      task_id: task.id,
+      user_id: userId,
+      role: 'assistant',
+      content: limitLength(redactSensitiveText(answer), 4000),
+      structured_update: {
+        ...structuredUpdate,
+        taskSummary: limitLength(normalizeText(taskSummary), 4000)
+      },
+      context_manifest: contextManifest,
+      client_request_id: clientRequestId,
+      created_at: new Date(createdAt + 1).toISOString()
+    }
+  ];
+
+  try {
+    const rows = await supabaseRequest(prematchMessagesTable, {
+      method: 'POST',
+      body,
+      prefer: 'return=representation'
+    });
+    assertPrematchRowsBelongToTask(rows, task.id, 'persisted_exchange');
+    const mapped = rows.map(mapPrematchMessageFromDb);
+    return {
+      userMessage: mapped.find((message) => message.role === 'user'),
+      assistantMessage: mapped.find((message) => message.role === 'assistant')
+    };
+  } catch (error) {
+    if (error?.code === 'SUPABASE_REQUEST_FAILED' && error.status === 409) {
+      const existing = await fetchPrematchExchangeByRequestId(task.id, clientRequestId);
+      if (existing) return existing;
+    }
+    throw error;
+  }
+}
+
+async function applyPrematchChatUpdate(task, {
+  structuredUpdate,
+  taskSummary,
+  clientRequestId,
+  recovery = false
+}) {
+  let current = task;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const strategy = mergePrematchStrategy(current.strategy_state, structuredUpdate, {
+      preserveConcurrentArrays: recovery || attempt > 0,
+      appliedRequestId: clientRequestId
+    });
+    const currentStage = normalizeText(structuredUpdate?.currentStage);
+    const nextStage = ['understanding', 'analysis', 'brainstorming', 'strategy', 'training', 'ready'].includes(currentStage)
+      ? currentStage
+      : current.current_stage;
+    const summary = attempt > 0 && normalizeText(current.context_summary) !== normalizeText(task.context_summary)
+      ? current.context_summary
+      : limitLength(normalizeText(taskSummary) || normalizeText(current.context_summary), 4000);
+    const nextVersion = Number(current.version || 1) + 1;
+    const query = new URLSearchParams({
+      id: `eq.${current.id}`,
+      version: `eq.${current.version}`
+    });
+    const rows = await supabaseRequest(`${prematchTasksTable}?${query.toString()}`, {
+      method: 'PATCH',
+      body: {
+        strategy_state: strategy,
+        context_summary: summary,
+        current_stage: nextStage,
+        version: nextVersion,
+        updated_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    });
+    if (rows[0]) return rows[0];
+    current = await fetchPrematchTaskRow(current.id);
+    if (!current) throw httpError(404, '备战任务已在本轮对话期间被删除。');
+  }
+  throw httpError(409, '任务在其他设备发生更新，本轮对话已保存，请刷新任务状态。');
+}
+
+async function tryLinkPrematchTrainingResult({ body, authUser, savedRecord }) {
+  const taskId = normalizeText(body.sourcePrepTaskId || body.source_prep_task_id);
+  if (!taskId) return null;
+  if (!isUuid(taskId)) return { status: 'invalid_task' };
+  if (!authUser?.id) return { status: 'login_required' };
+
+  try {
+    const task = await requireAuthorizedPrematchTask(taskId, authUser.id);
+    const recordSpace = normalizeSpaceType(savedRecord?.space_type);
+    const sameSpace = task.space_type === recordSpace;
+    const sameTeam = task.space_type !== 'team'
+      || normalizeTeamCode(task.team_code) === normalizeTeamCode(savedRecord?.team_code);
+    if (!sameSpace || !sameTeam || normalizeText(savedRecord?.app_user_id) !== authUser.id) {
+      throw httpError(403, '训练记录与来源备战任务不属于同一空间。');
+    }
+    if (
+      normalizeText(task.debate_topic) !== normalizeText(savedRecord?.topic)
+      || normalizeText(task.stance) !== normalizeText(savedRecord?.user_side)
+    ) {
+      throw httpError(403, '训练记录的辩题或立场已偏离来源备战任务，未自动回流。');
+    }
+
+    const existingRows = await supabaseRequest(
+      `${prematchTrainingLinksTable}?${new URLSearchParams({
+        select: 'id,task_id,training_record_id,user_id,training_mode,training_goal,verification_question,strategy_summary,result_summary,created_at',
+        training_record_id: `eq.${savedRecord.id}`,
+        limit: '1'
+      }).toString()}`
+    );
+    if (existingRows[0]) {
+      assertPrematchRowsBelongToTask(existingRows, task.id, 'existing_training_link');
+      return {
+        status: 'linked',
+        link: mapPrematchTrainingLinkFromDb(existingRows[0])
+      };
+    }
+
+    const resultSummary = normalizePrematchResultSummary(
+      body.prepResultSummary || body.prep_result_summary
+    );
+    const rows = await supabaseRequest(prematchTrainingLinksTable, {
+      method: 'POST',
+      body: {
+        task_id: task.id,
+        training_record_id: savedRecord.id,
+        user_id: authUser.id,
+        training_mode: normalizeTrainingMode(savedRecord.training_mode),
+        training_goal: limitLength(normalizeText(body.prepTrainingGoal || body.prep_training_goal), 500),
+        verification_question: limitLength(
+          normalizeText(body.prepVerificationQuestion || body.prep_verification_question),
+          500
+        ),
+        strategy_summary: limitLength(
+          normalizeText(body.prepStrategySummary || body.prep_strategy_summary),
+          1600
+        ),
+        result_summary: resultSummary
+      },
+      prefer: 'return=representation'
+    });
+    return {
+      status: 'linked',
+      link: mapPrematchTrainingLinkFromDb(rows[0])
+    };
+  } catch (error) {
+    const status = Number(error?.status);
+    console.warn('[prematch] Training result link skipped', {
+      task: fingerprintUserId(taskId),
+      record: fingerprintUserId(savedRecord?.id),
+      category: status === 404 ? 'missing' : status === 403 ? 'forbidden' : normalizeText(error?.code || 'failed')
+    });
+    return {
+      status: status === 404 ? 'missing' : status === 403 ? 'forbidden' : 'failed'
+    };
+  }
+}
+
+function mapPrematchTaskFromDb(task = {}) {
+  return {
+    id: normalizeText(task.id),
+    ownerUserId: normalizeText(task.owner_user_id),
+    spaceType: normalizeSpaceType(task.space_type),
+    teamCode: normalizeTeamCode(task.team_code),
+    title: normalizeText(task.title),
+    debateTopic: normalizeText(task.debate_topic),
+    stance: normalizeText(task.stance),
+    debatePosition: normalizeText(task.debate_position),
+    positionDetail: normalizeText(task.position_detail),
+    competitionName: normalizeText(task.competition_name),
+    competitionDate: normalizeText(task.competition_date),
+    competitionLevel: normalizeText(task.competition_level),
+    format: normalizeText(task.format),
+    preparationDeadline: normalizeText(task.preparation_deadline),
+    initialIdeas: normalizeText(task.initial_ideas),
+    opponentInfo: normalizeText(task.opponent_info),
+    priorityQuestion: normalizeText(task.priority_question),
+    status: task.status === 'archived' ? 'archived' : 'active',
+    currentStage: ['understanding', 'analysis', 'brainstorming', 'strategy', 'training', 'ready'].includes(task.current_stage)
+      ? task.current_stage
+      : 'understanding',
+    strategyState: normalizePrematchStrategy(task.strategy_state),
+    contextSummary: limitLength(normalizeText(task.context_summary), 4000),
+    version: Math.max(1, Number(task.version || 1)),
+    archivedAt: normalizeText(task.archived_at),
+    createdAt: normalizeText(task.created_at),
+    updatedAt: normalizeText(task.updated_at)
+  };
+}
+
+function mapPrematchMessageFromDb(message = {}) {
+  return {
+    id: normalizeText(message.id),
+    taskId: normalizeText(message.task_id),
+    userId: normalizeText(message.user_id),
+    role: message.role === 'assistant' ? 'assistant' : 'user',
+    content: limitLength(redactSensitiveText(message.content), 4000),
+    structuredUpdate: message.role === 'assistant' && message.structured_update
+      ? message.structured_update
+      : null,
+    contextManifest: message.role === 'assistant'
+      ? normalizePrematchContextManifest(message.context_manifest)
+      : null,
+    clientRequestId: normalizeText(message.client_request_id),
+    createdAt: normalizeText(message.created_at)
+  };
+}
+
+function mapPrematchTrainingLinkFromDb(link = {}) {
+  return {
+    id: normalizeText(link.id),
+    taskId: normalizeText(link.task_id),
+    trainingRecordId: normalizeText(link.training_record_id),
+    userId: normalizeText(link.user_id),
+    trainingMode: normalizeTrainingMode(link.training_mode),
+    trainingGoal: limitLength(normalizeText(link.training_goal), 500),
+    verificationQuestion: limitLength(normalizeText(link.verification_question), 500),
+    strategySummary: limitLength(normalizeText(link.strategy_summary), 1600),
+    resultSummary: normalizePrematchResultSummary(link.result_summary),
+    createdAt: normalizeText(link.created_at)
+  };
+}
+
+function assertPrematchTasksOwnedByUser(rows, userId, source) {
+  const mismatched = (Array.isArray(rows) ? rows : []).filter(
+    (row) => normalizeText(row?.owner_user_id) !== userId || row?.space_type !== 'personal'
+  );
+  if (!mismatched.length) return;
+  console.error('[prematch-security] Cross-user task rows rejected', {
+    source,
+    requestUser: fingerprintUserId(userId),
+    rejectedRows: mismatched.length
+  });
+  const error = httpError(500, '备战任务安全校验失败。');
+  error.code = 'PREMATCH_CROSS_USER_DATA';
+  throw error;
+}
+
+function assertPrematchRowsBelongToTask(rows, taskId, source) {
+  const mismatched = (Array.isArray(rows) ? rows : []).filter(
+    (row) => normalizeText(row?.task_id) !== taskId
+  );
+  if (!mismatched.length) return;
+  console.error('[prematch-security] Cross-task rows rejected', {
+    source,
+    task: fingerprintUserId(taskId),
+    rejectedRows: mismatched.length
+  });
+  const error = httpError(500, '备战任务上下文安全校验失败。');
+  error.code = 'PREMATCH_CROSS_TASK_DATA';
+  throw error;
+}
+
+function logPrematchContextAudit(userId, taskId, context = {}) {
+  if (process.env.NODE_ENV === 'production' || process.env.LINWAN_CONTEXT_AUDIT !== 'true') return;
+  console.debug('[prematch-context-audit]', {
+    requestUser: fingerprintUserId(userId),
+    task: fingerprintUserId(taskId),
+    taskMessageCount: context.recentMessages?.length || 0,
+    linkedTrainingCount: context.trainingLinks?.length || 0,
+    trainingProfileUsed: Number(context.abilityProfile?.scoredRecordCount || 0) > 0
+  });
+}
+
 function fingerprintUserId(userId) {
   return crypto.createHash('sha256').update(String(userId || '')).digest('hex').slice(0, 12);
 }
@@ -2925,6 +3833,9 @@ function getPublicErrorMessage(error) {
 
   if (error.code === 'SUPABASE_REQUEST_FAILED') {
     const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
+    if (/prematch_tasks|prematch_messages|prematch_training_links/i.test(detailText)) {
+      return '赛前备战表结构尚未更新，请先在 Supabase 执行 supabase-prematch-prep.sql。';
+    }
     if (/linwan_user_profile|context_manifest/i.test(detailText)) {
       return '林婉历史与设置表结构尚未更新，请先在 Supabase 执行 supabase-linwan-history-profile.sql。';
     }

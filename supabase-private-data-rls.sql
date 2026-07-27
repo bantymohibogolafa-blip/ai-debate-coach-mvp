@@ -12,6 +12,9 @@ alter table if exists public.team_task_assignments enable row level security;
 alter table if exists public.linwan_messages enable row level security;
 alter table if exists public.linwan_memory enable row level security;
 alter table if exists public.linwan_user_profile enable row level security;
+alter table if exists public.prematch_tasks enable row level security;
+alter table if exists public.prematch_messages enable row level security;
+alter table if exists public.prematch_training_links enable row level security;
 
 -- Custom application JWTs are not Supabase Auth JWTs. Do not add auth.uid()
 -- policies for these tables unless authentication is migrated to Supabase Auth.
@@ -25,3 +28,6 @@ revoke all on table public.team_task_assignments from anon, authenticated;
 revoke all on table public.linwan_messages from anon, authenticated;
 revoke all on table public.linwan_memory from anon, authenticated;
 revoke all on table public.linwan_user_profile from anon, authenticated;
+revoke all on table public.prematch_tasks from anon, authenticated;
+revoke all on table public.prematch_messages from anon, authenticated;
+revoke all on table public.prematch_training_links from anon, authenticated;
