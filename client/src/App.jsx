@@ -6,6 +6,7 @@ import LinWanSettingsPanel from './components/LinWanSettingsPanel.jsx';
 import OnboardingGuide from './components/OnboardingGuide.jsx';
 import ReviewGeneratingCard from './components/ReviewGeneratingCard.jsx';
 import SpeechInputButton from './components/SpeechInputButton.jsx';
+import SuperLinWanPrep from './components/SuperLinWanPrep.jsx';
 import { getAbilityVideosForDimension } from './data/abilityVideoMap.js';
 import useSpeechInput from './hooks/useSpeechInput.js';
 import {
@@ -408,6 +409,8 @@ function App() {
   const [isTaskDetailLoading, setIsTaskDetailLoading] = useState(false);
   const [taskDetailError, setTaskDetailError] = useState('');
   const [activeTaskSession, setActiveTaskSession] = useState(null);
+  const [activePrepTrainingContext, setActivePrepTrainingContext] = useState(null);
+  const [prepReturnTaskId, setPrepReturnTaskId] = useState('');
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isTeamDataLoading, setIsTeamDataLoading] = useState(false);
@@ -700,6 +703,8 @@ function App() {
     setTeamTasks([]);
     setPersonalAbilityEstimate(null);
     setTeamAbilityEstimate(null);
+    setActivePrepTrainingContext(null);
+    setPrepReturnTaskId('');
     setCurrentTrainingSpace(personalSpace);
     setActiveTab('training');
     setAuthStatus(statusMessage);
@@ -1513,6 +1518,8 @@ function App() {
       rounds: selectedMode.rounds || 3
     };
 
+    setActivePrepTrainingContext(null);
+    setPrepReturnTaskId('');
     setCurrentTrainingSpace({ type: 'team', teamCode: task.teamCode || currentTeam?.teamCode });
     setConfig(taskConfig);
     setHistory([]);
@@ -1542,6 +1549,80 @@ function App() {
     if (longOutputModes.includes(mode)) {
       setLongOutputPromptMode(mode);
     }
+  }
+
+  function startPrematchTraining(task, recommendation, strategySummary = '') {
+    if (!task || !recommendation || isBusy || isRecording) return;
+    if (!isLoggedIn) {
+      requestLogin('登录后才能从备战任务进入正式训练。');
+      return;
+    }
+    if (!['affirmative', 'negative'].includes(task.stance)) {
+      return;
+    }
+    const mode = trainingModes.some((item) => item.value === recommendation.mode)
+      ? recommendation.mode
+      : 'free_debate';
+    const modeConfig = trainingModes.find((item) => item.value === mode) || trainingModes[2];
+    const prepSeed = [
+      strategySummary,
+      task.initialIdeas ? `队伍已有思路：${task.initialIdeas}` : '',
+      recommendation.goal ? `本次训练目标：${recommendation.goal}` : '',
+      recommendation.verificationQuestion ? `重点验证：${recommendation.verificationQuestion}` : ''
+    ].filter(Boolean).join('\n').slice(0, 2400);
+    const nextContext = {
+      taskId: task.id,
+      title: task.title,
+      debateTopic: task.debateTopic,
+      stance: task.stance,
+      debatePosition: task.debatePosition,
+      positionDetail: task.positionDetail || '',
+      spaceType: task.spaceType || 'personal',
+      teamCode: task.teamCode || '',
+      mode,
+      difficulty: ['novice', 'campus', 'city'].includes(recommendation.difficulty)
+        ? recommendation.difficulty
+        : 'novice',
+      trainingGoal: recommendation.goal || '',
+      strategySummary: String(strategySummary || '').slice(0, 1600),
+      verificationQuestion: recommendation.verificationQuestion || '',
+      reason: recommendation.reason || ''
+    };
+
+    if (nextContext.spaceType === 'team' && nextContext.teamCode) {
+      setCurrentTrainingSpace({ type: 'team', teamCode: nextContext.teamCode });
+    } else {
+      setCurrentTrainingSpace(personalSpace);
+    }
+    setConfig({
+      topic: task.debateTopic,
+      userSide: task.stance,
+      difficulty: nextContext.difficulty,
+      celebrityDebater: 'none',
+      trainingMode: mode,
+      rounds: modeConfig.rounds || 3
+    });
+    setDefensePrep(mode === 'defense' ? prepSeed : '');
+    setFreeDebatePrep(mode === 'free_debate' ? prepSeed : '');
+    setHistory([]);
+    setAnswer('');
+    setReview('');
+    setStructuredReview(null);
+    setError('');
+    setSelectedRecord(null);
+    setSaveStatus('已从赛前备战带入辩题、立场和本次训练目标。');
+    clearPolishWorkspace();
+    setSelectedPolishType((polishOptionsByMode[mode] || polishOptionsByMode.general)[0].id);
+    setActiveTaskSession(null);
+    setActivePrepTrainingContext(nextContext);
+    setPrepReturnTaskId(task.id);
+    setSetupStep(getSetupStepForMode(mode, {
+      hasDefensePrep: mode === 'defense' && Boolean(prepSeed),
+      hasFreeDebatePrep: mode === 'free_debate' && Boolean(prepSeed)
+    }));
+    setMobileSetupStep(mode === 'defense' || mode === 'free_debate' ? 'config' : 'confirm');
+    setLongOutputPromptMode(longOutputModes.includes(mode) ? mode : '');
+    setActiveTab('training');
   }
 
   async function saveTrainingRecord(reviewContent, reviewData = null, messagesForReview = reviewableMessages) {
@@ -1595,7 +1676,18 @@ function App() {
         battlefield: reviewData?.battlefield || extractBattlefieldFromReview(reviewContent),
         modeDisplayName: reviewData?.modeDisplayName || getOptionLabel(trainingModes, config.trainingMode),
         scoreLevel: reviewData?.scoreLevel || '',
-        dimensionScores: Array.isArray(reviewData?.dimensionScores) ? reviewData.dimensionScores : []
+        dimensionScores: Array.isArray(reviewData?.dimensionScores) ? reviewData.dimensionScores : [],
+        ...buildPrematchTrainingPayload(activePrepTrainingContext),
+        prepResultSummary: activePrepTrainingContext ? {
+          score: recordScore,
+          scoreLevel: reviewData?.scoreLevel || '',
+          result: extractResultFromReview(reviewContent),
+          battlefield: reviewData?.battlefield || extractBattlefieldFromReview(reviewContent),
+          mainWeakness: reviewData?.mainWeakness || '',
+          weaknesses: Array.isArray(reviewData?.weaknesses) ? reviewData.weaknesses : [],
+          nextStepAdvice: Array.isArray(reviewData?.nextStepAdvice) ? reviewData.nextStepAdvice : [],
+          completedAt: new Date().toISOString()
+        } : null
       });
 
       if (data.record) {
@@ -1616,7 +1708,15 @@ function App() {
         }
       }
 
-      setSaveStatus('本次训练记录已保存。');
+      if (activePrepTrainingContext && data.prematchLink?.status === 'linked') {
+        setSaveStatus('本次训练记录已保存，并已将结构化结果带回赛前备战任务。');
+      } else if (activePrepTrainingContext && data.prematchLink?.status === 'missing') {
+        setSaveStatus('训练记录已保存，但来源备战任务已被删除，无法回流。');
+      } else if (activePrepTrainingContext && data.prematchLink && data.prematchLink.status !== 'linked') {
+        setSaveStatus('训练记录已保存，但备战任务关联暂时失败；返回任务后可以继续讨论。');
+      } else {
+        setSaveStatus('本次训练记录已保存。');
+      }
       if (recordSpaceType === 'team') {
         loadTeamData(currentSpace.teamCode);
         loadTeamTasks(currentSpace.teamCode);
@@ -1806,6 +1906,7 @@ function App() {
       aiSideLabel: getOptionLabel(sides, getOpponentSideValue(config.userSide)),
       defensePrep: defensePrep.trim(),
       freeDebatePrep: freeDebatePrep.trim(),
+      ...buildPrematchTrainingPayload(activePrepTrainingContext),
       startedAt: new Date().toISOString()
     };
     setTrainingSession(nextTrainingSession);
@@ -1871,6 +1972,7 @@ function App() {
         aiSideLabel: getOptionLabel(sides, getOpponentSideValue(config.userSide)),
         defensePrep: trainingSession?.defensePrep ?? defensePrep.trim(),
         freeDebatePrep: trainingSession?.freeDebatePrep ?? freeDebatePrep.trim(),
+        ...buildPrematchTrainingPayload(activePrepTrainingContext),
         history: nextHistory,
         answer: trimmedAnswer
       });
@@ -1912,6 +2014,7 @@ function App() {
         aiSideLabel: sessionForReview.aiSideLabel || getOptionLabel(sides, getOpponentSideValue(config.userSide)),
         defensePrep: sessionForReview.defensePrep ?? defensePrep.trim(),
         freeDebatePrep: sessionForReview.freeDebatePrep ?? freeDebatePrep.trim(),
+        ...buildPrematchTrainingPayload(activePrepTrainingContext),
         history: messagesForReview
       });
       const content = requireContent(data);
@@ -1958,6 +2061,14 @@ function App() {
       trainingMode: nextMode,
       rounds: modeConfig.rounds || config.rounds
     });
+    setActivePrepTrainingContext((current) => (
+      current
+        ? {
+            ...current,
+            mode: nextMode
+          }
+        : current
+    ));
     setHistory([]);
     setAnswer('');
     setReview('');
@@ -2002,6 +2113,16 @@ function App() {
     prepareNextTraining(recommendedMode, `已切换到${modeLabel}，可以针对短板专项训练。`);
   }
 
+  function returnToPrematchTask() {
+    const taskId = activePrepTrainingContext?.taskId || prepReturnTaskId;
+    if (!taskId) return;
+    setPrepReturnTaskId(taskId);
+    setActivePrepTrainingContext(null);
+    setLongOutputPromptMode('');
+    setActiveTab('preparation');
+    setSelectedRecord(null);
+  }
+
   function resetTraining() {
     if (isBusy || isRecording) return;
 
@@ -2026,6 +2147,8 @@ function App() {
     setSetupStep('topic');
     setLongOutputPromptMode('');
     setActiveTaskSession(null);
+    setActivePrepTrainingContext(null);
+    setPrepReturnTaskId('');
   }
 
   async function polishAnswer(polishType = activePolishType) {
@@ -2170,6 +2293,12 @@ function App() {
   }
 
   const functionGroups = [
+    {
+      title: '备战',
+      items: [
+        { label: '赛前备战', value: 'preparation' }
+      ]
+    },
     {
       title: '训练',
       items: [
@@ -2895,6 +3024,19 @@ function App() {
         </div>
       )}
 
+      {activeTab === 'preparation' && (
+        <SuperLinWanPrep
+          api={{ getJson, postJson, patchJson, deleteJson }}
+          isLoggedIn={isLoggedIn}
+          currentUser={currentUser}
+          currentSpace={currentSpace}
+          currentTeam={currentTeam}
+          initialTaskId={prepReturnTaskId}
+          onRequestLogin={requestLogin}
+          onStartTraining={startPrematchTraining}
+        />
+      )}
+
       {activeTab === 'training' && (
       <>
       {!hasSessionContent && setupStep === 'mode' && (
@@ -2951,7 +3093,7 @@ function App() {
       )}
 
       {!hasSessionContent && (
-        <MobileTrainingSetup
+      <MobileTrainingSetup
           panelRef={mobileSetupRef}
           topicInputRef={mobileTopicInputRef}
           step={mobileSetupStep}
@@ -2988,6 +3130,24 @@ function App() {
           }}
           onStart={startTraining}
         />
+      )}
+
+      {activePrepTrainingContext && (
+        <section className="task-session-banner prematch-training-banner">
+          <span>来自赛前备战</span>
+          <strong>{activePrepTrainingContext.title}</strong>
+          <small>
+            {getOptionLabel(trainingModes, activePrepTrainingContext.mode)}
+            {activePrepTrainingContext.debatePosition
+              ? ` · 辩位：${getPrematchPositionLabel(activePrepTrainingContext.debatePosition, activePrepTrainingContext.positionDetail)}`
+              : ''}
+          </small>
+          {activePrepTrainingContext.trainingGoal && <small>本次目标：{activePrepTrainingContext.trainingGoal}</small>}
+          {activePrepTrainingContext.verificationQuestion && <small>重点验证：{activePrepTrainingContext.verificationQuestion}</small>}
+          <button type="button" onClick={returnToPrematchTask} disabled={isBusy || isRecording}>
+            返回 Super 林婉
+          </button>
+        </section>
       )}
 
       {activeTaskSession && (
@@ -3493,6 +3653,11 @@ function App() {
               <button type="button" onClick={switchToRecommendedTrainingMode}>
                 换成推荐模式训练
               </button>
+              {activePrepTrainingContext && (
+                <button type="button" className="prematch-return-button" onClick={returnToPrematchTask}>
+                  返回 Super 林婉调整战略
+                </button>
+              )}
             </div>
           </div>
         </section>
@@ -6892,6 +7057,29 @@ function isTeamManagerRole(role) {
   return isTeamLeaderRole(role) || role === 'admin';
 }
 
+function buildPrematchTrainingPayload(context) {
+  if (!context?.taskId) return {};
+  return {
+    sourcePrepTaskId: context.taskId,
+    prepTrainingGoal: context.trainingGoal || '',
+    prepStrategySummary: context.strategySummary || '',
+    prepVerificationQuestion: context.verificationQuestion || ''
+  };
+}
+
+function getPrematchPositionLabel(position, detail = '') {
+  const labels = {
+    first: '一辩',
+    second: '二辩',
+    third: '三辩',
+    fourth: '四辩',
+    undecided: '暂未确定',
+    other: '其他或特殊赛制'
+  };
+  const base = labels[position] || '暂未确定';
+  return position === 'other' && detail ? `${base} · ${detail}` : base;
+}
+
 function getOpponentSideValue(userSide) {
   const normalized = normalizeSideValue(userSide);
   return normalized === 'affirmative' ? 'negative' : 'affirmative';
@@ -7359,6 +7547,10 @@ async function postJson(url, body, options = {}) {
 
 async function putJson(url, body, options = {}) {
   return requestJson(url, { method: 'PUT', body, signal: options.signal });
+}
+
+async function patchJson(url, body, options = {}) {
+  return requestJson(url, { method: 'PATCH', body, signal: options.signal });
 }
 
 async function deleteJson(url, options = {}) {

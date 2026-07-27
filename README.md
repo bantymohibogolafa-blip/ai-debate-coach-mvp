@@ -16,6 +16,8 @@ ai-debate-coach-mvp/
 ├─ supabase-linwan-memory.sql
 ├─ supabase-team-task-4.sql
 ├─ supabase-scoring-rubrics.sql
+├─ supabase-prematch-prep.sql
+├─ supabase-private-data-rls.sql
 ├─ client/
 │  ├─ package.json
 │  ├─ index.html
@@ -65,6 +67,9 @@ SUPABASE_TEAM_TASK_ASSIGNMENTS_TABLE=team_task_assignments
 SUPABASE_APP_USERS_TABLE=app_users
 SUPABASE_LINWAN_MESSAGES_TABLE=linwan_messages
 SUPABASE_LINWAN_PROFILE_TABLE=linwan_user_profile
+SUPABASE_PREMATCH_TASKS_TABLE=prematch_tasks
+SUPABASE_PREMATCH_MESSAGES_TABLE=prematch_messages
+SUPABASE_PREMATCH_TRAINING_LINKS_TABLE=prematch_training_links
 JWT_SECRET=replace-with-a-long-random-secret-at-least-32-chars
 JWT_EXPIRES_IN=30d
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
@@ -98,9 +103,11 @@ supabase-linwan-memory.sql
 supabase-linwan-history-profile.sql
 supabase-team-task-4.sql
 supabase-scoring-rubrics.sql
+supabase-prematch-prep.sql
+supabase-private-data-rls.sql
 ```
 
-这些迁移会创建或更新当前后端默认使用的 `teams`、`team_members`、`training_records`、`app_users`、`team_tasks`、`team_task_assignments`、`linwan_messages`、`linwan_user_profile` 和保留兼容的 `linwan_memory`。`supabase-linwan-history-profile.sql` 会为林婉消息增加 `context_manifest` 并创建“我的林婉”设置表；旧 `linwan_memory` 数据不会迁移，新聊天逻辑也不再读取或更新它。如果你已经建过旧版 `debate_training_records`，可以保留旧表；当前代码默认使用 `training_records`。后端使用 service role key 访问 Supabase REST API，因此前端不会接触 Supabase key。
+这些迁移会创建或更新当前后端默认使用的 `teams`、`team_members`、`training_records`、`app_users`、`team_tasks`、`team_task_assignments`、`linwan_messages`、`linwan_user_profile`、`prematch_tasks`、`prematch_messages`、`prematch_training_links` 和保留兼容的 `linwan_memory`。`supabase-linwan-history-profile.sql` 会为林婉消息增加 `context_manifest` 并创建“我的林婉”设置表；旧 `linwan_memory` 数据不会迁移，新聊天逻辑也不再读取或更新它。`supabase-prematch-prep.sql` 创建赛前任务、任务消息和训练结果关联表；删除备战任务只级联删除关联关系，不删除正式训练记录。最后执行 `supabase-private-data-rls.sql`，禁止浏览器端使用 anon/authenticated 角色直接读取私有表。如果你已经建过旧版 `debate_training_records`，可以保留旧表；当前代码默认使用 `training_records`。后端使用 service role key 访问 Supabase REST API，因此前端不会接触 Supabase key。
 
 ## 本地运行步骤
 
@@ -182,6 +189,9 @@ SUPABASE_TEAM_TASK_ASSIGNMENTS_TABLE=team_task_assignments
 SUPABASE_APP_USERS_TABLE=app_users
 SUPABASE_LINWAN_MESSAGES_TABLE=linwan_messages
 SUPABASE_LINWAN_PROFILE_TABLE=linwan_user_profile
+SUPABASE_PREMATCH_TASKS_TABLE=prematch_tasks
+SUPABASE_PREMATCH_MESSAGES_TABLE=prematch_messages
+SUPABASE_PREMATCH_TRAINING_LINKS_TABLE=prematch_training_links
 JWT_SECRET=replace-with-a-long-random-secret-at-least-32-chars
 JWT_EXPIRES_IN=30d
 ALIYUN_NLS_APPKEY=your-aliyun-nls-appkey
@@ -224,7 +234,7 @@ API Key 错误、失效或账号权限不足。请重新生成 Key，并确认�
 
 ### 4. 后端提示 Supabase 表结构尚未更新
 
-确认已经按顺序执行 `supabase-team-spaces.sql`、`supabase-team-admin-roles.sql`、`supabase-auth-1.sql`、`supabase-linwan-memory.sql`、`supabase-team-task-4.sql` 和 `supabase-scoring-rubrics.sql`。
+确认已经按顺序执行 `supabase-team-spaces.sql`、`supabase-team-admin-roles.sql`、`supabase-auth-1.sql`、`supabase-linwan-memory.sql`、`supabase-linwan-history-profile.sql`、`supabase-team-task-4.sql`、`supabase-scoring-rubrics.sql`、`supabase-prematch-prep.sql` 和 `supabase-private-data-rls.sql`。
 
 ### 5. 林婉语音提示“语音服务暂未配置”
 
