@@ -347,7 +347,7 @@ export function getScoreLevel(score) {
 
 export function calculateWeightedScore(dimensionScores, rubric) {
   const rubricDimensions = Array.isArray(rubric?.dimensions) ? rubric.dimensions : [];
-  if (!rubricDimensions.length || !Array.isArray(dimensionScores) || dimensionScores.length < rubricDimensions.length) {
+  if (!rubricDimensions.length || !Array.isArray(dimensionScores) || dimensionScores.length !== rubricDimensions.length) {
     throw scoringDimensionsError('评分维度缺失。');
   }
 
@@ -363,21 +363,12 @@ export function calculateWeightedScore(dimensionScores, rubric) {
     throw scoringDimensionsError('评分权重配置无效。');
   }
 
-  const usedIndexes = new Set();
-  const normalizedDimensions = rubricDimensions.map((dimension, rubricIndex) => {
+  const providedByName = new Map(
+    dimensionScores.map((dimension) => [normalizeDimensionName(dimension?.name), dimension])
+  );
+  const normalizedDimensions = rubricDimensions.map((dimension) => {
     const expectedName = normalizeDimensionName(dimension.name);
-    let providedIndex = dimensionScores.findIndex((item, index) => (
-      !usedIndexes.has(index) && normalizeDimensionName(item?.name) === expectedName
-    ));
-
-    if (providedIndex < 0 && !usedIndexes.has(rubricIndex)) {
-      providedIndex = rubricIndex;
-    }
-    if (providedIndex < 0) {
-      providedIndex = dimensionScores.findIndex((item, index) => !usedIndexes.has(index));
-    }
-
-    const provided = providedIndex >= 0 ? dimensionScores[providedIndex] : null;
+    const provided = providedByName.get(expectedName);
     const rawScore = provided?.score;
     const numericScore = Number(rawScore);
     const providedMaxScore = Number(provided?.maxScore ?? provided?.max_score ?? 100);
@@ -393,7 +384,6 @@ export function calculateWeightedScore(dimensionScores, rubric) {
       throw scoringDimensionsError(`评分维度“${dimension.name}”缺失或无效。`);
     }
 
-    usedIndexes.add(providedIndex);
     const normalizedScore = providedMaxScore === 100
       ? numericScore
       : (numericScore / providedMaxScore) * 100;

@@ -15,6 +15,7 @@ import {
   getMobileTrainingStepAvailability,
   validateMobileTrainingSetup
 } from './utils/mobileTrainingSetup.js';
+import { normalizeAbilityHistoryValue } from './utils/abilityChart.js';
 import { appendSpeechTranscript, stopPlaybackBeforeSpeechInput } from './utils/speechInput.js';
 import {
   createCompletedPolishResult,
@@ -4406,12 +4407,13 @@ function AbilityTrendCardInteractive({ meta, points }) {
   const [selectedPointIndex, setSelectedPointIndex] = useState(null);
   const pointData = points.map((item, index) => {
     const rawValue = meta.key === 'overall' ? item.overall : item.dimensions?.[meta.key];
-    const value = Number(rawValue);
+    const value = normalizeAbilityHistoryValue(rawValue);
 
     return {
       ...item,
       pointIndex: index,
       value,
+      dimensionKey: meta.key,
       dimensionName: meta.label,
       dimensionScore: value,
       source: item.source || {}
@@ -4510,16 +4512,34 @@ function AbilityPointSourceCard({ point }) {
   const difficultyLabel = getAbilityDifficultyLabel(source.difficulty);
   const sideLabel = getAbilitySideLabel(source.userSide);
   const score = Number.isFinite(Number(source.score)) ? formatNullableNumber(source.score) : '--';
-  const dimensionScore = Number.isFinite(Number(point?.dimensionScore)) ? formatNullableNumber(point.dimensionScore) : '--';
+  const projectedScores = source.projectedScores && typeof source.projectedScores === 'object'
+    ? source.projectedScores
+    : {};
+  const projectedValue = point?.dimensionKey === 'overall'
+    ? source.projectedOverall
+    : projectedScores[point?.dimensionKey];
+  const projectedScore = projectedValue !== null
+    && projectedValue !== undefined
+    && projectedValue !== ''
+    && Number.isFinite(Number(projectedValue))
+    ? formatNullableNumber(projectedValue)
+    : '--';
+  const overallEstimate = point?.overall !== null
+    && point?.overall !== undefined
+    && point?.overall !== ''
+    && Number.isFinite(Number(point.overall))
+    ? formatNullableNumber(point.overall)
+    : '--';
   const rows = [
     ['辩题', topic],
     ['时间', createdAt ? formatRecordDate(createdAt) : '时间未知'],
     ['模式', modeLabel || '模式未知'],
     ['难度', difficultyLabel || '难度未知'],
     ['立场', sideLabel || '立场未知'],
-    ['总分', `${score} / 100`],
+    ['本次训练总分', `${score} / 100`],
     ['当前维度', point?.dimensionName || '维度未知'],
-    ['维度分数', `${dimensionScore} / 100`]
+    ['本次维度投射分', `${projectedScore} / 100`],
+    ['训练后综合锋力估测', `${overallEstimate} / 100`]
   ];
 
   if (source.teamName || source.teamCode) {

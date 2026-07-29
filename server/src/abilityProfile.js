@@ -1,4 +1,5 @@
 import { getScoringRubric } from './scoringRubrics.js';
+import { getTrainingRecordVersionMetadata } from './scoringVersions.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -71,6 +72,12 @@ export const abilityModeProjection = {
     '价值升华与判断标准': { battlefieldControl: 0.6, logic: 0.4 },
     '逻辑收束与表达感染力': { logic: 0.6, expression: 0.4 },
     '时间控制与结构完整': { expression: 0.7, logic: 0.3 }
+  }
+};
+
+const abilityDimensionNameAliases = {
+  free_debate: {
+    '团队协同与战术意识': '战术选择与临场判断'
   }
 };
 
@@ -211,6 +218,18 @@ export function calculateAbilityProfile(records = []) {
     observedDimensionCount: observedDimensions.length,
     dimensions
   };
+}
+
+export function calculateProjectedOverall(projectedScores = {}) {
+  const observedDimensions = abilityDimensions.filter((dimension) => (
+    parseFiniteScore(projectedScores?.[dimension.key]) !== null
+  ));
+  const observedWeight = observedDimensions.reduce((sum, dimension) => sum + dimension.weight, 0);
+  if (!observedWeight) return null;
+  return observedDimensions.reduce(
+    (sum, dimension) => sum + parseFiniteScore(projectedScores[dimension.key]) * dimension.weight,
+    0
+  ) / observedWeight;
 }
 
 export function buildAbilityEstimate(records = [], { historyLimit = 120 } = {}) {
@@ -405,6 +424,8 @@ function normalizeAbilityRecord(record = {}) {
   );
   const coveredDimensions = Object.keys(projectedScores);
   if (!coveredDimensions.length) return null;
+  const projectedOverall = calculateProjectedOverall(projectedScores);
+  const versionMetadata = getTrainingRecordVersionMetadata(record);
 
   const id = String(record.id || '').trim();
   const stableKey = [
@@ -427,8 +448,10 @@ function normalizeAbilityRecord(record = {}) {
     rawScore: score,
     adjustedScore: clamp(score + difficultyBonus, 0, 100),
     projectedScores,
+    projectedOverall,
     trainingMode,
-    coveredDimensions
+    coveredDimensions,
+    ...versionMetadata
   };
 }
 
@@ -443,11 +466,29 @@ export function projectAbilityDimensions(record = {}) {
       ? record.dimensionScores
       : [];
   const scoreByName = new Map();
+  const nameAliases = abilityDimensionNameAliases[trainingMode] || {};
 
-  providedScores.forEach((dimension) => {
-    const name = String(dimension?.name || '').trim();
-    const score = parseFiniteScore(dimension?.score);
-    if (!name || score === null || score < 0 || score > 100 || scoreByName.has(name)) return;
+  const normalizedProvidedScores = providedScores
+    .map((dimension) => {
+      const sourceName = String(dimension?.name || '').trim();
+      const name = projection[sourceName] ? sourceName : nameAliases[sourceName];
+      const score = parseFiniteScore(dimension?.score);
+      const maxScore = parseFiniteScore(dimension?.maxScore ?? dimension?.max_score ?? 100);
+      if (!name || score === null || maxScore === null || maxScore <= 0 || score < 0) return null;
+      const normalizedScore = maxScore === 100 ? score : (score / maxScore) * 100;
+      if (!Number.isFinite(normalizedScore)) return null;
+      return {
+        name,
+        score: clamp(normalizedScore, 0, 100),
+        isCanonicalName: sourceName === name
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => Number(right.isCanonicalName) - Number(left.isCanonicalName));
+
+  normalizedProvidedScores.forEach((dimension) => {
+    const { name, score } = dimension;
+    if (scoreByName.has(name)) return;
     scoreByName.set(name, score);
   });
 
@@ -512,6 +553,15 @@ function buildAbilityHistorySource(record = {}) {
     userSide: record.user_side || record.userSide || '',
     aiSide: record.ai_side || record.aiSide || '',
     score: roundNullable(record.rawScore),
+    projectedScores: Object.fromEntries(
+      Object.entries(record.projectedScores || {}).map(([key, value]) => [key, roundNullable(value)])
+    ),
+    projectedOverall: roundNullable(record.projectedOverall),
+    scoringVersion: record.scoringVersion || '',
+    rubricId: record.rubricId || '',
+    projectionVersion: record.projectionVersion || '',
+    difficultyCalibrationVersion: record.difficultyCalibrationVersion || '',
+    estimatorVersion: record.estimatorVersion || '',
     teamCode: record.team_code || record.teamCode || '',
     spaceType: record.space_type || record.spaceType || '',
     taskId: record.task_id || record.taskId || '',

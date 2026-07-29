@@ -30,6 +30,13 @@ import {
   normalizeScoringMode
 } from './scoringRubrics.js';
 import { buildAbilityEstimate, buildRecentBehaviorEvidence } from './abilityProfile.js';
+import {
+  CURRENT_DIFFICULTY_CALIBRATION_VERSION,
+  CURRENT_ESTIMATOR_VERSION,
+  CURRENT_PROJECTION_VERSION,
+  CURRENT_SCORING_VERSION,
+  getTrainingRecordVersionMetadata
+} from './scoringVersions.js';
 import { buildAbilityTaskRecommendations } from './teamTaskRecommendation.js';
 import { getPolishOptions, getPolishTypeProfile } from './polishPrompts.js';
 import {
@@ -1568,6 +1575,11 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     mode_display_name: modeDisplayName || getScoringRubric(trainingMode).rubric.displayName,
     score_level: scoreLevel || getScoreLevel(score) || '',
     dimension_scores: dimensionScores,
+    scoring_version: CURRENT_SCORING_VERSION,
+    rubric_id: getScoringRubric(trainingMode).rubric.id,
+    projection_version: CURRENT_PROJECTION_VERSION,
+    difficulty_calibration_version: CURRENT_DIFFICULTY_CALIBRATION_VERSION,
+    estimator_version: CURRENT_ESTIMATOR_VERSION,
     created_at: new Date().toISOString()
   };
 
@@ -5696,7 +5708,7 @@ async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '', 
     ? { app_user_id: `eq.${appUserId}` }
     : { local_user_id: `eq.${localUserId}`, app_user_id: 'is.null' };
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
+    select: '*',
     space_type: 'eq.personal',
     ...identityFilter
   });
@@ -5714,7 +5726,7 @@ async function fetchPersonalTrainingRecords(localUserId, limit, appUserId = '', 
 async function fetchMyTrainingRecords(teamCode, localUserId, limit, page = {}) {
   const identityFilter = isUuid(localUserId) ? { app_user_id: `eq.${localUserId}` } : { local_user_id: `eq.${localUserId}` };
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
+    select: '*',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
     ...identityFilter
@@ -5731,7 +5743,7 @@ async function fetchMyTrainingRecords(teamCode, localUserId, limit, page = {}) {
 
 async function fetchTeamTrainingRecords(teamCode, limit, page = {}) {
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
+    select: '*',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`
   });
@@ -6031,7 +6043,7 @@ function buildRecommendationGoal(name = '') {
 
 async function fetchAllTeamRecordsForStats(teamCode) {
   const query = new URLSearchParams({
-    select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,mode_display_name,score_level,dimension_scores,created_at',
+    select: '*',
     space_type: 'eq.team',
     team_code: `eq.${teamCode}`,
     order: 'created_at.desc',
@@ -6119,13 +6131,22 @@ async function insertTrainingRecord(record) {
   } catch (error) {
     if (!isSupabaseSchemaError(error)) throw error;
     const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
-    const isScoringSchemaOnly = /mode_display_name|score_level|dimension_scores/i.test(detailText);
+    const isVersionSchemaOnly = /scoring_version|rubric_id|projection_version|difficulty_calibration_version|estimator_version/i.test(detailText);
+    const isLegacyScoringSchemaOnly = /mode_display_name|score_level|dimension_scores/i.test(detailText);
+    const isScoringSchemaOnly = isVersionSchemaOnly || isLegacyScoringSchemaOnly;
     if (record.task_id && !isScoringSchemaOnly) throw error;
 
     const legacyRecord = { ...record };
-    delete legacyRecord.mode_display_name;
-    delete legacyRecord.score_level;
-    delete legacyRecord.dimension_scores;
+    delete legacyRecord.scoring_version;
+    delete legacyRecord.rubric_id;
+    delete legacyRecord.projection_version;
+    delete legacyRecord.difficulty_calibration_version;
+    delete legacyRecord.estimator_version;
+    if (isLegacyScoringSchemaOnly) {
+      delete legacyRecord.mode_display_name;
+      delete legacyRecord.score_level;
+      delete legacyRecord.dimension_scores;
+    }
     if (!isScoringSchemaOnly) {
       delete legacyRecord.space_type;
       delete legacyRecord.app_user_id;
@@ -6201,6 +6222,7 @@ async function supabaseRequest(pathname, options = {}) {
 
 function mapTrainingRecordFromDb(record = {}) {
   const completedRecord = withCompletedTrainingMessages(record);
+  const versionMetadata = getTrainingRecordVersionMetadata(completedRecord);
   return {
     id: completedRecord.id,
     spaceType: completedRecord.space_type || (completedRecord.team_code ? 'team' : 'personal'),
@@ -6223,6 +6245,7 @@ function mapTrainingRecordFromDb(record = {}) {
     modeDisplayName: completedRecord.mode_display_name || '',
     scoreLevel: completedRecord.score_level || '',
     dimensionScores: Array.isArray(completedRecord.dimension_scores) ? completedRecord.dimension_scores : [],
+    ...versionMetadata,
     createdAt: completedRecord.created_at
   };
 }

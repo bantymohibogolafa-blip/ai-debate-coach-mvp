@@ -3,6 +3,12 @@ import http from 'node:http';
 import test from 'node:test';
 import jwt from 'jsonwebtoken';
 import { getScoringRubric } from '../src/scoringRubrics.js';
+import {
+  CURRENT_DIFFICULTY_CALIBRATION_VERSION,
+  CURRENT_ESTIMATOR_VERSION,
+  CURRENT_PROJECTION_VERSION,
+  CURRENT_SCORING_VERSION
+} from '../src/scoringVersions.js';
 
 const USER_ID = '60000000-0000-4000-8000-000000000001';
 const LOCAL_USER_ID = 'user_70000000-0000-4000-8000-000000000001';
@@ -89,6 +95,11 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(saved.body.record.score, attackReview.structuredReview.score);
   assert.equal(saved.body.record.scoreLevel, attackReview.structuredReview.scoreLevel);
   assert.deepEqual(saved.body.record.dimensionScores, attackReview.structuredReview.dimensionScores);
+  assert.equal(saved.body.record.scoringVersion, CURRENT_SCORING_VERSION);
+  assert.equal(saved.body.record.rubricId, getScoringRubric('attack').rubric.id);
+  assert.equal(saved.body.record.projectionVersion, CURRENT_PROJECTION_VERSION);
+  assert.equal(saved.body.record.difficultyCalibrationVersion, CURRENT_DIFFICULTY_CALIBRATION_VERSION);
+  assert.equal(saved.body.record.estimatorVersion, CURRENT_ESTIMATOR_VERSION);
   assert.deepEqual(saved.body.record.messages, history.slice(0, 2));
   assert.equal(harness.trainingRows[0].score, attackReview.structuredReview.score);
   assert.deepEqual(harness.trainingRows[0].messages, history.slice(0, 2));
@@ -104,6 +115,7 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(reopened.status, 200);
   assert.equal(reopened.body.records[0].score, attackReview.structuredReview.score);
   assert.deepEqual(reopened.body.records[0].dimensionScores, attackReview.structuredReview.dimensionScores);
+  assert.equal(reopened.body.records[0].scoringVersion, CURRENT_SCORING_VERSION);
   assert.deepEqual(reopened.body.records[0].messages, history.slice(0, 2));
 
   const ability = await requestJson(
@@ -114,6 +126,10 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(ability.status, 200);
   assert.equal(ability.body.scoredRecordCount, 1);
   assert.equal(ability.body.history[0].source.score, attackReview.structuredReview.score);
+  assert.equal(ability.body.history[0].source.scoringVersion, CURRENT_SCORING_VERSION);
+  assert.equal(typeof ability.body.history[0].source.projectedOverall, 'number');
+  assert.equal(typeof ability.body.history[0].source.projectedScores.logic, 'number');
+  assert.equal(ability.body.history[0].overall, ability.body.history[0].source.projectedOverall);
   assert.equal(ability.body.observedDimensionCount, 4);
   assert.equal(ability.body.totalDimensionCount, 5);
   assert.equal(ability.body.coverage, 81);
