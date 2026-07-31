@@ -653,7 +653,7 @@ function PrematchTaskForm({ form, error, isSaving, submitLabel, onChange, onSubm
           onChange={(event) => change('debateTopic', event.target.value)}
           rows={5}
           maxLength={500}
-          placeholder="例如：辩题是人工智能会不会削弱人的创造力，我是正方，目前不知道如何建立判准。"
+          placeholder="例如：辩题是人工智能会不会削弱人的创造力"
           required
         />
       </label>
