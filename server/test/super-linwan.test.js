@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildPersonalTaskLinWanMessages,
   buildSuperLinWanMessages,
+  createPersonalTaskContextManifest,
   createPrematchContextManifest,
+  getDefaultPersonalTaskMemory,
   getDefaultPrematchStrategy,
   markPrematchStrategyForReassessment,
+  mergePersonalTaskMemory,
   mergePrematchStrategy,
+  normalizePersonalTaskMemory,
   normalizePrematchStrategy,
+  parsePersonalTaskLinWanResponse,
   parseSuperLinWanResponse
 } from '../src/superLinwan.js';
 import { buildReviewMessages, buildStartMessages } from '../src/prompts.js';
@@ -170,4 +176,149 @@ test('all formal training prompts carry bounded preparation goals without changi
   assert.match(startText, /当前是防守训练：AI 只攻，用户只防守/);
   assert.match(reviewText, /三个论点是否共用同一标准/);
   assert.match(reviewText, /当前训练模式：结辩训练/);
+});
+
+test('personal task prompt is isolated from training, daily history, other tasks and ability profiles', () => {
+  const messages = buildPersonalTaskLinWanMessages({
+    task: {
+      id: 'personal-a',
+      debateTopic: '人工智能会不会削弱人的创造力',
+      stance: 'affirmative',
+      initialIdeas: '先讨论创造力的定义'
+    },
+    memory: {
+      confirmedDecisions: ['当前任务确认内容'],
+      rejectedDecisions: ['当前任务否定内容']
+    },
+    taskSummary: '只属于当前任务的稳定摘要',
+    recentMessages: [
+      { role: 'user', content: '当前任务定义 A' },
+      { role: 'assistant', content: '继续讨论定义 A' }
+    ],
+    currentQuestion: '下一步讨论什么？',
+    intent: 'chat',
+    displayName: '小锋'
+  });
+  const joined = messages.map((message) => message.content).join('\n');
+
+  assert.match(joined, /当前任务定义 A/);
+  assert.match(joined, /只属于当前任务的稳定摘要/);
+  assert.match(joined, /当前任务确认内容/);
+  assert.match(joined, /当前任务否定内容/);
+  assert.match(joined, /当前登录用户显示名称：小锋/);
+  assert.equal(joined.includes('能力画像原文'), false);
+  assert.equal(joined.includes('过去训练记录原文'), false);
+  assert.equal(joined.includes('其他任务消息原文'), false);
+  assert.equal(joined.includes('日常林婉历史原文'), false);
+  assert.equal(joined.includes('团队私有信息原文'), false);
+});
+
+test('personal memory keeps a revised decision as current and prevents the old version from returning', () => {
+  const initial = mergePersonalTaskMemory(getDefaultPersonalTaskMemory(), {
+    currentPosition: {
+      stance: 'affirmative',
+      definitions: ['稳定等于低风险。']
+    },
+    confirmedDecisions: ['稳定等于低风险。']
+  });
+  const revised = mergePersonalTaskMemory(initial, {
+    currentPosition: {
+      stance: 'affirmative',
+      definitions: ['稳定等于可预期的发展路径。']
+    },
+    confirmedDecisions: ['稳定等于可预期的发展路径。'],
+    decisionChanges: [{
+      from: '稳定等于低风险。',
+      to: '稳定等于可预期的发展路径。',
+      reason: '用户修正定义',
+      changeType: 'revised',
+      changedAt: '2'
+    }]
+  });
+  const normalized = normalizePersonalTaskMemory({
+    ...revised,
+    confirmedDecisions: [
+      ...revised.confirmedDecisions,
+      '稳定等于低风险。'
+    ]
+  });
+
+  assert.deepEqual(normalized.currentPosition.definitions, ['稳定等于可预期的发展路径。']);
+  assert.deepEqual(normalized.confirmedDecisions, ['稳定等于可预期的发展路径。']);
+  assert.equal(normalized.decisionChanges[0].from, '稳定等于低风险。');
+  assert.equal(JSON.stringify(normalized).includes('"confirmedDecisions":["稳定等于低风险。"]'), false);
+});
+
+test('personal parser keeps candidate ideas separate from confirmed and records rejection history', () => {
+  const parsed = parsePersonalTaskLinWanResponse(JSON.stringify({
+    answer: '这个方向可以考虑，但还不能确认。',
+    taskSummary: '方向 B 是候选，方向 C 已否定。',
+    structuredUpdate: {
+      confirmedDecisions: [],
+      candidateIdeas: ['方向 B'],
+      rejectedDecisions: ['方向 C'],
+      decisionChanges: [{
+        from: '方向 C',
+        to: '',
+        reason: '用户明确否定',
+        changeType: 'rejected',
+        changedAt: '3'
+      }]
+    }
+  }));
+
+  assert.deepEqual(parsed.structuredUpdate.confirmedDecisions, []);
+  assert.deepEqual(parsed.structuredUpdate.candidateIdeas, ['方向 B']);
+  assert.deepEqual(parsed.structuredUpdate.rejectedDecisions, ['方向 C']);
+  assert.equal(parsed.structuredUpdate.decisionChanges[0].changeType, 'rejected');
+});
+
+test('personal intent instructions reserve evidence downgrade and report classification', () => {
+  const shared = {
+    task: { id: 'personal-a', debateTopic: '测试辩题', stance: 'undecided' },
+    memory: getDefaultPersonalTaskMemory(),
+    taskSummary: '已确认 A；候选 B；已否定 C；已修改 D；待解决 E',
+    recentMessages: [],
+    currentQuestion: '继续'
+  };
+  const evidence = buildPersonalTaskLinWanMessages({ ...shared, intent: 'evidence' })
+    .map((message) => message.content).join('\n');
+  const report = buildPersonalTaskLinWanMessages({ ...shared, intent: 'report' })
+    .map((message) => message.content).join('\n');
+
+  assert.match(evidence, /本轮 intent=evidence/);
+  assert.match(evidence, /绝不联网/);
+  assert.match(evidence, /检索方案，不是已经核实的证据/);
+  assert.match(report, /本轮 intent=report/);
+  assert.match(report, /已确认、候选、已否定、已修改、尚未解决/);
+
+  const manifest = createPersonalTaskContextManifest('report', [{ role: 'user', content: '当前消息' }]);
+  assert.equal(manifest.intent, 'report');
+  assert.equal(manifest.trainingProfile.used, false);
+  assert.equal(manifest.taskContext.linkedTrainingResults, 0);
+});
+
+test('personal prompt preserves older decisions through summary and structured memory beyond recent messages', () => {
+  const recentMessages = Array.from({ length: 30 }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `最近窗口消息-${index + 1}`
+  }));
+  const messages = buildPersonalTaskLinWanMessages({
+    task: { id: 'personal-a', debateTopic: '测试辩题', stance: 'affirmative' },
+    memory: {
+      confirmedDecisions: ['早期但仍有效的定义 A'],
+      rejectedDecisions: ['早期已否定方案 B']
+    },
+    taskSummary: '长期摘要继续保留定义 A 与方案 B 的状态。',
+    recentMessages,
+    currentQuestion: '继续讨论',
+    intent: 'chat'
+  });
+  const joined = messages.map((message) => message.content).join('\n');
+
+  assert.match(joined, /早期但仍有效的定义 A/);
+  assert.match(joined, /早期已否定方案 B/);
+  assert.match(joined, /长期摘要继续保留定义 A/);
+  assert.equal(joined.includes('最近窗口消息-1\n'), false);
+  assert.match(joined, /最近窗口消息-30/);
 });

@@ -55,7 +55,7 @@ test('personal task lists and detail access use only the verified account', asyn
   assert.equal(harness.calls.some((call) => call.table === 'prematch_messages'), false);
 });
 
-test('Super Lin Wan reads only the current task, reuses settings, and never reads daily history', async (t) => {
+test('personal Super Lin Wan reads only the current task and excludes profiles, training and daily history', async (t) => {
   const harness = createHarness();
   const port = await listen(t, harness.fetch);
   const response = await requestJson(
@@ -66,6 +66,7 @@ test('Super Lin Wan reads only the current task, reuses settings, and never read
     {
       question: '这个方向适合做主战场吗？',
       clientRequestId: REQUEST_A,
+      intent: 'expand',
       chatHistory: [{ role: 'user', content: TASK_B_MARKER }],
       user_id: USER_B
     }
@@ -75,17 +76,22 @@ test('Super Lin Wan reads only the current task, reuses settings, and never read
   assert.equal(response.body.task.id, TASK_A);
   assert.equal(response.body.userMessage.taskId, TASK_A);
   assert.equal(response.body.assistantMessage.taskId, TASK_A);
-  assert.equal(response.body.task.strategyState.coreBattlefield, '制度可预期性');
-  assert.equal(response.body.task.strategyState.confirmedPoints.includes('保留机制比较'), true);
+  assert.equal(response.body.task.strategyState.currentPosition.activePlan, '制度可预期性');
+  assert.equal(response.body.task.strategyState.confirmedDecisions.includes('保留机制比较'), true);
+  assert.equal(response.body.task.contextSummary, '已确认保留机制比较，下一步验证制度可预期性。');
 
   assert.equal(harness.calls.some((call) => call.table === 'linwan_messages'), false);
+  assert.equal(harness.calls.some((call) => call.table === 'linwan_user_profile'), false);
+  assert.equal(harness.calls.some((call) => call.table === 'training_records'), false);
+  assert.equal(harness.calls.some((call) => call.table === 'prematch_training_links'), false);
   assert.equal(harness.modelRequests.length, 1);
   const prompt = harness.modelRequests[0].map((message) => message.content).join('\n');
   assert.match(prompt, new RegExp(TASK_A_MARKER));
   assert.equal(prompt.includes(TASK_B_MARKER), false);
   assert.equal(prompt.includes(DAILY_MARKER), false);
-  assert.match(prompt, /称呼其为“账户A称呼”/);
-  assert.match(prompt, /当前状态：Super 林婉/);
+  assert.match(prompt, /当前登录用户显示名称/);
+  assert.match(prompt, /本轮 intent=expand/);
+  assert.match(prompt, /你是 Super 林婉/);
 
   const versionAfterFirstResponse = response.body.task.version;
   const duplicate = await requestJson(
@@ -123,6 +129,88 @@ test('a cross-task database row is rejected before it reaches the model', async 
   assert.equal(harness.modelRequests.length, 0);
 });
 
+test('chat intent defaults to chat, rejects invalid values, and persists report intent', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+
+  const legacy = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/chat`,
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      question: '旧客户端不传 intent',
+      clientRequestId: '83000000-0000-4000-8000-000000000011'
+    }
+  );
+  assert.equal(legacy.status, 200);
+  assert.equal(legacy.body.contextManifest.intent, 'chat');
+  assert.match(
+    harness.modelRequests[0].map((message) => message.content).join('\n'),
+    /本轮 intent=chat/
+  );
+
+  const invalid = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/chat`,
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      question: '非法 intent',
+      clientRequestId: '83000000-0000-4000-8000-000000000012',
+      intent: 'search-now'
+    }
+  );
+  assert.equal(invalid.status, 400);
+  assert.match(invalid.body.message, /intent 无效/);
+  assert.equal(harness.modelRequests.length, 1);
+
+  const report = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/chat`,
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      question: '请形成当前思路报告。',
+      clientRequestId: '83000000-0000-4000-8000-000000000013',
+      intent: 'report'
+    }
+  );
+  assert.equal(report.status, 200);
+  assert.equal(report.body.assistantMessage.contextManifest.intent, 'report');
+  assert.match(
+    harness.modelRequests[1].map((message) => message.content).join('\n'),
+    /已确认、候选、已否定、已修改、尚未解决/
+  );
+  assert.match(
+    harness.modelRequests[1].map((message) => message.content).join('\n'),
+    /已确认保留机制比较，下一步验证制度可预期性/
+  );
+});
+
+test('evidence intent stays offline and asks only for an unverified retrieval plan', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const response = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/chat`,
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      question: '帮我搜集论据方向。',
+      clientRequestId: '83000000-0000-4000-8000-000000000014',
+      intent: 'evidence'
+    }
+  );
+
+  assert.equal(response.status, 200);
+  const prompt = harness.modelRequests[0].map((message) => message.content).join('\n');
+  assert.match(prompt, /本轮 intent=evidence/);
+  assert.match(prompt, /绝不联网/);
+  assert.match(prompt, /检索方案，不是已经核实的证据/);
+  assert.equal(harness.calls.some((call) => call.table === 'prematch_training_links'), false);
+});
+
 test('changing stance marks the existing strategy for reassessment with optimistic versioning', async (t) => {
   const harness = createHarness();
   const port = await listen(t, harness.fetch);
@@ -143,8 +231,8 @@ test('changing stance marks the existing strategy for reassessment with optimist
   assert.equal(result.status, 200);
   assert.equal(result.body.task.stance, 'negative');
   assert.equal(result.body.task.currentStage, 'understanding');
-  assert.equal(result.body.task.strategyState.needsReassessment, true);
-  assert.match(result.body.task.strategyState.reassessmentReason, /立场已修改/);
+  assert.equal(result.body.task.strategyState.currentPosition.stance, 'negative');
+  assert.match(result.body.task.strategyState.unresolvedQuestions.join('\n'), /立场变化/);
   assert.equal(result.body.task.version, 2);
 
   const stale = await requestJson(
@@ -184,6 +272,76 @@ test('retired team Super Lin Wan scope is rejected before reading team data', as
     harness.calls.some((call) => call.table === 'prematch_tasks' || call.table === 'team_members'),
     false
   );
+});
+
+test('personal task creation needs only debateTopic and generates defaults and title', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const topic = '  人工智能会不会削弱人的创造力，   当前需要先建立判准。  ';
+  const created = await requestJson(
+    port,
+    '/api/prematch/tasks',
+    auth(signToken(USER_A)),
+    'POST',
+    { debateTopic: topic }
+  );
+
+  assert.equal(created.status, 201);
+  assert.equal(created.body.task.debateTopic, topic.trim());
+  assert.equal(created.body.task.stance, 'undecided');
+  assert.equal(created.body.task.debatePosition, 'undecided');
+  assert.match(created.body.task.title, /^人工智能会不会削弱人的创造力/);
+  assert.equal(created.body.task.strategyState.version, 2);
+});
+
+test('archived personal task cannot chat and restored task can continue', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const archived = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/archive`,
+    auth(signToken(USER_A)),
+    'POST',
+    {}
+  );
+  assert.equal(archived.status, 200);
+  assert.equal(archived.body.task.status, 'archived');
+
+  const blocked = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/chat`,
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      question: '归档后不应继续',
+      clientRequestId: '83000000-0000-4000-8000-000000000015'
+    }
+  );
+  assert.equal(blocked.status, 409);
+  assert.equal(harness.modelRequests.length, 0);
+
+  const restored = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/restore`,
+    auth(signToken(USER_A)),
+    'POST',
+    {}
+  );
+  assert.equal(restored.status, 200);
+  assert.equal(restored.body.task.status, 'active');
+
+  const continued = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/chat`,
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      question: '恢复后继续',
+      clientRequestId: '83000000-0000-4000-8000-000000000016'
+    }
+  );
+  assert.equal(continued.status, 200);
+  assert.equal(harness.modelRequests.length, 1);
 });
 
 test('completed formal training links back as a structured summary only', async (t) => {
@@ -233,6 +391,217 @@ test('completed formal training links back as a structured summary only', async 
   assert.equal(serializedLink.includes('正式复盘摘要'), false);
 });
 
+test('two personal tasks remain isolated through twelve persisted chat rounds and reload', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const createdTasks = [];
+
+  for (const marker of ['隔离任务甲', '隔离任务乙']) {
+    const created = await requestJson(
+      port,
+      '/api/prematch/tasks',
+      auth(signToken(USER_A)),
+      'POST',
+      {
+        title: marker,
+        debateTopic: `${marker}辩题`,
+        stance: 'affirmative',
+        debatePosition: 'second',
+        spaceType: 'personal'
+      }
+    );
+    assert.equal(created.status, 201);
+    createdTasks.push(created.body.task);
+  }
+
+  const [taskA, taskB] = createdTasks;
+  assert.notEqual(taskA.id, taskB.id);
+
+  for (let round = 1; round <= 12; round += 1) {
+    const marker = `第${round}轮测试标记-${String(round).padStart(2, '0')}`;
+    const response = await requestJson(
+      port,
+      `/api/prematch/tasks/${taskA.id}/chat`,
+      auth(signToken(USER_A)),
+      'POST',
+      {
+        question: marker,
+        clientRequestId: `93000000-0000-4000-8000-${String(round).padStart(12, '0')}`
+      }
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.body.userMessage.content, marker);
+    assert.equal(response.body.userMessage.taskId, taskA.id);
+    assert.equal(response.body.assistantMessage.taskId, taskA.id);
+  }
+
+  const reloadedA = await requestJson(
+    port,
+    `/api/prematch/tasks/${taskA.id}`,
+    auth(signToken(USER_A))
+  );
+  const reloadedB = await requestJson(
+    port,
+    `/api/prematch/tasks/${taskB.id}`,
+    auth(signToken(USER_A))
+  );
+
+  assert.equal(reloadedA.status, 200);
+  assert.equal(reloadedA.body.messages.length, 25);
+  assert.equal(reloadedA.body.messages[0].role, 'assistant');
+  assert.equal(reloadedA.body.messages.at(-2).content, '第12轮测试标记-12');
+  assert.equal(reloadedA.body.messages.at(-1).role, 'assistant');
+  assert.equal(new Set(reloadedA.body.messages.map((message) => message.id)).size, 25);
+  assert.equal(reloadedA.body.messages.every((message) => message.taskId === taskA.id), true);
+
+  assert.equal(reloadedB.status, 200);
+  assert.equal(reloadedB.body.messages.length, 1);
+  assert.equal(reloadedB.body.messages[0].role, 'assistant');
+  assert.equal(JSON.stringify(reloadedB.body).includes('第12轮测试标记-12'), false);
+});
+
+test('personal Super Lin Wan never requests an ability profile', async (t) => {
+  const harness = createHarness({ abilityProfileFailure: true });
+  const port = await listen(t, harness.fetch);
+  const response = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/chat`,
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      question: '画像故障降级测试',
+      clientRequestId: '93000000-0000-4000-8000-000000000101'
+    }
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.userMessage.content, '画像故障降级测试');
+  assert.equal(response.body.assistantMessage.contextManifest.trainingProfile.used, false);
+  assert.equal(harness.calls.some((call) => call.table === 'training_records'), false);
+  assert.match(harness.modelRequests[0].map((message) => message.content).join('\n'), /不得调用或暗示知道.*能力画像/);
+});
+
+test('task creation currently succeeds even when its opening message cannot be persisted', async (t) => {
+  const harness = createHarness({ failOpeningMessage: true });
+  const port = await listen(t, harness.fetch);
+  const created = await requestJson(
+    port,
+    '/api/prematch/tasks',
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      title: '开场消息故障测试',
+      debateTopic: '测试非事务创建',
+      stance: 'affirmative',
+      debatePosition: 'first',
+      spaceType: 'personal'
+    }
+  );
+
+  assert.equal(created.status, 201);
+  assert.equal(created.body.task.title, '开场消息故障测试');
+  assert.equal(created.body.messages.length, 0);
+  assert.equal(
+    harness.messages.some((message) => message.task_id === created.body.task.id),
+    false
+  );
+});
+
+test('repeating the same task creation request creates duplicate tasks', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const payload = {
+    title: '重复创建测试',
+    debateTopic: '相同创建请求是否幂等',
+    stance: 'affirmative',
+    debatePosition: 'first',
+    spaceType: 'personal'
+  };
+  const first = await requestJson(
+    port,
+    '/api/prematch/tasks',
+    auth(signToken(USER_A)),
+    'POST',
+    payload
+  );
+  const second = await requestJson(
+    port,
+    '/api/prematch/tasks',
+    auth(signToken(USER_A)),
+    'POST',
+    payload
+  );
+
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 201);
+  assert.notEqual(first.body.task.id, second.body.task.id);
+  assert.equal(
+    harness.tasks.filter((task) => task.title === payload.title).length,
+    2
+  );
+});
+
+test('chat messages remain stored when the subsequent strategy snapshot update conflicts', async (t) => {
+  const harness = createHarness({ failTaskPatchAfterExchange: true });
+  const port = await listen(t, harness.fetch);
+  const requestId = '93000000-0000-4000-8000-000000000201';
+  const response = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/chat`,
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      question: '消息与阶段快照一致性测试',
+      clientRequestId: requestId
+    }
+  );
+
+  assert.equal(response.status, 409);
+  const stored = harness.messages.filter((message) => message.client_request_id === requestId);
+  assert.deepEqual(stored.map((message) => message.role), ['user', 'assistant']);
+  assert.equal(harness.tasks.find((task) => task.id === TASK_A).version, 1);
+
+  const reloaded = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}`,
+    auth(signToken(USER_A))
+  );
+  assert.equal(reloaded.status, 200);
+  assert.equal(
+    reloaded.body.messages.filter((message) => message.clientRequestId === requestId).length,
+    2
+  );
+  assert.equal(reloaded.body.task.version, 1);
+  assert.equal(reloaded.body.task.strategyState.currentPosition.activePlan, '');
+});
+
+test('task detail restores only the latest one hundred messages', async (t) => {
+  const harness = createHarness();
+  for (let index = 0; index < 120; index += 1) {
+    harness.messages.push({
+      ...messageRow(
+        `94000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        TASK_A,
+        USER_A,
+        index % 2 === 0 ? 'user' : 'assistant',
+        `历史消息-${String(index).padStart(3, '0')}`
+      ),
+      created_at: new Date(Date.UTC(2026, 6, 28, 0, 0, index)).toISOString()
+    });
+  }
+  const port = await listen(t, harness.fetch);
+  const detail = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}`,
+    auth(signToken(USER_A))
+  );
+
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.messages.length, 100);
+  assert.equal(detail.body.messages.some((message) => message.content === TASK_A_MARKER), false);
+  assert.equal(detail.body.messages.at(-1).content, '历史消息-119');
+});
+
 function createHarness(options = {}) {
   const calls = [];
   const modelRequests = [];
@@ -277,24 +646,21 @@ function createHarness(options = {}) {
               answer: '这个方向有价值，但要先补足比较对象。',
               taskSummary: '已确认保留机制比较，下一步验证制度可预期性。',
               structuredUpdate: {
-                currentStage: 'strategy',
-                coreBattlefield: '制度可预期性',
-                criterion: '比较哪方更能降低不可逆风险',
-                confirmedArguments: ['机制比较'],
-                alternativeArguments: [],
-                opponentRoutes: ['对方可能强调个体自由'],
+                taskUnderstanding: '比较两种机制的长期影响',
+                currentPosition: {
+                  stance: 'affirmative',
+                  definitions: [],
+                  criteria: ['比较哪方更能降低不可逆风险'],
+                  claims: ['机制比较'],
+                  activePlan: '制度可预期性'
+                },
+                confirmedDecisions: ['保留机制比较'],
+                candidateIdeas: ['对方可能强调个体自由'],
+                rejectedDecisions: ['不用纯个案'],
+                decisionChanges: [],
+                evidenceNeeds: ['制度长期影响的案例'],
                 risks: ['概念边界过宽'],
-                positionTasks: ['二辩负责概念切割'],
-                confirmedPoints: ['保留机制比较'],
-                rejectedPoints: [],
-                unresolvedQuestions: ['风险是否可逆'],
-                recommendedTrainings: [{
-                  mode: 'defense',
-                  difficulty: 'campus',
-                  reason: '概念边界需要验证',
-                  goal: '守住风险定义',
-                  verificationQuestion: '能否切开短期成本与不可逆伤害'
-                }]
+                unresolvedQuestions: ['风险是否可逆']
               }
             })
           }
@@ -315,10 +681,21 @@ function createHarness(options = {}) {
     if (table === 'prematch_tasks' && method === 'GET') {
       return Response.json(filterRows(tasks, url));
     }
+    if (table === 'prematch_tasks' && method === 'POST') {
+      const row = {
+        ...body,
+        id: `92000000-0000-4000-8000-${String(++sequence).padStart(12, '0')}`
+      };
+      tasks.push(row);
+      return Response.json([row]);
+    }
     if (table === 'team_members' && method === 'GET') {
       return Response.json(filterRows(teamMembers, url));
     }
     if (table === 'prematch_tasks' && method === 'PATCH') {
+      if (options.failTaskPatchAfterExchange && messages.some((message) => message.client_request_id)) {
+        return Response.json([]);
+      }
       const matches = filterRows(tasks, url);
       matches.forEach((row) => Object.assign(row, body));
       return Response.json(matches);
@@ -332,9 +709,20 @@ function createHarness(options = {}) {
       ) {
         return Response.json([...rows, messages.find((row) => row.task_id === TASK_B)]);
       }
-      return Response.json(rows.slice().reverse());
+      const descending = rows.slice().sort((left, right) => (
+        String(right.created_at).localeCompare(String(left.created_at))
+        || String(right.id).localeCompare(String(left.id))
+      ));
+      const limit = Number(url.searchParams.get('limit') || descending.length);
+      return Response.json(descending.slice(0, limit));
     }
     if (table === 'prematch_messages' && method === 'POST') {
+      if (options.failOpeningMessage && !Array.isArray(body)) {
+        return Response.json(
+          { code: 'TEST_OPENING_WRITE_FAILED', message: 'opening message write failed' },
+          { status: 500 }
+        );
+      }
       const rows = (Array.isArray(body) ? body : [body]).map((row) => ({
         ...row,
         id: `85000000-0000-4000-8000-${String(++sequence).padStart(12, '0')}`
@@ -366,7 +754,15 @@ function createHarness(options = {}) {
         auto_show_context: true
       }]);
     }
-    if (table === 'training_records' && method === 'GET') return Response.json(filterRows(trainingRecords, url));
+    if (table === 'training_records' && method === 'GET') {
+      if (options.abilityProfileFailure) {
+        return Response.json(
+          { code: 'TEST_PROFILE_UNAVAILABLE', message: 'ability profile unavailable' },
+          { status: 500 }
+        );
+      }
+      return Response.json(filterRows(trainingRecords, url));
+    }
     if (table === 'training_records' && method === 'POST') {
       const row = {
         ...body,

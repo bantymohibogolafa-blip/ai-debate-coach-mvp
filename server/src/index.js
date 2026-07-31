@@ -53,15 +53,16 @@ import {
   validateLinWanProfile
 } from './linwan.js';
 import {
-  buildSuperLinWanMessages,
-  createPrematchContextManifest,
-  getDefaultPrematchStrategy,
-  markPrematchStrategyForReassessment,
-  mergePrematchStrategy,
+  buildPersonalTaskLinWanMessages,
+  createPersonalTaskContextManifest,
+  getDefaultPersonalTaskMemory,
+  markPersonalTaskMemoryForReassessment,
+  mergePersonalTaskMemory,
   normalizePrematchContextManifest,
   normalizePrematchResultSummary,
-  normalizePrematchStrategy,
-  parseSuperLinWanResponse
+  normalizePersonalTaskMemory,
+  parsePersonalTaskLinWanResponse,
+  PERSONAL_TASK_INTENTS
 } from './superLinwan.js';
 import {
   buildReviewableMessages,
@@ -431,7 +432,7 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
 
     const existingExchange = await fetchPrematchExchangeByRequestId(task.id, chatPayload.clientRequestId);
     if (existingExchange) {
-      const appliedRequestIds = normalizePrematchStrategy(task.strategy_state).appliedRequestIds;
+      const appliedRequestIds = normalizePersonalTaskMemory(task.strategy_state).appliedRequestIds;
       if (!appliedRequestIds.includes(chatPayload.clientRequestId)) {
         const storedUpdate = existingExchange.assistantMessage.structuredUpdate || {};
         task = await applyPrematchChatUpdate(task, {
@@ -448,52 +449,25 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
       });
     }
 
-    const scope = {
-      spaceType: task.space_type,
-      teamCode: task.team_code || ''
-    };
-    const [profile, abilityProfile, recentMessages, trainingLinks] = await Promise.all([
-      fetchLinWanProfile(req.user.id, req.user.displayName),
-      fetchOptionalLinWanTrainingProfile(req.user.id, scope),
-      fetchPrematchRecentMessages(task.id, 24),
-      fetchPrematchTrainingLinks(task.id, 8)
-    ]);
-    const basePersonalityPrompt = buildDebateExperienceMessages({
-      question: '',
-      userTrainingProfile: null,
-      profile,
-      recentMessages: []
-    })[0].content;
-    const modelMessages = buildSuperLinWanMessages({
-      basePersonalityPrompt,
-      preferencePrompt: buildLinWanPreferencePrompt(profile),
-      abilityProfileText: formatDebateExperienceProfile(abilityProfile),
+    const recentMessages = await fetchPrematchRecentMessages(task.id, 24);
+    const modelMessages = buildPersonalTaskLinWanMessages({
       task: mapPrematchTaskFromDb(task),
-      strategy: task.strategy_state,
+      memory: task.strategy_state,
       taskSummary: task.context_summary,
-      trainingLinks: trainingLinks.map(mapPrematchTrainingLinkFromDb),
       recentMessages: recentMessages.map(mapPrematchMessageFromDb),
-      currentQuestion: chatPayload.question
-    });
-    logPrematchContextAudit(req.user.id, task.id, {
-      recentMessages,
-      trainingLinks,
-      abilityProfile
+      currentQuestion: chatPayload.question,
+      intent: chatPayload.intent,
+      displayName: req.user.displayName
     });
     const rawResponse = await callDeepSeek(modelMessages, {
-      maxTokens: Math.max(1600, getLinWanResponseMaxTokens(profile) + 700),
+      maxTokens: chatPayload.intent === 'report' ? 2600 : 1900,
       temperature: 0.5
     });
-    const parsedResponse = parseSuperLinWanResponse(rawResponse);
+    const parsedResponse = parsePersonalTaskLinWanResponse(rawResponse);
     const answer = cleanLinWanReply(parsedResponse.answer);
     if (!answer) throw httpError(502, 'Super 林婉暂时没有整理好回答，请重试。');
 
-    const contextManifest = createPrematchContextManifest(
-      profile,
-      abilityProfile,
-      recentMessages,
-      trainingLinks
-    );
+    const contextManifest = createPersonalTaskContextManifest(chatPayload.intent, recentMessages);
     const exchange = await persistPrematchExchange(task, req.user.id, {
       question: chatPayload.question,
       answer,
@@ -507,14 +481,12 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
       taskSummary: parsedResponse.taskSummary,
       clientRequestId: chatPayload.clientRequestId
     });
-    const refreshedLinks = await fetchPrematchTrainingLinks(task.id, 20);
-
     res.json({
       task: mapPrematchTaskFromDb(task),
       userMessage: exchange.userMessage,
       assistantMessage: exchange.assistantMessage,
       contextManifest,
-      trainingLinks: refreshedLinks.map(mapPrematchTrainingLinkFromDb),
+      trainingLinks: [],
       duplicated: false
     });
   } catch (error) {
@@ -2044,14 +2016,19 @@ function validatePrematchScope(input = {}) {
   };
 }
 
+function createPersonalTaskTitle(debateTopic) {
+  const compact = normalizeText(debateTopic).replace(/\s+/g, ' ').trim();
+  return compact.length > 48 ? `${compact.slice(0, 47)}…` : compact;
+}
+
 function validatePrematchTaskPayload(body = {}) {
   const scope = validatePrematchScope(body);
   const debateTopic = limitLength(normalizeText(body.debateTopic || body.debate_topic), 500);
-  const stance = normalizeText(body.stance);
-  const debatePosition = normalizeText(body.debatePosition || body.debate_position);
+  const stance = normalizeText(body.stance) || 'undecided';
+  const debatePosition = normalizeText(body.debatePosition || body.debate_position) || 'undecided';
   const positionDetail = limitLength(normalizeText(body.positionDetail || body.position_detail), 160);
   const title = limitLength(
-    normalizeText(body.title) || debateTopic.slice(0, 48),
+    normalizeText(body.title) || createPersonalTaskTitle(debateTopic),
     80
   );
 
@@ -2108,6 +2085,18 @@ function validatePrematchTaskPatch(body = {}, currentTask = {}) {
     if (Object.hasOwn(body, key)) merged[key] = body[key];
   });
   const payload = validatePrematchTaskPayload(merged);
+  if (
+    !Object.hasOwn(body, 'title')
+    && !Object.hasOwn(body, 'debateTopic')
+    && !Object.hasOwn(body, 'debate_topic')
+  ) {
+    payload.title = current.title;
+  } else if (
+    !Object.hasOwn(body, 'title')
+    && (Object.hasOwn(body, 'debateTopic') || Object.hasOwn(body, 'debate_topic'))
+  ) {
+    payload.title = createPersonalTaskTitle(payload.debateTopic);
+  }
   const expectedVersion = Number(body.expectedVersion ?? body.version ?? current.version);
   if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
     throw badRequest('任务版本无效，请刷新后重试。');
@@ -2131,12 +2120,17 @@ function validatePrematchTaskPatch(body = {}, currentTask = {}) {
 function validatePrematchChatPayload(body = {}) {
   const question = limitLength(normalizeText(body.question), 1200);
   const suppliedRequestId = normalizeText(body.clientRequestId || body.client_request_id);
+  const intent = normalizeText(body.intent) || 'chat';
   if (!isMeaningfulUserInput(question)) throw badRequest('请先输入想和 Super 林婉讨论的内容。');
+  if (!PERSONAL_TASK_INTENTS.includes(intent)) {
+    throw badRequest('聊天 intent 无效，请使用 chat、deconstruct、expand、evidence 或 report。');
+  }
   if (suppliedRequestId && !isUuid(suppliedRequestId)) {
     throw badRequest('本轮消息标识无效，请重试。');
   }
   return {
     question,
+    intent,
     clientRequestId: suppliedRequestId || crypto.randomUUID()
   };
 }
@@ -2878,7 +2872,8 @@ async function fetchPrematchTasks(userId, scope = {}, requestedStatus = 'active'
 
 async function createPrematchTask(user, payload) {
   const now = new Date().toISOString();
-  const strategy = getDefaultPrematchStrategy();
+  const strategy = getDefaultPersonalTaskMemory();
+  strategy.currentPosition.stance = payload.stance;
   strategy.updatedAt = now;
   const rows = await supabaseRequest(prematchTasksTable, {
     method: 'POST',
@@ -2919,7 +2914,7 @@ async function createPrematchTask(user, payload) {
         task_id: task.id,
         user_id: user.id,
         role: 'assistant',
-        content: '好，这次我们就围绕这场比赛来准备。先把你们已经想到的方向，或者你现在最担心的问题告诉我。我们先判断战场，再决定下一步怎么练。',
+        content: '好，这个任务我记住了。我们只围绕这里继续讨论。你可以直接说当前最想拆解的问题，也可以从“拆辩题、发散论点、搜集论据”里选一个开始。',
         structured_update: null,
         context_manifest: {
           version: 1,
@@ -2969,14 +2964,11 @@ async function requireAuthorizedPrematchTask(taskId, userId, options = {}) {
 }
 
 async function fetchPrematchTaskDetail(task, viewerUserId) {
-  const [messages, trainingLinks] = await Promise.all([
-    fetchPrematchRecentMessages(task.id, 100),
-    fetchPrematchTrainingLinks(task.id, 100)
-  ]);
+  const messages = await fetchPrematchRecentMessages(task.id, 100);
   return {
     task: mapPrematchTaskFromDb(task),
     messages: messages.map(mapPrematchMessageFromDb),
-    trainingLinks: trainingLinks.map(mapPrematchTrainingLinkFromDb),
+    trainingLinks: [],
     permissions: {
       canChat: task.status === 'active',
       canManage: await canManagePrematchTask(task, viewerUserId)
@@ -2992,15 +2984,16 @@ async function canManagePrematchTask(task, userId) {
 
 async function updatePrematchTask(task, payload) {
   const now = new Date().toISOString();
-  let strategy = normalizePrematchStrategy(task.strategy_state);
+  let strategy = normalizePersonalTaskMemory(task.strategy_state);
   let currentStage = task.current_stage;
   if (payload.changedFields.length) {
-    const reason = `${payload.changedFields.join('、')}已修改，已有战略需要重新评估。`;
-    strategy = markPrematchStrategyForReassessment(
+    const reason = `${payload.changedFields.join('、')}已修改，需要按新资料检查当前思路。`;
+    strategy = markPersonalTaskMemoryForReassessment(
       strategy,
       reason,
-      `重新检查${payload.changedFields.join('、')}变化对当前战略的影响`
+      `重新检查${payload.changedFields.join('、')}变化对当前思路的影响`
     );
+    strategy.currentPosition.stance = payload.stance;
     currentStage = 'understanding';
   }
   const query = new URLSearchParams({
@@ -3169,7 +3162,7 @@ async function applyPrematchChatUpdate(task, {
 }) {
   let current = task;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const strategy = mergePrematchStrategy(current.strategy_state, structuredUpdate, {
+    const strategy = mergePersonalTaskMemory(current.strategy_state, structuredUpdate, {
       preserveConcurrentArrays: recovery || attempt > 0,
       appliedRequestId: clientRequestId
     });
@@ -3303,7 +3296,9 @@ function mapPrematchTaskFromDb(task = {}) {
     currentStage: ['understanding', 'analysis', 'brainstorming', 'strategy', 'training', 'ready'].includes(task.current_stage)
       ? task.current_stage
       : 'understanding',
-    strategyState: normalizePrematchStrategy(task.strategy_state),
+    strategyState: task.space_type === 'personal'
+      ? normalizePersonalTaskMemory(task.strategy_state)
+      : task.strategy_state,
     contextSummary: limitLength(normalizeText(task.context_summary), 4000),
     version: Math.max(1, Number(task.version || 1)),
     archivedAt: normalizeText(task.archived_at),
@@ -3373,17 +3368,6 @@ function assertPrematchRowsBelongToTask(rows, taskId, source) {
   const error = httpError(500, '备战任务上下文安全校验失败。');
   error.code = 'PREMATCH_CROSS_TASK_DATA';
   throw error;
-}
-
-function logPrematchContextAudit(userId, taskId, context = {}) {
-  if (process.env.NODE_ENV === 'production' || process.env.LINWAN_CONTEXT_AUDIT !== 'true') return;
-  console.debug('[prematch-context-audit]', {
-    requestUser: fingerprintUserId(userId),
-    task: fingerprintUserId(taskId),
-    taskMessageCount: context.recentMessages?.length || 0,
-    linkedTrainingCount: context.trainingLinks?.length || 0,
-    trainingProfileUsed: Number(context.abilityProfile?.scoredRecordCount || 0) > 0
-  });
 }
 
 function fingerprintUserId(userId) {

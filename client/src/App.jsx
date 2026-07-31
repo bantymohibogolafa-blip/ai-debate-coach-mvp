@@ -1558,80 +1558,6 @@ function App() {
     }
   }
 
-  function startPrematchTraining(task, recommendation, strategySummary = '') {
-    if (!task || !recommendation || isBusy || isRecording) return;
-    if (!isLoggedIn) {
-      requestLogin('登录后才能从备战任务进入正式训练。');
-      return;
-    }
-    if (!['affirmative', 'negative'].includes(task.stance)) {
-      return;
-    }
-    const mode = trainingModes.some((item) => item.value === recommendation.mode)
-      ? recommendation.mode
-      : 'free_debate';
-    const modeConfig = trainingModes.find((item) => item.value === mode) || trainingModes[2];
-    const prepSeed = [
-      strategySummary,
-      task.initialIdeas ? `队伍已有思路：${task.initialIdeas}` : '',
-      recommendation.goal ? `本次训练目标：${recommendation.goal}` : '',
-      recommendation.verificationQuestion ? `重点验证：${recommendation.verificationQuestion}` : ''
-    ].filter(Boolean).join('\n').slice(0, 2400);
-    const nextContext = {
-      taskId: task.id,
-      title: task.title,
-      debateTopic: task.debateTopic,
-      stance: task.stance,
-      debatePosition: task.debatePosition,
-      positionDetail: task.positionDetail || '',
-      spaceType: task.spaceType || 'personal',
-      teamCode: task.teamCode || '',
-      mode,
-      difficulty: ['novice', 'campus', 'city'].includes(recommendation.difficulty)
-        ? recommendation.difficulty
-        : 'novice',
-      trainingGoal: recommendation.goal || '',
-      strategySummary: String(strategySummary || '').slice(0, 1600),
-      verificationQuestion: recommendation.verificationQuestion || '',
-      reason: recommendation.reason || ''
-    };
-
-    if (nextContext.spaceType === 'team' && nextContext.teamCode) {
-      setCurrentTrainingSpace({ type: 'team', teamCode: nextContext.teamCode });
-    } else {
-      setCurrentTrainingSpace(personalSpace);
-    }
-    setConfig({
-      topic: task.debateTopic,
-      userSide: task.stance,
-      difficulty: nextContext.difficulty,
-      celebrityDebater: 'none',
-      trainingMode: mode,
-      rounds: modeConfig.rounds || 3
-    });
-    setDefensePrep(mode === 'defense' ? prepSeed : '');
-    setFreeDebatePrep(mode === 'free_debate' ? prepSeed : '');
-    setHistory([]);
-    setAnswer('');
-    setReview('');
-    setStructuredReview(null);
-    setError('');
-    setSelectedRecord(null);
-    setSaveStatus('已从赛前备战带入辩题、立场和本次训练目标。');
-    clearPolishWorkspace();
-    setSelectedPolishType((polishOptionsByMode[mode] || polishOptionsByMode.general)[0].id);
-    setActiveTaskSession(null);
-    setActivePrepTrainingContext(nextContext);
-    setPrepReturnTaskId(task.id);
-    setSetupStep(getSetupStepForMode(mode, {
-      hasDefensePrep: mode === 'defense' && Boolean(prepSeed),
-      hasFreeDebatePrep: mode === 'free_debate' && Boolean(prepSeed)
-    }));
-    setMobileSetupStep(mode === 'defense' || mode === 'free_debate' ? 'config' : 'confirm');
-    setLongOutputPromptMode(longOutputModes.includes(mode) ? mode : '');
-    setActiveTab('training');
-  }
-
   async function saveTrainingRecord(reviewContent, reviewData = null, messagesForReview = reviewableMessages) {
     const completedMessages = buildReviewableMessages(messagesForReview);
     if (!completedMessages.some((item) => item.role === 'user' && isMeaningfulUserInput(item.content))) {
@@ -3062,12 +2988,10 @@ function App() {
             api={{ getJson, postJson, patchJson, deleteJson }}
             isLoggedIn={isLoggedIn}
             currentUser={currentUser}
-            currentSpace={currentSpace}
             initialTaskId={prepReturnTaskId}
             initialDraft={personalPrepDraft}
             onDraftConsumed={() => setPersonalPrepDraft(null)}
             onRequestLogin={requestLogin}
-            onStartTraining={startPrematchTraining}
           />
         )
       )}
