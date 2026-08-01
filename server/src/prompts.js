@@ -1,5 +1,6 @@
 import { buildReviewRubricInstruction } from './scoringRubrics.js';
 import { getPolishOptions, getPolishTypeProfile } from './polishPrompts.js';
+import { buildDefenseRoundContext } from './defenseTraining.js';
 
 const difficultyProfiles = {
   novice: {
@@ -645,6 +646,7 @@ export function buildStartMessages({
   difficulty,
   celebrityDebater,
   trainingMode,
+  rounds,
   defensePrep,
   freeDebatePrep,
   prepTrainingGoal,
@@ -679,6 +681,8 @@ export function buildStartMessages({
           '你必须根据用户提前输入的己方分论点和论据进行质询，问题要具体打到分论点、事实依据、因果链、边界条件或现实可行性。',
           '不要泛泛要求用户“说明你的观点”，不要替用户总结，不要给用户建议，不要输出防守示范。',
           '可以在同一轮提出一个或多个问题，但必须围绕同一个压力点；问题长度按当前难度控制。',
+          '本次防守训练统一使用结构化轮次状态机，总轮数只能是3或5；当前是第1轮。每轮问题必须具有唯一questionId。',
+          '只输出严格JSON，不要输出JSON之外的文字：{"questionText":"完整质询文本","targetPoint":"本轮唯一核心攻击点","requiredResponse":"用户需要完成的具体回应"}。',
           '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。'
         ].join('\n')
       },
@@ -689,6 +693,7 @@ export function buildStartMessages({
           `用户立场：${userSideLabel}`,
           `AI 立场：${opponentSideLabel}`,
           `用户己方分论点和论据：\n${defensePrep}`,
+          `总轮数：${rounds === 5 ? 5 : 3}`,
           prematchContext,
           `请站在${opponentSideLabel}，围绕上述分论点发起第一轮具体质询。`
         ].filter(Boolean).join('\n\n')
@@ -776,8 +781,11 @@ export function buildRespondMessages({
   difficulty,
   celebrityDebater,
   trainingMode,
+  rounds,
   history,
   answer,
+  defenseRoundStates,
+  currentDefenseQuestion,
   defensePrep,
   freeDebatePrep,
   prepTrainingGoal,
@@ -798,6 +806,10 @@ export function buildRespondMessages({
   });
 
   if (trainingMode === 'defense') {
+    const completedDefenseRounds = Array.isArray(defenseRoundStates) ? defenseRoundStates.length : 0;
+    const currentDefenseRound = Math.min(completedDefenseRounds + 1, rounds === 5 ? 5 : 3);
+    const remainingDefenseRounds = Math.max(0, (rounds === 5 ? 5 : 3) - currentDefenseRound);
+    const defenseRoundContext = buildDefenseRoundContext(defenseRoundStates, rounds);
     return [
       {
         role: 'system',
@@ -811,8 +823,15 @@ export function buildRespondMessages({
           '当前是防守训练：AI 只攻，用户只防守。',
           '难度要求会决定问题的直接程度、复杂度、长度、刁钻程度和论证引用密度；必须优先执行当前难度要求。',
           '你必须继续根据用户提前输入的己方分论点和论据质询，并结合用户上一轮防守回答追问。',
-          '只输出 AI 本轮质询。不能替用户防守，不能给建议，不能评价用户表现，不能切换为自由辩论。',
+          '先校对用户回答归属，再决定下一问。回答历史问题不等于回答当前问题；延迟补答只能有限认可，不能覆盖原轮次失误，也不能替代当前问题。',
+          '如果当前问题完整解决，切换新攻击点；部分解决时只追缺失部分；未回答、回避或答非所问时，必须改写、缩窄或加压，禁止原样重复上一问。',
+          '三轮模式节奏更紧，最后一轮优先处理最关键遗留点；五轮模式应逐步使用澄清、缩窄、反例、比较或加压，不能连续重复同一问题。',
+          '每个已结束轮次的状态不可被后续答案改写。模型解析不确定时必须保守标记为partially_answered，不得默认完整回答。',
           '质询要具体打到分论点、事实依据、因果链、边界条件或现实可行性，问题长度按当前难度控制。',
+          '只输出严格JSON，不要输出JSON之外的文字。字段必须包括：answerStatus、currentQuestionCompletion、isCurrentQuestionAnswered、answeredQuestionIds、delayedAnswerQuestionIds、unresolvedPoints、reason、followUpStrategy、roundScore。',
+          'answerStatus只能是fully_answered、partially_answered、off_topic、evaded、unanswered；followUpStrategy只能是new_attack、clarify、narrow_question、press_unresolved_point、escalate、final_pressure。',
+          'roundScore必须包含contentQuality、currentQuestionRelevance、responseCompleteness、timeliness、defensiveEffectiveness、delayedRecovery，均为0-100。',
+          '如果还有下一轮，额外输出nextQuestion：{"questionText":"不得机械重复的下一轮质询","targetPoint":"攻击点","requiredResponse":"明确回应要求"}；如果本轮已是最后一轮，nextQuestion必须为null。',
           '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。'
         ].join('\n')
       },
@@ -821,10 +840,15 @@ export function buildRespondMessages({
         content: [
           `辩题：${topic}`,
           `用户己方分论点和论据：\n${defensePrep || '未提供'}`,
+          `总轮数：${rounds === 5 ? 5 : 3}`,
+          `当前轮次：${currentDefenseRound}`,
+          `剩余轮数：${remainingDefenseRounds}`,
+          `当前问题：\n${JSON.stringify(currentDefenseQuestion || {}, null, 2)}`,
+          `此前结构化轮次状态：\n${defenseRoundContext}`,
           prematchContext,
           `此前对话：\n${transcript || '暂无'}`,
           `用户最新防守回答：${answer}`,
-          `请站在${opponentSideLabel}继续追问。`
+          `请先分析本轮回答归属，再按剩余轮次决定是否生成下一问。`
         ].filter(Boolean).join('\n\n')
       }
     ];
@@ -906,6 +930,8 @@ export function buildReviewMessages({
   defensePrep,
   freeDebatePrep,
   completedRounds,
+  rounds,
+  defenseRoundStates,
   prepTrainingGoal,
   prepStrategySummary,
   prepVerificationQuestion
@@ -920,6 +946,9 @@ export function buildReviewMessages({
     prepStrategySummary,
     prepVerificationQuestion
   });
+  const defenseReviewContext = trainingMode === 'defense'
+    ? `防守训练结构化逐轮结果（评分必须逐轮汇总，后续补答不得覆盖原轮失误）：\n${buildDefenseRoundContext(defenseRoundStates, rounds)}`
+    : '';
 
   return [
     {
@@ -936,6 +965,9 @@ export function buildReviewMessages({
         '本次复盘材料只包含用户已经正式提交的作答。不得因对话轮次较少、用户没有继续下一轮、训练在某一轮后主动结束而扣分。',
         '只评价实际提交的内容，不推测用户对未进入轮次的回答能力，也不要出现“未回答下一问”“回避后续追问”或类似评价。',
         '样本较短时，可以说明复盘覆盖范围有限，但不能把训练轮次少本身作为能力缺陷。',
+        trainingMode === 'defense'
+          ? '防守训练必须优先使用结构化逐轮结果：每轮先判断是否回应当轮问题，再评价内容。延迟补答只计有限补救；当轮未答不得因历史补答获得高完成度。五维评分必须反映每轮相关性、完整度、即时性和防守效果，最后一轮不得覆盖此前失误。'
+          : '',
         '请用简洁中文输出，适合高中学生阅读。必须严格输出 JSON。'
       ].join('\n')
     },
@@ -948,6 +980,7 @@ export function buildReviewMessages({
         `已完成轮次：${Number.isFinite(Number(completedRounds)) ? Number(completedRounds) : 0}`,
         prepContext,
         prematchContext,
+        defenseReviewContext,
         `已完成的可评分对话：\n${transcript || '暂无'}`,
         '请生成复盘报告。'
       ].filter(Boolean).join('\n\n')

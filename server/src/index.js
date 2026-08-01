@@ -30,6 +30,13 @@ import {
   getScoringRubric,
   normalizeScoringMode
 } from './scoringRubrics.js';
+import {
+  calculateDefenseFinalScore,
+  normalizeDefenseQuestion,
+  normalizeDefenseRoundStates,
+  parseDefenseOpening,
+  parseDefenseTurn
+} from './defenseTraining.js';
 import { buildAbilityEstimate, buildRecentBehaviorEvidence } from './abilityProfile.js';
 import {
   CURRENT_DIFFICULTY_CALIBRATION_VERSION,
@@ -227,6 +234,10 @@ app.post('/api/debate/start', async (req, res, next) => {
     const payload = validateSessionPayload(req.body);
     const messages = buildStartMessages(payload);
     const content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'start'), payload);
+    if (payload.trainingMode === 'defense') {
+      const opening = parseDefenseOpening(content, payload.rounds);
+      return res.json({ content: cleanOpeningQuestion(opening.questionText), defenseQuestion: opening.question });
+    }
 
     res.json({ content: cleanOpeningQuestion(content) });
   } catch (error) {
@@ -243,8 +254,81 @@ app.post('/api/debate/respond', async (req, res, next) => {
       return res.status(400).json({ message: '请先输入回答。' });
     }
 
+    if (payload.trainingMode === 'defense') {
+      const currentRound = countMeaningfulUserMessages(payload.history);
+      const expectedPreviousRounds = Math.max(0, currentRound - 1);
+      if (payload.defenseRoundStates.length < expectedPreviousRounds) {
+        console.warn('[defense-round-analysis] Missing prior structured states; conservative legacy states inserted.', {
+          expectedPreviousRounds,
+          receivedStates: payload.defenseRoundStates.length,
+          totalRounds: payload.rounds
+        });
+        const legacyStates = Array.from(
+          { length: expectedPreviousRounds - payload.defenseRoundStates.length },
+          (_, offset) => {
+            const roundNumber = payload.defenseRoundStates.length + offset + 1;
+            return {
+              roundNumber,
+              totalRounds: payload.rounds,
+              questionId: `defense_round_${roundNumber}_question_1`,
+              answerStatus: 'partially_answered',
+              currentQuestionCompletion: 50,
+              isCurrentQuestionAnswered: false,
+              unresolvedPoints: ['旧版训练轮次缺少结构化分析，按保守状态处理'],
+              followUpStrategy: 'clarify',
+              roundScore: {}
+            };
+          }
+        );
+        payload.defenseRoundStates = normalizeDefenseRoundStates(
+          [...payload.defenseRoundStates, ...legacyStates],
+          payload.rounds
+        );
+      }
+      payload.currentDefenseQuestion = normalizeDefenseQuestion({
+        ...payload.currentDefenseQuestion,
+        questionId: `defense_round_${currentRound}_question_1`,
+        totalRounds: payload.rounds
+      }, currentRound);
+    }
+
     const messages = buildRespondMessages({ ...payload, answer });
-    const content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'respond'), payload);
+    const content = await callDeepSeekComplete(
+      messages,
+      payload.trainingMode === 'defense'
+        ? { maxTokens: 1500, temperature: 0.25 }
+        : getDebateGenerationOptions(payload.trainingMode, 'respond'),
+      payload
+    );
+
+    if (payload.trainingMode === 'defense') {
+      const analysis = parseDefenseTurn(content, {
+        currentRound: payload.defenseRoundStates.length + 1,
+        totalRounds: payload.rounds,
+        currentQuestion: payload.currentDefenseQuestion,
+        previousRounds: payload.defenseRoundStates,
+        userAnswer: answer
+      });
+      if (!analysis.parseSucceeded) {
+        console.warn('[defense-round-analysis] Invalid model JSON; conservative fallback applied.', {
+          round: analysis.state.roundNumber,
+          totalRounds: payload.rounds
+        });
+      }
+      console.info('[defense-round-analysis]', {
+        round: analysis.state.roundNumber,
+        totalRounds: payload.rounds,
+        status: analysis.state.answerStatus,
+        completion: analysis.state.currentQuestionCompletion,
+        delayed: analysis.state.delayedAnswerQuestionIds,
+        strategy: analysis.state.followUpStrategy
+      });
+      return res.json({
+        content: analysis.nextQuestion?.questionText || '',
+        defenseRoundState: analysis.state,
+        defenseQuestion: analysis.nextQuestion
+      });
+    }
 
     res.json({ content });
   } catch (error) {
@@ -308,6 +392,23 @@ app.post('/api/debate/review', async (req, res, next) => {
     });
     const content = await callDeepSeek(messages, { maxTokens: 2200, temperature: 0.5 });
     const structuredReview = parseReviewContent(content, payload.trainingMode, payload.difficulty);
+    if (payload.trainingMode === 'defense' && payload.defenseRoundStates.length) {
+      const defenseScore = calculateDefenseFinalScore(
+        structuredReview.score,
+        payload.defenseRoundStates,
+        payload.rounds
+      );
+      structuredReview.score = defenseScore.score;
+      structuredReview.scoreLevel = getScoreLevel(defenseScore.score);
+      structuredReview.defenseRoundSummary = {
+        totalRounds: payload.rounds,
+        analyzedRounds: payload.defenseRoundStates.length,
+        roundAverage: defenseScore.roundAverage,
+        scoreCap: defenseScore.cap,
+        delayedAnswerCount: payload.defenseRoundStates.filter((item) => item.isDelayedAnswer).length,
+        missedCurrentQuestionCount: payload.defenseRoundStates.filter((item) => !item.isCurrentQuestionAnswered).length
+      };
+    }
     const formattedContent = formatStructuredReview(structuredReview, content);
 
     res.json({ content: formattedContent, structuredReview });
@@ -1456,6 +1557,14 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
     500
   );
   const history = Array.isArray(body.history) ? body.history : [];
+  const defenseRoundStates = normalizeDefenseRoundStates(
+    body.defenseRoundStates || body.defense_round_states,
+    rounds
+  );
+  const currentDefenseQuestion = normalizeDefenseQuestion(
+    body.currentDefenseQuestion || body.current_defense_question,
+    defenseRoundStates.length + 1
+  );
 
   if (!topic) {
     throw badRequest('请输入辩题。');
@@ -1516,11 +1625,19 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
     prepTrainingGoal,
     prepStrategySummary,
     prepVerificationQuestion,
+    defenseRoundStates,
+    currentDefenseQuestion,
     history: history
       .filter((item) => ['ai', 'assistant', 'user'].includes(item.role) && normalizeText(item.content))
       .map((item) => ({
         role: item.role === 'assistant' ? 'ai' : item.role,
-        content: normalizeText(item.content)
+        content: normalizeText(item.content),
+        ...(trainingMode === 'defense' && item.defenseQuestion
+          ? { defenseQuestion: normalizeDefenseQuestion(item.defenseQuestion, item.defenseQuestion.roundNumber) }
+          : {}),
+        ...(trainingMode === 'defense' && item.defenseRoundState
+          ? { defenseRoundState: normalizeDefenseRoundStates([item.defenseRoundState], rounds)[0] }
+          : {})
       }))
   };
 }
@@ -1688,7 +1805,13 @@ async function validateTrainingRecordPayload(body, authUser = null) {
       .filter((item) => ['ai', 'assistant', 'user'].includes(item.role) && normalizeText(item.content))
       .map((item) => ({
         role: item.role === 'assistant' ? 'ai' : item.role,
-        content: normalizeText(item.content)
+        content: normalizeText(item.content),
+        ...(trainingMode === 'defense' && item.defenseQuestion
+          ? { defenseQuestion: normalizeDefenseQuestion(item.defenseQuestion, item.defenseQuestion.roundNumber) }
+          : {}),
+        ...(trainingMode === 'defense' && item.defenseRoundState
+          ? { defenseRoundState: normalizeDefenseRoundStates([item.defenseRoundState], 5)[0] }
+          : {})
       })),
     review,
     score,

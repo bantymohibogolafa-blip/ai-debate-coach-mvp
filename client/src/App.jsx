@@ -436,6 +436,7 @@ function App() {
   const [generatedTopics, setGeneratedTopics] = useState([]);
   const [recentGeneratedTopics, setRecentGeneratedTopics] = useState({});
   const [defensePrep, setDefensePrep] = useState('');
+  const [defenseRoundStates, setDefenseRoundStates] = useState([]);
   const [freeDebatePrep, setFreeDebatePrep] = useState('');
   const [trainingSession, setTrainingSession] = useState(null);
   const [isPolishing, setIsPolishing] = useState(false);
@@ -1526,6 +1527,7 @@ function App() {
     setCurrentTrainingSpace({ type: 'team', teamCode: task.teamCode || currentTeam?.teamCode });
     setConfig(taskConfig);
     setHistory([]);
+    setDefenseRoundStates([]);
     setAnswer('');
     setReview('');
     setStructuredReview(null);
@@ -1830,6 +1832,7 @@ function App() {
     setReviewGenerationStatus('idle');
     setReviewLoadingError('');
     setHistory([]);
+    setDefenseRoundStates([]);
     clearPolishWorkspace();
     setSelectedRecord(null);
     setSaveStatus('');
@@ -1859,7 +1862,13 @@ function App() {
       });
       const content = requireContent(data);
 
-      setHistory([{ role: 'ai', content }]);
+      setHistory([{
+        role: 'ai',
+        content,
+        ...(config.trainingMode === 'defense' && data.defenseQuestion
+          ? { defenseQuestion: data.defenseQuestion }
+          : {})
+      }]);
       setIsTraining(true);
     } catch (requestError) {
       setError(getFriendlyError(requestError));
@@ -1892,7 +1901,8 @@ function App() {
       return;
     }
 
-    if (userAnswers + 1 >= config.rounds && !isSingleSpeechMode) {
+    const isFinalDefenseRound = config.trainingMode === 'defense' && userAnswers + 1 >= config.rounds;
+    if (userAnswers + 1 >= config.rounds && !isSingleSpeechMode && !isFinalDefenseRound) {
       return;
     }
 
@@ -1908,15 +1918,42 @@ function App() {
         freeDebatePrep: trainingSession?.freeDebatePrep ?? freeDebatePrep.trim(),
         ...buildPrematchTrainingPayload(activePrepTrainingContext),
         history: nextHistory,
-        answer: trimmedAnswer
+        answer: trimmedAnswer,
+        defenseRoundStates,
+        currentDefenseQuestion: config.trainingMode === 'defense'
+          ? [...history].reverse().find((item) => item.role === 'ai')?.defenseQuestion || {
+              roundNumber: defenseRoundStates.length + 1,
+              questionText: [...history].reverse().find((item) => item.role === 'ai')?.content || ''
+            }
+          : undefined
       });
-      const content = requireContent(data);
+      const content = config.trainingMode === 'defense' && isFinalDefenseRound
+        ? String(data.content || '')
+        : requireContent(data);
 
-      setHistory([...nextHistory, { role: 'ai', content }]);
+      if (config.trainingMode === 'defense') {
+        const analyzedHistory = nextHistory.map((item, index) => (
+          index === nextHistory.length - 1 && data.defenseRoundState
+            ? { ...item, defenseRoundState: data.defenseRoundState }
+            : item
+        ));
+        if (data.defenseRoundState) {
+          setDefenseRoundStates((current) => [...current, data.defenseRoundState]);
+        }
+        setHistory(data.defenseQuestion && content
+          ? [...analyzedHistory, { role: 'ai', content, defenseQuestion: data.defenseQuestion }]
+          : analyzedHistory);
+      } else {
+        setHistory([...nextHistory, { role: 'ai', content }]);
+      }
       if (isSingleSpeechMode) {
         setIsTraining(false);
       }
     } catch (requestError) {
+      if (config.trainingMode === 'defense') {
+        setHistory(history);
+        setAnswer(trimmedAnswer);
+      }
       setError(getFriendlyError(requestError));
     } finally {
       setIsLoading(false);
@@ -1949,7 +1986,8 @@ function App() {
         defensePrep: sessionForReview.defensePrep ?? defensePrep.trim(),
         freeDebatePrep: sessionForReview.freeDebatePrep ?? freeDebatePrep.trim(),
         ...buildPrematchTrainingPayload(activePrepTrainingContext),
-        history: messagesForReview
+        history: messagesForReview,
+        defenseRoundStates
       });
       const content = requireContent(data);
       const nextStructuredReview = normalizeStructuredReview(data.structuredReview);
@@ -2004,6 +2042,7 @@ function App() {
         : current
     ));
     setHistory([]);
+    setDefenseRoundStates([]);
     setAnswer('');
     setReview('');
     setStructuredReview(null);
@@ -2079,6 +2118,7 @@ function App() {
 
     setConfig(initialConfig);
     setHistory([]);
+    setDefenseRoundStates([]);
     setAnswer('');
     setReview('');
     setError('');
