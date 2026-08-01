@@ -188,7 +188,7 @@ test('chat intent defaults to chat, rejects invalid values, and persists report 
   );
 });
 
-test('evidence intent stays offline and asks only for an unverified retrieval plan', async (t) => {
+test('evidence intent degrades explicitly when AnySearch is not configured', async (t) => {
   const harness = createHarness();
   const port = await listen(t, harness.fetch);
   const response = await requestJson(
@@ -204,11 +204,62 @@ test('evidence intent stays offline and asks only for an unverified retrieval pl
   );
 
   assert.equal(response.status, 200);
-  const prompt = harness.modelRequests[0].map((message) => message.content).join('\n');
+  assert.equal(harness.modelRequests.length, 2);
+  const planPrompt = harness.modelRequests[0].map((message) => message.content).join('\n');
+  const prompt = harness.modelRequests[1].map((message) => message.content).join('\n');
+  assert.match(planPrompt, /生成少量联网检索词/);
   assert.match(prompt, /本轮 intent=evidence/);
-  assert.match(prompt, /绝不联网/);
-  assert.match(prompt, /检索方案，不是已经核实的证据/);
+  assert.match(prompt, /联网状态：fallback/);
+  assert.match(response.body.assistantMessage.content, /本轮联网检索失败/);
+  assert.equal(response.body.contextManifest.search.status, 'fallback');
+  assert.deepEqual(response.body.contextManifest.search.sources, []);
   assert.equal(harness.calls.some((call) => call.table === 'prematch_training_links'), false);
+});
+
+test('evidence intent searches after idempotency, persists stable sources and filters invented IDs', async (t) => {
+  const previousKey = process.env.ANYSEARCH_API_KEY;
+  process.env.ANYSEARCH_API_KEY = 'route-test-key';
+  t.after(() => {
+    if (previousKey === undefined) delete process.env.ANYSEARCH_API_KEY;
+    else process.env.ANYSEARCH_API_KEY = previousKey;
+  });
+  const harness = createHarness({
+    searchPlan: {
+      goal: '验证机制影响',
+      queries: [
+        { query: '机制影响 官方数据', zone: 'cn', language: 'zh-CN' },
+        { query: 'mechanism effects study', zone: 'intl', language: 'en' }
+      ]
+    },
+    anysearchResults: [{
+      title: '官方研究摘要',
+      url: 'https://example.gov.cn/study?utm_source=test#detail',
+      snippet: '可用于比较，但仍需查看原文。',
+      content: '原文节选'
+    }],
+    usedEvidenceIds: ['E1', 'E999']
+  });
+  const port = await listen(t, harness.fetch);
+  const requestId = '83000000-0000-4000-8000-000000000099';
+  const first = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '请联网搜集机制影响论据。', clientRequestId: requestId, intent: 'evidence'
+  });
+  assert.equal(first.status, 200);
+  assert.equal(harness.anysearchRequests.length, 2);
+  assert.equal(first.body.contextManifest.search.status, 'success');
+  assert.equal(first.body.contextManifest.search.sources[0].id, 'E1');
+  assert.equal(first.body.task.strategyState.evidenceLibrary[0].id, 'E1');
+  assert.deepEqual(first.body.assistantMessage.structuredUpdate.usedEvidenceIds, ['E1']);
+  assert.equal(JSON.stringify(first.body).includes('原文节选'), false);
+  const finalPrompt = harness.modelRequests.at(-1).map((message) => message.content).join('\n');
+  assert.match(finalPrompt, /不可信外部资料/);
+  assert.match(finalPrompt, /\[E1\]/);
+
+  const duplicate = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '重复提交', clientRequestId: requestId, intent: 'evidence'
+  });
+  assert.equal(duplicate.body.duplicated, true);
+  assert.equal(harness.anysearchRequests.length, 2);
 });
 
 test('changing stance marks the existing strategy for reassessment with optimistic versioning', async (t) => {
@@ -605,6 +656,7 @@ test('task detail restores only the latest one hundred messages', async (t) => {
 function createHarness(options = {}) {
   const calls = [];
   const modelRequests = [];
+  const anysearchRequests = [];
   let sequence = 0;
   const tasks = [
     taskRow(TASK_A, USER_A, '任务 A', '测试辩题 A'),
@@ -639,12 +691,16 @@ function createHarness(options = {}) {
     if (url.hostname === 'deepseek.prematch.test') {
       const body = JSON.parse(init.body);
       modelRequests.push(body.messages);
+      if (body.messages[0]?.content?.includes('只负责为当前个人辩论任务生成少量联网检索词')) {
+        return Response.json({ choices: [{ message: { content: JSON.stringify(options.searchPlan || {}) } }] });
+      }
       return Response.json({
         choices: [{
           message: {
             content: JSON.stringify({
               answer: '这个方向有价值，但要先补足比较对象。',
               taskSummary: '已确认保留机制比较，下一步验证制度可预期性。',
+              usedEvidenceIds: options.usedEvidenceIds || [],
               structuredUpdate: {
                 taskUnderstanding: '比较两种机制的长期影响',
                 currentPosition: {
@@ -665,6 +721,16 @@ function createHarness(options = {}) {
             })
           }
         }]
+      });
+    }
+    if (url.hostname === 'api.anysearch.com') {
+      const requestBody = JSON.parse(init.body);
+      anysearchRequests.push({ url, init, body: requestBody });
+      return Response.json({
+        code: 0,
+        message: 'success',
+        request_id: `search-${anysearchRequests.length}`,
+        data: { results: options.anysearchResults || [], metadata: { total_results: 1 } }
       });
     }
 
@@ -777,7 +843,7 @@ function createHarness(options = {}) {
     throw new Error(`Unexpected request: ${method} ${url}`);
   }
 
-  return { calls, modelRequests, tasks, messages, fetch: fetchMock };
+  return { calls, modelRequests, anysearchRequests, tasks, messages, fetch: fetchMock };
 }
 
 function filterRows(rows, url) {

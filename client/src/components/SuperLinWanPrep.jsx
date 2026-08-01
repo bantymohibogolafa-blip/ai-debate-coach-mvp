@@ -20,7 +20,7 @@ const quickPrompts = [
   {
     intent: 'evidence',
     label: '搜集论据',
-    text: '【搜集论据】\n\n请基于当前任务和当前已经形成的论点，梳理需要搜集哪些事实、案例、数据、研究或现实材料，并给出具体检索关键词。当前版本尚未接入联网搜索，因此不得虚构具体数据、论文、机构或来源；只能提供论据方向和检索方案。'
+    text: '【搜集论据】\n\n请基于当前任务和当前已经形成的论点，联网搜集可用的事实、案例、数据、研究或现实材料，同时检查反例与限制条件。请标注来源编号，并区分已取得的材料、仅供追查的线索和仍需核实的内容。'
   }
 ];
 
@@ -56,6 +56,7 @@ export default function SuperLinWanPrep({
   const [question, setQuestion] = useState('');
   const [questionIntent, setQuestionIntent] = useState('chat');
   const [isSending, setIsSending] = useState(false);
+  const [sendingIntent, setSendingIntent] = useState('chat');
   const [chatError, setChatError] = useState('');
   const [actionStatus, setActionStatus] = useState('');
   const chatEndRef = useRef(null);
@@ -249,6 +250,7 @@ export default function SuperLinWanPrep({
     if (!cleanQuestion || !detail?.task || isSending) return;
     const clientRequestId = createUuid();
     setIsSending(true);
+    setSendingIntent(intent);
     setChatError('');
     setActionStatus('');
     if (!preserveDraft) {
@@ -280,6 +282,7 @@ export default function SuperLinWanPrep({
       setChatError(friendlyError(error));
     } finally {
       setIsSending(false);
+      setSendingIntent('chat');
     }
   }
 
@@ -290,6 +293,14 @@ export default function SuperLinWanPrep({
 
   function useQuickPrompt(prompt) {
     if (!prompt || isSending || !detail?.permissions?.canChat) return;
+    if (prompt.intent === 'evidence') {
+      void submitChatRequest({
+        text: prompt.text,
+        intent: 'evidence',
+        preserveDraft: true
+      });
+      return;
+    }
     setQuestion((current) => current.trim()
       ? `${current.trim()}\n\n${prompt.text}`
       : prompt.text);
@@ -375,6 +386,7 @@ export default function SuperLinWanPrep({
         detail={detail}
         question={question}
         isSending={isSending}
+        sendingIntent={sendingIntent}
         isSaving={isSaving}
         isEditing={isEditing}
         editForm={editForm}
@@ -497,6 +509,7 @@ function PrematchTaskWorkspace({
   detail,
   question,
   isSending,
+  sendingIntent,
   isSaving,
   isEditing,
   editForm,
@@ -591,9 +604,16 @@ function PrematchTaskWorkspace({
                   <time>{formatMessageTime(message.createdAt)}</time>
                 </div>
                 <p>{message.content}</p>
+                <MessageEvidenceSources search={message.contextManifest?.search} />
               </article>
             ))}
-            {isSending && <div className="assistant-loading">Super 林婉正在整理当前思路…</div>}
+            {isSending && (
+              <div className="assistant-loading">
+                {sendingIntent === 'evidence'
+                  ? 'Super 林婉正在联网搜集并梳理论据…'
+                  : 'Super 林婉正在整理当前思路…'}
+              </div>
+            )}
             <div ref={chatEndRef} />
           </div>
           {chatError && <div className="assistant-error">{chatError}</div>}
@@ -689,6 +709,48 @@ function taskToForm(task) {
     stance: task.stance || 'undecided',
     initialIdeas: task.initialIdeas || ''
   };
+}
+
+function MessageEvidenceSources({ search }) {
+  if (!search) return null;
+  const sources = Array.isArray(search.sources)
+    ? search.sources.filter((source) => safeHttpUrl(source?.url))
+    : [];
+  const statusText = {
+    success: `本轮已联网检索，共找到 ${Number(search.totalResults || sources.length)} 个可查看来源。`,
+    partial: '部分检索请求失败，以下为本轮成功取得的来源。',
+    fallback: '本轮联网检索失败，以下内容仅为检索方向，不是已经核实的论据。',
+    unavailable: '联网搜集暂时不可用，请稍后重试。'
+  }[search.status];
+  if (!statusText && !sources.length) return null;
+  return (
+    <section className={`prematch-evidence ${search.status || 'unavailable'}`} aria-label="本轮来源">
+      {statusText && <p className="prematch-evidence-status">{statusText}</p>}
+      {sources.length > 0 && (
+        <div className="prematch-evidence-list">
+          {sources.map((source) => (
+            <article className="prematch-evidence-source" key={`${source.id}:${source.url}`}>
+              <div className="prematch-evidence-heading">
+                <b>{source.id}</b>
+                <span>{source.domain}</span>
+              </div>
+              <h3>{source.title}</h3>
+              {source.snippet && <p>{source.snippet}</p>}
+              <a href={source.url} target="_blank" rel="noopener noreferrer">查看原始来源</a>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function safeHttpUrl(value) {
+  try {
+    return ['http:', 'https:'].includes(new URL(String(value || '')).protocol);
+  } catch {
+    return false;
+  }
 }
 
 function normalizeFormForRequest(form) {

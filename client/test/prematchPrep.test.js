@@ -64,6 +64,12 @@ test('三个快捷提示与报告共用当前任务聊天接口并传递 intent'
   assert.equal((prepSource.match(/\/chat`/g) || []).length, 1);
 });
 
+test('搜集论据按钮直接提交联网请求且不会覆盖输入框草稿', () => {
+  assert.match(prepSource, /prompt\.intent === 'evidence'/);
+  assert.match(prepSource, /text: prompt\.text,\s*intent: 'evidence',\s*preserveDraft: true/);
+  assert.match(prepSource, /sendingIntent=\{sendingIntent\}/);
+});
+
 test('个人任务页面移除战略、训练推荐和训练回流卡片', () => {
   assert.equal(prepSource.includes('阶段性方案'), false);
   assert.equal(prepSource.includes('推荐训练'), false);
@@ -71,4 +77,16 @@ test('个人任务页面移除战略、训练推荐和训练回流卡片', () =>
   assert.equal(prepSource.includes('本轮参考'), false);
   assert.equal(prepSource.includes('prematch-side-column'), false);
   assert.match(prepSource, /message\.contextManifest\?\.intent === 'report'/);
+});
+
+test('联网论据消息显示安全的来源卡片和搜索状态', () => {
+  assert.match(prepSource, /message\.contextManifest\?\.search/);
+  assert.match(prepSource, /本轮已联网检索/);
+  assert.match(prepSource, /部分检索请求失败/);
+  assert.match(prepSource, /本轮联网检索失败/);
+  assert.match(prepSource, /联网搜集暂时不可用/);
+  assert.match(prepSource, /target="_blank" rel="noopener noreferrer"/);
+  assert.match(prepSource, /safeHttpUrl/);
+  assert.equal(prepSource.includes('dangerouslySetInnerHTML'), false);
+  assert.match(prepSource, /Super 林婉正在联网搜集并梳理论据/);
 });

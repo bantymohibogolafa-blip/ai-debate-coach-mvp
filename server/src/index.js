@@ -53,17 +53,26 @@ import {
   validateLinWanProfile
 } from './linwan.js';
 import {
+  buildEvidenceSearchPlanMessages,
   buildPersonalTaskLinWanMessages,
   createPersonalTaskContextManifest,
+  filterUsedEvidenceIds,
   getDefaultPersonalTaskMemory,
   markPersonalTaskMemoryForReassessment,
   mergePersonalTaskMemory,
   normalizePrematchContextManifest,
   normalizePrematchResultSummary,
   normalizePersonalTaskMemory,
+  parseEvidenceSearchPlan,
   parsePersonalTaskLinWanResponse,
   PERSONAL_TASK_INTENTS
 } from './superLinwan.js';
+import { searchEvidence } from './search/index.js';
+import {
+  cleanEvidenceResults,
+  mergeEvidenceLibrary,
+  publicEvidenceSource
+} from './search/evidenceSources.js';
 import {
   buildReviewableMessages,
   countMeaningfulUserMessages,
@@ -460,34 +469,134 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
     }
 
     const recentMessages = await fetchPrematchRecentMessages(task.id, 24);
+    const mappedRecentMessages = recentMessages.map(mapPrematchMessageFromDb);
+    const currentMemory = normalizePersonalTaskMemory(task.strategy_state);
+    let searchContext = null;
+    let nextEvidenceLibrary = currentMemory.evidenceLibrary;
+
+    if (chatPayload.intent === 'evidence') {
+      let searchPlan;
+      try {
+        const rawPlan = await callDeepSeek(buildEvidenceSearchPlanMessages({
+          task: mapPrematchTaskFromDb(task),
+          memory: currentMemory,
+          taskSummary: task.context_summary,
+          recentMessages: mappedRecentMessages,
+          currentQuestion: chatPayload.question
+        }), { maxTokens: 700, temperature: 0.2 });
+        searchPlan = parseEvidenceSearchPlan(rawPlan, {
+          debateTopic: task.debate_topic,
+          currentQuestion: chatPayload.question
+        });
+      } catch {
+        searchPlan = parseEvidenceSearchPlan('', {
+          debateTopic: task.debate_topic,
+          currentQuestion: chatPayload.question
+        });
+      }
+      let searched;
+      try {
+        searched = await searchEvidence({
+          queries: searchPlan.queries,
+          sensitiveValues: [
+            task.id,
+            req.user.id,
+            req.user.displayName,
+            req.user.email,
+            chatPayload.clientRequestId
+          ]
+        });
+      } catch (error) {
+        searched = {
+          provider: 'anysearch',
+          status: 'unavailable',
+          queries: searchPlan.queries,
+          results: [],
+          requestIds: [],
+          errors: [{ code: error?.code || 'search_unavailable', status: error?.status || 0 }]
+        };
+      }
+      const cleanedSources = cleanEvidenceResults(searched.results, {
+        existingLibrary: currentMemory.evidenceLibrary,
+        retrievedAt: new Date().toISOString()
+      });
+      nextEvidenceLibrary = mergeEvidenceLibrary(currentMemory.evidenceLibrary, cleanedSources);
+      const stableByUrl = new Map(nextEvidenceLibrary.map((item) => [item.url, item]));
+      const stableSources = cleanedSources.map((item) => ({
+        ...item,
+        id: stableByUrl.get(item.url)?.id || item.id
+      }));
+      searchContext = {
+        provider: searched.provider,
+        status: stableSources.length
+          ? searched.status
+          : searched.status === 'unavailable' ? 'unavailable' : 'fallback',
+        queries: searched.queries,
+        retrievedAt: new Date().toISOString(),
+        totalResults: stableSources.length,
+        sources: stableSources,
+        requestIds: searched.requestIds
+      };
+      if (searched.errors.length) {
+        console.warn('[prematch-search] AnySearch request incomplete', {
+          status: searchContext.status,
+          errors: searched.errors,
+          resultCount: stableSources.length
+        });
+      }
+    }
     const modelMessages = buildPersonalTaskLinWanMessages({
       task: mapPrematchTaskFromDb(task),
-      memory: task.strategy_state,
+      memory: { ...currentMemory, evidenceLibrary: nextEvidenceLibrary },
       taskSummary: task.context_summary,
-      recentMessages: recentMessages.map(mapPrematchMessageFromDb),
+      recentMessages: mappedRecentMessages,
       currentQuestion: chatPayload.question,
       intent: chatPayload.intent,
-      displayName: req.user.displayName
+      displayName: req.user.displayName,
+      search: searchContext
     });
     const rawResponse = await callDeepSeek(modelMessages, {
       maxTokens: chatPayload.intent === 'report' ? 2600 : 1900,
       temperature: 0.5
     });
     const parsedResponse = parsePersonalTaskLinWanResponse(rawResponse);
-    const answer = cleanLinWanReply(parsedResponse.answer);
+    let answer = cleanLinWanReply(parsedResponse.answer);
+    if (searchContext?.status === 'fallback' || searchContext?.status === 'unavailable') {
+      answer = `本轮联网检索失败，以下只是检索方案，不是已核实的事实材料。\n\n${answer}`;
+    } else if (searchContext?.status === 'partial') {
+      answer = `部分检索请求失败，本轮来源可能不完整。\n\n${answer}`;
+    }
     if (!answer) throw httpError(502, 'Super 林婉暂时没有整理好回答，请重试。');
 
-    const contextManifest = createPersonalTaskContextManifest(chatPayload.intent, recentMessages);
+    const allowedEvidenceIds = filterUsedEvidenceIds(
+      parsedResponse.usedEvidenceIds,
+      nextEvidenceLibrary
+    );
+    const structuredUpdate = {
+      ...parsedResponse.structuredUpdate,
+      ...(chatPayload.intent === 'evidence' && searchContext?.sources?.length
+        ? { evidenceLibrary: nextEvidenceLibrary }
+        : {}),
+      usedEvidenceIds: allowedEvidenceIds
+    };
+    const contextManifest = createPersonalTaskContextManifest(
+      chatPayload.intent,
+      recentMessages,
+      searchContext ? {
+        ...searchContext,
+        sources: searchContext.sources.map(publicEvidenceSource).filter(Boolean)
+      } : null
+    );
     const exchange = await persistPrematchExchange(task, req.user.id, {
       question: chatPayload.question,
       answer,
-      structuredUpdate: parsedResponse.structuredUpdate,
+      structuredUpdate,
       taskSummary: parsedResponse.taskSummary,
       contextManifest,
       clientRequestId: chatPayload.clientRequestId
     });
     task = await applyPrematchChatUpdate(task, {
-      structuredUpdate: parsedResponse.structuredUpdate,
+      structuredUpdate,
       taskSummary: parsedResponse.taskSummary,
       clientRequestId: chatPayload.clientRequestId
     });

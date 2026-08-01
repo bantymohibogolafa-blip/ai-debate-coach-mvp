@@ -273,7 +273,7 @@ test('personal parser keeps candidate ideas separate from confirmed and records 
   assert.equal(parsed.structuredUpdate.decisionChanges[0].changeType, 'rejected');
 });
 
-test('personal intent instructions reserve evidence downgrade and report classification', () => {
+test('personal intent instructions reserve evidence search safety and report classification', () => {
   const shared = {
     task: { id: 'personal-a', debateTopic: '测试辩题', stance: 'undecided' },
     memory: getDefaultPersonalTaskMemory(),
@@ -287,9 +287,11 @@ test('personal intent instructions reserve evidence downgrade and report classif
     .map((message) => message.content).join('\n');
 
   assert.match(evidence, /本轮 intent=evidence/);
-  assert.match(evidence, /绝不联网/);
-  assert.match(evidence, /检索方案，不是已经核实的证据/);
+  assert.match(evidence, /不可信外部资料/);
+  assert.match(evidence, /不得编造作者、日期、机构、论文、统计数字/);
+  assert.match(evidence, /若标记为联网失败，只能给检索方案/);
   assert.match(report, /本轮 intent=report/);
+  assert.match(report, /不得触发或要求新搜索/);
   assert.match(report, /已确认、候选、已否定、已修改、尚未解决/);
 
   const manifest = createPersonalTaskContextManifest('report', [{ role: 'user', content: '当前消息' }]);
@@ -321,4 +323,32 @@ test('personal prompt preserves older decisions through summary and structured m
   assert.match(joined, /长期摘要继续保留定义 A/);
   assert.equal(joined.includes('最近窗口消息-1\n'), false);
   assert.match(joined, /最近窗口消息-30/);
+});
+
+test('task evidence library survives normalization and remains available to later chat and report prompts', () => {
+  const memory = mergePersonalTaskMemory(getDefaultPersonalTaskMemory(), {
+    evidenceLibrary: [{
+      id: 'E1',
+      title: '已保存来源',
+      url: 'https://example.edu/research',
+      domain: 'example.edu',
+      snippet: '任务内持续使用的摘要',
+      sourceType: 'academic',
+      query: '研究查询',
+      retrievedAt: '2026-08-01T00:00:00.000Z'
+    }]
+  });
+  assert.equal(normalizePersonalTaskMemory(memory).evidenceLibrary[0].id, 'E1');
+  for (const intent of ['chat', 'report']) {
+    const prompt = buildPersonalTaskLinWanMessages({
+      task: { id: 'personal-a', debateTopic: '测试辩题', stance: 'affirmative' },
+      memory,
+      taskSummary: '',
+      recentMessages: [],
+      currentQuestion: intent === 'report' ? '形成报告' : 'E1 能支持第二点吗？',
+      intent
+    }).map((message) => message.content).join('\n');
+    assert.match(prompt, /\[E1\] 已保存来源/);
+    assert.match(prompt, /任务内持续使用的摘要/);
+  }
 });
