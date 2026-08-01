@@ -4,6 +4,7 @@ import {
   applyMandatoryScoreCaps,
   buildReviewRubricInstruction,
   calculateWeightedScore,
+  finalizeReviewScore,
   getScoreLevel,
   getScoringRubric,
   scoringRubrics
@@ -193,6 +194,81 @@ test('mandatory score caps are applied after weighted scoring', () => {
     reasons: ['多数关键回合未回应当前模式核心任务', '明确转而为对方核心立场作证，或否定己方原定核心立场'],
     triggeredCaps: []
   });
+});
+
+function defenseRoundState(roundNumber, status = 'fully_answered', componentScore = 90) {
+  return {
+    roundNumber,
+    questionId: `defense_round_${roundNumber}_question_1`,
+    questionText: `第${roundNumber}轮问题`,
+    userAnswer: `第${roundNumber}轮回答`,
+    answerStatus: status,
+    currentQuestionCompletion: status === 'fully_answered' ? componentScore : 0,
+    isCurrentQuestionAnswered: status === 'fully_answered',
+    roundScore: {
+      contentQuality: componentScore,
+      currentQuestionRelevance: componentScore,
+      responseCompleteness: componentScore,
+      timeliness: componentScore,
+      defensiveEffectiveness: componentScore
+    }
+  };
+}
+
+test('defense final score is the lowest result across round and mandatory caps', () => {
+  const dimensions = scoresFor('defense', [90, 90, 90, 90, 90]);
+  const roundCapped = finalizeReviewScore({
+    trainingMode: 'defense',
+    dimensionScores: dimensions,
+    rounds: 3,
+    defenseRoundStates: [
+      defenseRoundState(1),
+      defenseRoundState(2, 'unanswered', 0),
+      defenseRoundState(3, 'off_topic', 0)
+    ]
+  });
+  assert.equal(roundCapped.rawScore, 90);
+  assert.equal(roundCapped.finalScore, 49);
+  assert.equal(roundCapped.scoreLevel, getScoreLevel(49, 'defense'));
+
+  const taskCapped = finalizeReviewScore({
+    trainingMode: 'defense',
+    dimensionScores: dimensions,
+    capTriggers: ['off_task'],
+    rounds: 3,
+    defenseRoundStates: [defenseRoundState(1), defenseRoundState(2), defenseRoundState(3)]
+  });
+  assert.equal(taskCapped.blendedScore, 90);
+  assert.equal(taskCapped.finalScore, 40, 'a later defense blend cannot lift an off_task cap');
+
+  const multipleCaps = finalizeReviewScore({
+    trainingMode: 'defense',
+    dimensionScores: dimensions,
+    capTriggers: ['off_task', 'stance_reversal'],
+    rounds: 3,
+    defenseRoundStates: [
+      defenseRoundState(1),
+      defenseRoundState(2, 'unanswered', 0),
+      defenseRoundState(3, 'off_topic', 0)
+    ]
+  });
+  assert.equal(multipleCaps.finalScore, 30, 'the existing lowest general cap remains authoritative');
+});
+
+test('uncapped defense preserves the 55/45 blend as the final score', () => {
+  const result = finalizeReviewScore({
+    trainingMode: 'defense',
+    dimensionScores: scoresFor('defense', [88, 88, 88, 88, 88]),
+    rounds: 3,
+    defenseRoundStates: [
+      defenseRoundState(1, 'fully_answered', 79.1),
+      defenseRoundState(2, 'fully_answered', 79.1),
+      defenseRoundState(3, 'fully_answered', 79.1)
+    ]
+  });
+  assert.equal(result.rawScore, 88);
+  assert.equal(result.blendedScore, 84);
+  assert.equal(result.finalScore, 84);
 });
 
 test('text V2 has seven levels, mode-specific anchors and lowest-cap semantics', () => {

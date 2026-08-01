@@ -1574,7 +1574,7 @@ function App() {
       return;
     }
 
-    const recordScore = reviewData?.score ?? extractScoreFromReview(reviewContent);
+    const recordScore = reviewData?.finalScore ?? reviewData?.totalScore ?? reviewData?.score ?? extractScoreFromReview(reviewContent);
     if (
       recordScore === null
       || recordScore === undefined
@@ -1620,6 +1620,7 @@ function App() {
         scoreLevel: reviewData?.scoreLevel || '',
         dimensionScores: Array.isArray(reviewData?.dimensionScores) ? reviewData.dimensionScores : [],
         capTriggers: Array.isArray(reviewData?.capTriggers) ? reviewData.capTriggers : [],
+        ...(config.trainingMode === 'defense' ? { defenseRoundStates, rounds: config.rounds } : {}),
         ...buildPrematchTrainingPayload(activePrepTrainingContext),
         prepResultSummary: activePrepTrainingContext ? {
           score: recordScore,
@@ -6893,7 +6894,7 @@ function ReviewReport({ reviewText, structuredReview, fallbackMode, assistantCon
   }
 
   const modeDisplayName = reviewData.modeDisplayName || getOptionLabel(trainingModes, fallbackMode) || '训练复盘';
-  const score = reviewData.totalScore ?? reviewData.score ?? extractScoreFromReview(reviewText);
+  const score = reviewData.finalScore ?? reviewData.totalScore ?? reviewData.score ?? extractScoreFromReview(reviewText);
   const scoreLevel = reviewData.scoreLevel || '';
 
   return (
@@ -7369,6 +7370,8 @@ function normalizeStructuredReview(value) {
   return {
     score: formatScoreValue(value.score),
     rawScore: formatScoreValue(value.rawScore ?? value.raw_score),
+    blendedScore: formatScoreValue(value.blendedScore ?? value.blended_score),
+    finalScore: formatScoreValue(value.finalScore ?? value.final_score ?? value.totalScore ?? value.total_score ?? value.score),
     totalScore: formatScoreValue(value.totalScore ?? value.total_score ?? value.score),
     scoreLevel: value.scoreLevel || value.score_level || '',
     capTriggers: Array.isArray(value.capTriggers) ? value.capTriggers : [],

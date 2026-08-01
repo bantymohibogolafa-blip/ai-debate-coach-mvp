@@ -1,4 +1,5 @@
 import { isTextRubricMode, textRubricsV2, textScoreLevels } from './textRubricsV2.js';
+import { calculateDefenseFinalScore, normalizeDefenseRoundStates } from './defenseTraining.js';
 
 const scoreLevels = [
   { min: 90, max: 100, label: '大师致胜区' },
@@ -462,6 +463,59 @@ export function applyMandatoryScoreCaps(score, capTriggers = [], rubricOrMode = 
     score: roundToOne(clamp(cappedScore, 30, 100)),
     reasons,
     triggeredCaps
+  };
+}
+
+// The only score settlement entry point used by review and record persistence.
+// Client-provided score / scoreLevel are deliberately absent from this API.
+export function finalizeReviewScore({
+  trainingMode,
+  dimensionScores,
+  capTriggers = [],
+  defenseRoundStates = [],
+  rounds
+} = {}) {
+  const { rubric } = getScoringRubric(trainingMode);
+  const weighted = calculateWeightedScore(dimensionScores, rubric);
+  const generalCaps = applyMandatoryScoreCaps(weighted.rawScore, capTriggers, rubric);
+  const isDefense = rubric.appMode === 'defense';
+  const states = isDefense ? normalizeDefenseRoundStates(defenseRoundStates, rounds) : [];
+  const defenseResult = isDefense
+    ? calculateDefenseFinalScore(weighted.rawScore, states, rounds)
+    : null;
+  const blendedScore = defenseResult ? defenseResult.blendedScore : weighted.rawScore;
+  const defenseCapReason = defenseResult?.cap
+    ? `防守逐轮状态触发封顶：最高 ${defenseResult.cap} 分。`
+    : null;
+  const finalScore = roundToOne(clamp(Math.min(
+    generalCaps.score,
+    defenseResult ? defenseResult.score : weighted.rawScore
+  ), 0, 100));
+  const triggeredCaps = [
+    ...generalCaps.triggeredCaps,
+    ...(defenseCapReason ? [defenseCapReason] : [])
+  ];
+  const capReasons = [
+    ...generalCaps.reasons,
+    ...(defenseCapReason ? [defenseCapReason] : [])
+  ];
+
+  return {
+    rawScore: weighted.rawScore,
+    blendedScore,
+    finalScore,
+    scoreLevel: getScoreLevel(finalScore, rubric.appMode),
+    capReasons,
+    triggeredCaps,
+    dimensionScores: weighted.dimensionScores,
+    defenseRoundSummary: defenseResult ? {
+      totalRounds: rounds === 5 ? 5 : 3,
+      analyzedRounds: states.length,
+      roundAverage: defenseResult.roundAverage,
+      scoreCap: defenseResult.cap,
+      delayedAnswerCount: states.filter((item) => item.isDelayedAnswer).length,
+      missedCurrentQuestionCount: states.filter((item) => !item.isCurrentQuestionAnswered).length
+    } : null
   };
 }
 

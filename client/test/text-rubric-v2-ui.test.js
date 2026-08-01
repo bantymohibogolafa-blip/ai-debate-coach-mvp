@@ -19,3 +19,9 @@ test('history explains the text V2 comparison boundary', () => {
   assert.match(appSource, /评分标准已于2026年8月1日更新，新旧分数不建议直接比较/);
   assert.match(appSource, /record\.rubricVersion === 'text_v2'/);
 });
+
+test('defense record submission carries the data required for server-side finalization', () => {
+  assert.match(appSource, /config\.trainingMode === 'defense' \? \{ defenseRoundStates, rounds: config\.rounds \} : \{\}/);
+  assert.match(appSource, /reviewData\?\.finalScore \?\? reviewData\?\.totalScore \?\? reviewData\?\.score/);
+  assert.match(appSource, /reviewData\.finalScore \?\? reviewData\.totalScore \?\? reviewData\.score/);
+});

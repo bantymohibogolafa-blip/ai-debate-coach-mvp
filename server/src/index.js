@@ -26,12 +26,12 @@ import {
 import {
   applyMandatoryScoreCaps,
   calculateWeightedScore,
+  finalizeReviewScore,
   getScoreLevel,
   getScoringRubric,
   normalizeScoringMode
 } from './scoringRubrics.js';
 import {
-  calculateDefenseFinalScore,
   normalizeDefenseQuestion,
   normalizeDefenseRoundStates,
   parseDefenseOpening,
@@ -392,22 +392,26 @@ app.post('/api/debate/review', async (req, res, next) => {
     });
     const content = await callDeepSeek(messages, { maxTokens: 2200, temperature: 0.5 });
     const structuredReview = parseReviewContent(content, payload.trainingMode, payload.difficulty);
-    if (payload.trainingMode === 'defense' && payload.defenseRoundStates.length) {
-      const defenseScore = calculateDefenseFinalScore(
-        structuredReview.score,
-        payload.defenseRoundStates,
-        payload.rounds
-      );
-      structuredReview.score = defenseScore.score;
-      structuredReview.scoreLevel = getScoreLevel(defenseScore.score);
-      structuredReview.defenseRoundSummary = {
-        totalRounds: payload.rounds,
-        analyzedRounds: payload.defenseRoundStates.length,
-        roundAverage: defenseScore.roundAverage,
-        scoreCap: defenseScore.cap,
-        delayedAnswerCount: payload.defenseRoundStates.filter((item) => item.isDelayedAnswer).length,
-        missedCurrentQuestionCount: payload.defenseRoundStates.filter((item) => !item.isCurrentQuestionAnswered).length
-      };
+    if (payload.trainingMode === 'defense') {
+      const finalized = finalizeReviewScore({
+        trainingMode: payload.trainingMode,
+        dimensionScores: structuredReview.dimensionScores,
+        capTriggers: structuredReview.capTriggers,
+        defenseRoundStates: payload.defenseRoundStates,
+        rounds: payload.rounds
+      });
+      Object.assign(structuredReview, {
+        rawScore: finalized.rawScore,
+        blendedScore: finalized.blendedScore,
+        finalScore: finalized.finalScore,
+        score: finalized.finalScore,
+        totalScore: finalized.finalScore,
+        scoreLevel: finalized.scoreLevel,
+        triggeredCaps: finalized.triggeredCaps,
+        scoreCapReasons: finalized.capReasons,
+        dimensionScores: finalized.dimensionScores,
+        defenseRoundSummary: finalized.defenseRoundSummary
+      });
     }
     const formattedContent = formatStructuredReview(structuredReview, content);
 
@@ -1669,6 +1673,8 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   let scoreLevel = normalizeText(body.scoreLevel || body.score_level);
   let dimensionScores = normalizeDimensionScores(body.dimensionScores || body.dimension_scores);
   const capTriggers = Array.isArray(body.capTriggers) ? body.capTriggers : [];
+  const submittedRounds = Number(body.rounds);
+  const submittedDefenseRoundStates = body.defenseRoundStates || body.defense_round_states;
 
   if (!isValidLocalUserId(localUserId)) {
     throw badRequest('用户身份无效，请刷新页面后重试。');
@@ -1755,16 +1761,37 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     throw badRequest('训练记录缺少有效训练模式。');
   }
 
+  let defenseRoundStates = [];
+  let rounds = null;
+  // Older records without five dimension scores cannot be recomputed safely.
+  // Current clients always submit dimensions plus round states; only that
+  // authoritative path is finalized here.
+  if (trainingMode === 'defense' && dimensionScores.length) {
+    if (![3, 5].includes(submittedRounds)) {
+      throw badRequest('防守训练记录缺少有效轮数。');
+    }
+    if (!Array.isArray(submittedDefenseRoundStates)) {
+      throw badRequest('防守训练记录缺少逐轮状态，无法结算最终分数。');
+    }
+    rounds = submittedRounds;
+    defenseRoundStates = normalizeDefenseRoundStates(submittedDefenseRoundStates, rounds);
+    if (!defenseRoundStates.length) {
+      throw badRequest('防守训练记录缺少有效逐轮状态，无法结算最终分数。');
+    }
+  }
+
   if (dimensionScores.length) {
     try {
-      const weightedResult = calculateWeightedScore(dimensionScores, getScoringRubric(trainingMode).rubric);
-      score = applyMandatoryScoreCaps(
-        weightedResult.rawScore,
+      const finalized = finalizeReviewScore({
+        trainingMode,
+        dimensionScores,
         capTriggers,
-        getScoringRubric(trainingMode).rubric
-      ).score;
-      scoreLevel = getScoreLevel(score, trainingMode);
-      dimensionScores = weightedResult.dimensionScores.map((dimension) => ({
+        defenseRoundStates,
+        rounds
+      });
+      score = finalized.finalScore;
+      scoreLevel = finalized.scoreLevel;
+      dimensionScores = finalized.dimensionScores.map((dimension) => ({
         ...dimension,
         comment: limitLength(normalizeText(dimension.comment), 240)
       }));
@@ -1798,6 +1825,25 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     throw badRequest('训练记录缺少有效评分。');
   }
 
+  let defenseAnswerIndex = 0;
+  const persistedMessages = reviewableMessages
+    .filter((item) => ['ai', 'assistant', 'user'].includes(item.role) && normalizeText(item.content))
+    .map((item) => {
+      const persisted = {
+        role: item.role === 'assistant' ? 'ai' : item.role,
+        content: normalizeText(item.content)
+      };
+      if (trainingMode === 'defense' && item.defenseQuestion) {
+        persisted.defenseQuestion = normalizeDefenseQuestion(item.defenseQuestion, item.defenseQuestion.roundNumber);
+      }
+      if (trainingMode === 'defense' && item.role === 'user') {
+        const state = defenseRoundStates[defenseAnswerIndex];
+        defenseAnswerIndex += 1;
+        if (state) persisted.defenseRoundState = state;
+      }
+      return persisted;
+    });
+
   const record = {
     space_type: spaceType,
     team_code: normalizedTeamCode,
@@ -1810,18 +1856,7 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     difficulty,
     style_id: styleId,
     training_mode: trainingMode,
-    messages: reviewableMessages
-      .filter((item) => ['ai', 'assistant', 'user'].includes(item.role) && normalizeText(item.content))
-      .map((item) => ({
-        role: item.role === 'assistant' ? 'ai' : item.role,
-        content: normalizeText(item.content),
-        ...(trainingMode === 'defense' && item.defenseQuestion
-          ? { defenseQuestion: normalizeDefenseQuestion(item.defenseQuestion, item.defenseQuestion.roundNumber) }
-          : {}),
-        ...(trainingMode === 'defense' && item.defenseRoundState
-          ? { defenseRoundState: normalizeDefenseRoundStates([item.defenseRoundState], 5)[0] }
-          : {})
-      })),
+    messages: persistedMessages,
     review,
     score,
     result,

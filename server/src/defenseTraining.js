@@ -142,7 +142,8 @@ export function parseDefenseTurn(content, context = {}) {
 export function calculateDefenseFinalScore(modelScore, roundStates, totalRounds) {
   const states = normalizeDefenseRoundStates(roundStates, totalRounds);
   if (!states.length) {
-    return { score: roundToOne(modelScore), roundAverage: null, cap: null };
+    const blendedScore = roundToOne(Math.max(0, Math.min(Number(modelScore), 100)));
+    return { score: blendedScore, blendedScore, roundAverage: null, cap: null };
   }
 
   const roundAverage = states.reduce((sum, state) => sum + state.roundScore.total, 0) / states.length;
@@ -157,6 +158,7 @@ export function calculateDefenseFinalScore(modelScore, roundStates, totalRounds)
   if (delayedWithoutCurrent.length) cap = Math.min(cap, 69);
   return {
     score: roundToOne(Math.max(0, Math.min(blended, cap, 100))),
+    blendedScore: roundToOne(Math.max(0, Math.min(blended, 100))),
     roundAverage: roundToOne(roundAverage),
     cap: cap < 100 ? cap : null
   };

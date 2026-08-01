@@ -174,11 +174,71 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(linWanPrompt.includes(TAIL_MARKER), false);
 });
 
+test('defense review, persisted record, and reloaded history share the server final score', async (t) => {
+  const harness = createHarness();
+  harness.setReviewDimensionScore(90);
+  const port = await listen(t, harness.fetch);
+  const token = jwt.sign({ sub: USER_ID, username: 'completed_user', displayName: '完成消息测试' }, JWT_SECRET);
+  const defenseRoundStates = [
+    defenseState(1, 'fully_answered', 90),
+    defenseState(2, 'unanswered', 0),
+    defenseState(3, 'off_topic', 0)
+  ];
+  const history = [
+    { role: 'ai', content: '第一轮问题' },
+    { role: 'user', content: '第一轮回答', defenseRoundState: defenseRoundStates[0] }
+  ];
+
+  const reviewed = await requestJson(port, '/api/debate/review', {}, 'POST', {
+    ...sessionPayload('defense'),
+    history,
+    defenseRoundStates
+  });
+  assert.equal(reviewed.status, 200);
+  assert.equal(reviewed.body.structuredReview.rawScore, 90);
+  assert.equal(reviewed.body.structuredReview.score, 49);
+  assert.equal(reviewed.body.structuredReview.totalScore, 49);
+
+  const saved = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    spaceType: 'personal',
+    localUserId: LOCAL_USER_ID,
+    nickname: '完成消息测试',
+    topic: '测试辩题',
+    userSide: 'affirmative',
+    aiSide: 'negative',
+    difficulty: 'novice',
+    styleId: 'none',
+    trainingMode: 'defense',
+    rounds: 3,
+    defenseRoundStates,
+    messages: history,
+    review: reviewed.body.content,
+    score: 99,
+    scoreLevel: '伪造高分',
+    dimensionScores: reviewed.body.structuredReview.dimensionScores,
+    capTriggers: reviewed.body.structuredReview.capTriggers
+  });
+  assert.equal(saved.status, 201);
+  assert.equal(saved.body.record.score, 49);
+  assert.equal(saved.body.record.scoreLevel, reviewed.body.structuredReview.scoreLevel);
+  assert.equal(harness.trainingRows[0].score, 49);
+
+  const loaded = await requestJson(
+    port,
+    `/api/training-records/my?spaceType=personal&localUserId=${LOCAL_USER_ID}`,
+    auth(token)
+  );
+  assert.equal(loaded.status, 200);
+  assert.equal(loaded.body.records[0].score, 49);
+  assert.equal(loaded.body.records[0].scoreLevel, reviewed.body.structuredReview.scoreLevel);
+});
+
 function createHarness() {
   const modelRequests = [];
   const trainingRows = [];
   let sequence = 0;
   let missingReviewDimension = false;
+  let reviewDimensionScore = 80;
 
   async function fetchMock(input, init = {}) {
     const url = new URL(String(input));
@@ -198,7 +258,7 @@ function createHarness() {
               reviewText: '只基于已完成回答生成的复盘',
               dimensionScores: rubric.dimensions.map((dimension) => ({
                 name: dimension.name,
-                score: 80,
+                score: reviewDimensionScore,
                 maxScore: 100,
                 comment: '稳定完成当前维度任务'
               })).slice(0, missingReviewDimension ? 4 : 5),
@@ -238,6 +298,28 @@ function createHarness() {
     trainingRows,
     setMissingReviewDimension(value) {
       missingReviewDimension = Boolean(value);
+    },
+    setReviewDimensionScore(value) {
+      reviewDimensionScore = Number(value);
+    }
+  };
+}
+
+function defenseState(roundNumber, answerStatus, componentScore) {
+  return {
+    roundNumber,
+    questionId: `defense_round_${roundNumber}_question_1`,
+    questionText: `第${roundNumber}轮问题`,
+    userAnswer: `第${roundNumber}轮回答`,
+    answerStatus,
+    currentQuestionCompletion: answerStatus === 'fully_answered' ? componentScore : 0,
+    isCurrentQuestionAnswered: answerStatus === 'fully_answered',
+    roundScore: {
+      contentQuality: componentScore,
+      currentQuestionRelevance: componentScore,
+      responseCompleteness: componentScore,
+      timeliness: componentScore,
+      defensiveEffectiveness: componentScore
     }
   };
 }
