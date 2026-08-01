@@ -57,6 +57,7 @@ export default function SuperLinWanPrep({
   const [questionIntent, setQuestionIntent] = useState('chat');
   const [isSending, setIsSending] = useState(false);
   const [sendingIntent, setSendingIntent] = useState('chat');
+  const [sendingEvidenceAction, setSendingEvidenceAction] = useState('');
   const [chatError, setChatError] = useState('');
   const [actionStatus, setActionStatus] = useState('');
   const chatEndRef = useRef(null);
@@ -244,13 +245,15 @@ export default function SuperLinWanPrep({
   async function submitChatRequest({
     text,
     intent = 'chat',
-    preserveDraft = false
+    preserveDraft = false,
+    evidenceAction = ''
   }) {
     const cleanQuestion = text.trim();
     if (!cleanQuestion || !detail?.task || isSending) return;
     const clientRequestId = createUuid();
     setIsSending(true);
     setSendingIntent(intent);
+    setSendingEvidenceAction(intent === 'evidence' ? evidenceAction || 'plan' : '');
     setChatError('');
     setActionStatus('');
     if (!preserveDraft) {
@@ -260,7 +263,12 @@ export default function SuperLinWanPrep({
     try {
       const data = await api.postJson(
         `/api/prematch/tasks/${encodeURIComponent(detail.task.id)}/chat`,
-        { question: cleanQuestion, clientRequestId, intent }
+        {
+          question: cleanQuestion,
+          clientRequestId,
+          intent,
+          ...(intent === 'evidence' ? { evidenceAction: evidenceAction || 'plan' } : {})
+        }
       );
       setDetail((current) => {
         if (!current || current.task.id !== data.task?.id) return current;
@@ -283,6 +291,7 @@ export default function SuperLinWanPrep({
     } finally {
       setIsSending(false);
       setSendingIntent('chat');
+      setSendingEvidenceAction('');
     }
   }
 
@@ -297,7 +306,8 @@ export default function SuperLinWanPrep({
       void submitChatRequest({
         text: prompt.text,
         intent: 'evidence',
-        preserveDraft: true
+        preserveDraft: true,
+        evidenceAction: 'plan'
       });
       return;
     }
@@ -314,6 +324,22 @@ export default function SuperLinWanPrep({
       intent: 'report',
       preserveDraft: true
     });
+  }
+
+  function confirmEvidenceSearch() {
+    if (isSending || !detail?.permissions?.canChat) return;
+    void submitChatRequest({
+      text: '按刚才确认的范围联网搜索论据。',
+      intent: 'evidence',
+      preserveDraft: true,
+      evidenceAction: 'search'
+    });
+  }
+
+  function adjustEvidenceScope() {
+    if (isSending || !detail?.permissions?.canChat) return;
+    setQuestion('我希望把检索范围调整为：');
+    setQuestionIntent('evidence');
   }
 
   async function changeTaskStatus(nextStatus) {
@@ -387,6 +413,7 @@ export default function SuperLinWanPrep({
         question={question}
         isSending={isSending}
         sendingIntent={sendingIntent}
+        sendingEvidenceAction={sendingEvidenceAction}
         isSaving={isSaving}
         isEditing={isEditing}
         editForm={editForm}
@@ -406,6 +433,8 @@ export default function SuperLinWanPrep({
         }}
         onSend={sendMessage}
         onQuickPrompt={useQuickPrompt}
+        onConfirmEvidenceSearch={confirmEvidenceSearch}
+        onAdjustEvidenceScope={adjustEvidenceScope}
         onCreateReport={createCurrentReport}
         onEdit={() => {
           setEditForm(taskToForm(detail.task));
@@ -510,6 +539,7 @@ function PrematchTaskWorkspace({
   question,
   isSending,
   sendingIntent,
+  sendingEvidenceAction,
   isSaving,
   isEditing,
   editForm,
@@ -521,6 +551,8 @@ function PrematchTaskWorkspace({
   onQuestionChange,
   onSend,
   onQuickPrompt,
+  onConfirmEvidenceSearch,
+  onAdjustEvidenceScope,
   onCreateReport,
   onEdit,
   onEditCancel,
@@ -531,6 +563,12 @@ function PrematchTaskWorkspace({
   onDelete
 }) {
   const { task, messages, permissions } = detail;
+  const latestSearchMessage = [...messages].reverse().find((message) => (
+    message.role === 'assistant' && message.contextManifest?.search
+  ));
+  const confirmableSearchMessageId = latestSearchMessage?.contextManifest?.search?.status === 'pending_confirmation'
+    ? latestSearchMessage.id
+    : '';
 
   return (
     <section className="prematch-workspace">
@@ -604,13 +642,21 @@ function PrematchTaskWorkspace({
                   <time>{formatMessageTime(message.createdAt)}</time>
                 </div>
                 <p>{message.content}</p>
-                <MessageEvidenceSources search={message.contextManifest?.search} />
+                <MessageEvidenceSources
+                  search={message.contextManifest?.search}
+                  canConfirm={message.id === confirmableSearchMessageId}
+                  isSending={isSending}
+                  onConfirm={onConfirmEvidenceSearch}
+                  onAdjust={onAdjustEvidenceScope}
+                />
               </article>
             ))}
             {isSending && (
               <div className="assistant-loading">
                 {sendingIntent === 'evidence'
-                  ? 'Super 林婉正在联网搜集并梳理论据…'
+                  ? sendingEvidenceAction === 'search'
+                    ? 'Super 林婉正在联网搜集并梳理论据…'
+                    : 'Super 林婉正在梳理本轮检索范围…'
                   : 'Super 林婉正在整理当前思路…'}
               </div>
             )}
@@ -711,12 +757,13 @@ function taskToForm(task) {
   };
 }
 
-function MessageEvidenceSources({ search }) {
+function MessageEvidenceSources({ search, canConfirm, isSending, onConfirm, onAdjust }) {
   if (!search) return null;
   const sources = Array.isArray(search.sources)
     ? search.sources.filter((source) => safeHttpUrl(source?.url))
     : [];
   const statusText = {
+    pending_confirmation: '请先确认本轮检索范围；确认前不会发起联网请求。',
     success: `本轮已联网检索，共找到 ${Number(search.totalResults || sources.length)} 个可查看来源。`,
     partial: '部分检索请求失败，以下为本轮成功取得的来源。',
     fallback: '本轮联网检索失败，以下内容仅为检索方向，不是已经核实的论据。',
@@ -726,6 +773,22 @@ function MessageEvidenceSources({ search }) {
   return (
     <section className={`prematch-evidence ${search.status || 'unavailable'}`} aria-label="本轮来源">
       {statusText && <p className="prematch-evidence-status">{statusText}</p>}
+      {search.status === 'pending_confirmation' && (
+        <div className="prematch-evidence-scope">
+          {search.goal && <p><b>检索目标：</b>{search.goal}</p>}
+          <ol>
+            {(Array.isArray(search.queries) ? search.queries : []).map((item) => (
+              <li key={`${item.zone}:${item.language}:${item.query}`}>{item.query}</li>
+            ))}
+          </ol>
+          {canConfirm && (
+            <div className="prematch-evidence-actions">
+              <button type="button" disabled={isSending} onClick={onConfirm}>按此范围搜索</button>
+              <button type="button" disabled={isSending} onClick={onAdjust}>调整范围</button>
+            </div>
+          )}
+        </div>
+      )}
       {sources.length > 0 && (
         <div className="prematch-evidence-list">
           {sources.map((source) => (

@@ -849,23 +849,24 @@ function formatEvidenceSearchContext(search, evidenceLibrary) {
 
 function normalizeSearchManifest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const status = ['success', 'partial', 'fallback', 'unavailable'].includes(value.status)
+  const status = ['pending_confirmation', 'success', 'partial', 'fallback', 'unavailable'].includes(value.status)
     ? value.status
     : 'unavailable';
   const sources = (Array.isArray(value.sources) ? value.sources : [])
     .map(publicEvidenceSource)
     .filter(Boolean)
-    .slice(0, 12);
+    .slice(0, 5);
   return {
     provider: value.provider === 'anysearch' ? 'anysearch' : '',
     status,
+    goal: cleanText(value.goal, 500),
     queries: (Array.isArray(value.queries) ? value.queries : []).map((item) => ({
       query: cleanText(item?.query, 200),
       zone: item?.zone === 'intl' ? 'intl' : 'cn',
       language: item?.language === 'en' ? 'en' : 'zh-CN'
     })).filter((item) => item.query).slice(0, 3),
     retrievedAt: cleanInline(value.retrievedAt, 60),
-    totalResults: clampInteger(value.totalResults ?? sources.length, 0, 12),
+    totalResults: clampInteger(value.totalResults ?? sources.length, 0, 5),
     sources
   };
 }

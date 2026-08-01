@@ -6524,6 +6524,50 @@ textarea:focus {
   color: #8a5532 !important;
 }
 
+.prematch-evidence-scope {
+  min-width: 0;
+  border: 1px solid #cfe0df;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #f5faf9;
+}
+
+.prematch-evidence-scope p,
+.prematch-evidence-scope ol {
+  margin: 0;
+  color: #38565c;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.prematch-evidence-scope ol {
+  margin-top: 6px;
+  padding-left: 20px;
+}
+
+.prematch-evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.prematch-evidence-actions button {
+  border: 1px solid #8fb8b5;
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: #315d61;
+  background: #e7f3f1;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.prematch-evidence-actions button + button {
+  border-color: #d6c0ae;
+  color: #79503a;
+  background: #fff6ef;
+}
+
 .prematch-evidence-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));

@@ -58,15 +58,20 @@ test('三个快捷提示与报告共用当前任务聊天接口并传递 intent'
   assert.match(prepSource, /label: '发散论点'/);
   assert.match(prepSource, /label: '搜集论据'/);
   assert.match(prepSource, /形成当前思路报告/);
-  assert.match(prepSource, /\{ question: cleanQuestion, clientRequestId, intent \}/);
+  assert.match(prepSource, /question: cleanQuestion,\s*clientRequestId,\s*intent/);
   assert.match(prepSource, /intent: 'report'/);
   assert.match(prepSource, /setQuestion\(\(current\) => current\.trim\(\)/);
   assert.equal((prepSource.match(/\/chat`/g) || []).length, 1);
 });
 
-test('搜集论据按钮直接提交联网请求且不会覆盖输入框草稿', () => {
+test('搜集论据先确认范围再联网且不会覆盖输入框草稿', () => {
   assert.match(prepSource, /prompt\.intent === 'evidence'/);
   assert.match(prepSource, /text: prompt\.text,\s*intent: 'evidence',\s*preserveDraft: true/);
+  assert.match(prepSource, /evidenceAction: 'plan'/);
+  assert.match(prepSource, /evidenceAction: 'search'/);
+  assert.match(prepSource, /按此范围搜索/);
+  assert.match(prepSource, /调整范围/);
+  assert.match(prepSource, /pending_confirmation/);
   assert.match(prepSource, /sendingIntent=\{sendingIntent\}/);
 });
 

@@ -9,7 +9,7 @@ const MEDIA_DOMAINS = [
 ];
 
 export const EVIDENCE_LIBRARY_LIMIT = 40;
-export const SEARCH_SOURCE_LIMIT = 12;
+export const SEARCH_SOURCE_LIMIT = 5;
 export const SEARCH_CONTEXT_LIMIT = 12000;
 
 export function canonicalizeEvidenceUrl(value) {

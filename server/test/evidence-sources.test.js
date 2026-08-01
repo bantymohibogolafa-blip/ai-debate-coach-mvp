@@ -42,3 +42,13 @@ test('source IDs stay stable across rounds and full content is not persisted', (
   assert.equal(Object.hasOwn(merged[1], 'contentExcerpt'), false);
   assert.deepEqual(normalizeEvidenceLibrary(merged), merged);
 });
+
+test('one evidence round keeps at most five concise sources', () => {
+  const sources = cleanEvidenceResults(Array.from({ length: 8 }, (_, index) => ({
+    title: `来源 ${index + 1}`,
+    url: `https://example.com/source-${index + 1}`,
+    snippet: `摘要 ${index + 1}`
+  })));
+  assert.equal(sources.length, 5);
+  assert.deepEqual(sources.map((item) => item.id), ['E1', 'E2', 'E3', 'E4', 'E5']);
+});

@@ -188,7 +188,7 @@ test('chat intent defaults to chat, rejects invalid values, and persists report 
   );
 });
 
-test('evidence intent degrades explicitly when AnySearch is not configured', async (t) => {
+test('evidence intent confirms scope before searching and degrades explicitly without AnySearch', async (t) => {
   const harness = createHarness();
   const port = await listen(t, harness.fetch);
   const response = await requestJson(
@@ -204,16 +204,53 @@ test('evidence intent degrades explicitly when AnySearch is not configured', asy
   );
 
   assert.equal(response.status, 200);
-  assert.equal(harness.modelRequests.length, 2);
+  assert.equal(harness.modelRequests.length, 1);
   const planPrompt = harness.modelRequests[0].map((message) => message.content).join('\n');
-  const prompt = harness.modelRequests[1].map((message) => message.content).join('\n');
   assert.match(planPrompt, /生成少量联网检索词/);
-  assert.match(prompt, /本轮 intent=evidence/);
-  assert.match(prompt, /联网状态：fallback/);
-  assert.match(response.body.assistantMessage.content, /本轮联网检索失败/);
-  assert.equal(response.body.contextManifest.search.status, 'fallback');
+  assert.match(response.body.assistantMessage.content, /确认后我再真正联网/);
+  assert.equal(response.body.contextManifest.search.status, 'pending_confirmation');
   assert.deepEqual(response.body.contextManifest.search.sources, []);
+  assert.equal(harness.anysearchRequests.length, 0);
+
+  const confirmed = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/chat`,
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      question: '按刚才确认的范围联网搜索论据。',
+      clientRequestId: '83000000-0000-4000-8000-000000000015',
+      intent: 'evidence',
+      evidenceAction: 'search'
+    }
+  );
+  assert.equal(confirmed.status, 200);
+  const prompt = harness.modelRequests[1].map((message) => message.content).join('\n');
+  assert.match(prompt, /联网状态：fallback/);
+  assert.match(confirmed.body.assistantMessage.content, /本轮联网检索失败/);
+  assert.equal(confirmed.body.contextManifest.search.status, 'fallback');
   assert.equal(harness.calls.some((call) => call.table === 'prematch_training_links'), false);
+});
+
+test('evidence search cannot bypass scope confirmation', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const response = await requestJson(
+    port,
+    `/api/prematch/tasks/${TASK_A}/chat`,
+    auth(signToken(USER_A)),
+    'POST',
+    {
+      question: '直接搜索',
+      clientRequestId: '83000000-0000-4000-8000-000000000017',
+      intent: 'evidence',
+      evidenceAction: 'search'
+    }
+  );
+  assert.equal(response.status, 400);
+  assert.match(response.body.message, /先.*拟定检索范围/);
+  assert.equal(harness.anysearchRequests.length, 0);
+  assert.equal(harness.modelRequests.length, 0);
 });
 
 test('evidence intent searches after idempotency, persists stable sources and filters invented IDs', async (t) => {
@@ -240,17 +277,28 @@ test('evidence intent searches after idempotency, persists stable sources and fi
     usedEvidenceIds: ['E1', 'E999']
   });
   const port = await listen(t, harness.fetch);
-  const requestId = '83000000-0000-4000-8000-000000000099';
+  const planRequestId = '83000000-0000-4000-8000-000000000098';
   const first = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
-    question: '请联网搜集机制影响论据。', clientRequestId: requestId, intent: 'evidence'
+    question: '请联网搜集机制影响论据。', clientRequestId: planRequestId, intent: 'evidence'
   });
   assert.equal(first.status, 200);
+  assert.equal(first.body.contextManifest.search.status, 'pending_confirmation');
+  assert.equal(harness.anysearchRequests.length, 0);
+
+  const requestId = '83000000-0000-4000-8000-000000000099';
+  const searched = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '按刚才确认的范围联网搜索论据。',
+    clientRequestId: requestId,
+    intent: 'evidence',
+    evidenceAction: 'search'
+  });
+  assert.equal(searched.status, 200);
   assert.equal(harness.anysearchRequests.length, 2);
-  assert.equal(first.body.contextManifest.search.status, 'success');
-  assert.equal(first.body.contextManifest.search.sources[0].id, 'E1');
-  assert.equal(first.body.task.strategyState.evidenceLibrary[0].id, 'E1');
-  assert.deepEqual(first.body.assistantMessage.structuredUpdate.usedEvidenceIds, ['E1']);
-  assert.equal(JSON.stringify(first.body).includes('原文节选'), false);
+  assert.equal(searched.body.contextManifest.search.status, 'success');
+  assert.equal(searched.body.contextManifest.search.sources[0].id, 'E1');
+  assert.equal(searched.body.task.strategyState.evidenceLibrary[0].id, 'E1');
+  assert.deepEqual(searched.body.assistantMessage.structuredUpdate.usedEvidenceIds, ['E1']);
+  assert.equal(JSON.stringify(searched.body).includes('原文节选'), false);
   const finalPrompt = harness.modelRequests.at(-1).map((message) => message.content).join('\n');
   assert.match(finalPrompt, /不可信外部资料/);
   assert.match(finalPrompt, /\[E1\]/);

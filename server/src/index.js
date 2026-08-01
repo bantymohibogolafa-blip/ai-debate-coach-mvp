@@ -476,90 +476,119 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
 
     if (chatPayload.intent === 'evidence') {
       let searchPlan;
-      try {
-        const rawPlan = await callDeepSeek(buildEvidenceSearchPlanMessages({
-          task: mapPrematchTaskFromDb(task),
-          memory: currentMemory,
-          taskSummary: task.context_summary,
-          recentMessages: mappedRecentMessages,
-          currentQuestion: chatPayload.question
-        }), { maxTokens: 700, temperature: 0.2 });
-        searchPlan = parseEvidenceSearchPlan(rawPlan, {
-          debateTopic: task.debate_topic,
-          currentQuestion: chatPayload.question
-        });
-      } catch {
-        searchPlan = parseEvidenceSearchPlan('', {
-          debateTopic: task.debate_topic,
-          currentQuestion: chatPayload.question
-        });
-      }
-      let searched;
-      try {
-        searched = await searchEvidence({
-          queries: searchPlan.queries,
-          sensitiveValues: [
-            task.id,
-            req.user.id,
-            req.user.displayName,
-            req.user.email,
-            chatPayload.clientRequestId
-          ]
-        });
-      } catch (error) {
-        searched = {
+      if (chatPayload.evidenceAction === 'plan') {
+        try {
+          const rawPlan = await callDeepSeek(buildEvidenceSearchPlanMessages({
+            task: mapPrematchTaskFromDb(task),
+            memory: currentMemory,
+            taskSummary: task.context_summary,
+            recentMessages: mappedRecentMessages,
+            currentQuestion: chatPayload.question
+          }), { maxTokens: 700, temperature: 0.2 });
+          searchPlan = parseEvidenceSearchPlan(rawPlan, {
+            debateTopic: task.debate_topic,
+            currentQuestion: chatPayload.question
+          });
+        } catch {
+          searchPlan = parseEvidenceSearchPlan('', {
+            debateTopic: task.debate_topic,
+            currentQuestion: chatPayload.question
+          });
+        }
+        searchContext = {
           provider: 'anysearch',
-          status: 'unavailable',
+          status: 'pending_confirmation',
+          goal: searchPlan.goal,
           queries: searchPlan.queries,
-          results: [],
-          requestIds: [],
-          errors: [{ code: error?.code || 'search_unavailable', status: error?.status || 0 }]
+          retrievedAt: '',
+          totalResults: 0,
+          sources: [],
+          requestIds: []
         };
-      }
-      const cleanedSources = cleanEvidenceResults(searched.results, {
-        existingLibrary: currentMemory.evidenceLibrary,
-        retrievedAt: new Date().toISOString()
-      });
-      nextEvidenceLibrary = mergeEvidenceLibrary(currentMemory.evidenceLibrary, cleanedSources);
-      const stableByUrl = new Map(nextEvidenceLibrary.map((item) => [item.url, item]));
-      const stableSources = cleanedSources.map((item) => ({
-        ...item,
-        id: stableByUrl.get(item.url)?.id || item.id
-      }));
-      searchContext = {
-        provider: searched.provider,
-        status: stableSources.length
-          ? searched.status
-          : searched.status === 'unavailable' ? 'unavailable' : 'fallback',
-        queries: searched.queries,
-        retrievedAt: new Date().toISOString(),
-        totalResults: stableSources.length,
-        sources: stableSources,
-        requestIds: searched.requestIds
-      };
-      if (searched.errors.length) {
-        console.warn('[prematch-search] AnySearch request incomplete', {
-          status: searchContext.status,
-          errors: searched.errors,
-          resultCount: stableSources.length
+      } else {
+        searchPlan = findLatestPendingEvidencePlan(mappedRecentMessages);
+        if (!searchPlan) {
+          throw badRequest('请先让 Super 林婉拟定检索范围，再确认联网搜索。');
+        }
+        let searched;
+        try {
+          searched = await searchEvidence({
+            queries: searchPlan.queries,
+            sensitiveValues: [
+              task.id,
+              req.user.id,
+              req.user.displayName,
+              req.user.email,
+              chatPayload.clientRequestId
+            ]
+          });
+        } catch (error) {
+          searched = {
+            provider: 'anysearch',
+            status: 'unavailable',
+            queries: searchPlan.queries,
+            results: [],
+            requestIds: [],
+            errors: [{ code: error?.code || 'search_unavailable', status: error?.status || 0 }]
+          };
+        }
+        const cleanedSources = cleanEvidenceResults(searched.results, {
+          existingLibrary: currentMemory.evidenceLibrary,
+          retrievedAt: new Date().toISOString(),
+          limit: 5
         });
+        nextEvidenceLibrary = mergeEvidenceLibrary(currentMemory.evidenceLibrary, cleanedSources);
+        const stableByUrl = new Map(nextEvidenceLibrary.map((item) => [item.url, item]));
+        const stableSources = cleanedSources.map((item) => ({
+          ...item,
+          id: stableByUrl.get(item.url)?.id || item.id
+        }));
+        searchContext = {
+          provider: searched.provider,
+          status: stableSources.length
+            ? searched.status
+            : searched.status === 'unavailable' ? 'unavailable' : 'fallback',
+          goal: searchPlan.goal,
+          queries: searched.queries,
+          retrievedAt: new Date().toISOString(),
+          totalResults: stableSources.length,
+          sources: stableSources,
+          requestIds: searched.requestIds
+        };
+        if (searched.errors.length) {
+          console.warn('[prematch-search] AnySearch request incomplete', {
+            status: searchContext.status,
+            errors: searched.errors,
+            resultCount: stableSources.length
+          });
+        }
       }
     }
-    const modelMessages = buildPersonalTaskLinWanMessages({
-      task: mapPrematchTaskFromDb(task),
-      memory: { ...currentMemory, evidenceLibrary: nextEvidenceLibrary },
-      taskSummary: task.context_summary,
-      recentMessages: mappedRecentMessages,
-      currentQuestion: chatPayload.question,
-      intent: chatPayload.intent,
-      displayName: req.user.displayName,
-      search: searchContext
-    });
-    const rawResponse = await callDeepSeek(modelMessages, {
-      maxTokens: chatPayload.intent === 'report' ? 2600 : 1900,
-      temperature: 0.5
-    });
-    const parsedResponse = parsePersonalTaskLinWanResponse(rawResponse);
+    let parsedResponse;
+    if (searchContext?.status === 'pending_confirmation') {
+      parsedResponse = {
+        answer: formatEvidenceScopeConfirmation(searchContext),
+        taskSummary: task.context_summary,
+        structuredUpdate: {},
+        usedEvidenceIds: []
+      };
+    } else {
+      const modelMessages = buildPersonalTaskLinWanMessages({
+        task: mapPrematchTaskFromDb(task),
+        memory: { ...currentMemory, evidenceLibrary: nextEvidenceLibrary },
+        taskSummary: task.context_summary,
+        recentMessages: mappedRecentMessages,
+        currentQuestion: chatPayload.question,
+        intent: chatPayload.intent,
+        displayName: req.user.displayName,
+        search: searchContext
+      });
+      const rawResponse = await callDeepSeek(modelMessages, {
+        maxTokens: chatPayload.intent === 'report' ? 2600 : 1900,
+        temperature: 0.5
+      });
+      parsedResponse = parsePersonalTaskLinWanResponse(rawResponse);
+    }
     let answer = cleanLinWanReply(parsedResponse.answer);
     if (searchContext?.status === 'fallback' || searchContext?.status === 'unavailable') {
       answer = `本轮联网检索失败，以下只是检索方案，不是已核实的事实材料。\n\n${answer}`;
@@ -2240,6 +2269,7 @@ function validatePrematchChatPayload(body = {}) {
   const question = limitLength(normalizeText(body.question), 1200);
   const suppliedRequestId = normalizeText(body.clientRequestId || body.client_request_id);
   const intent = normalizeText(body.intent) || 'chat';
+  const requestedEvidenceAction = normalizeText(body.evidenceAction || body.evidence_action);
   if (!isMeaningfulUserInput(question)) throw badRequest('请先输入想和 Super 林婉讨论的内容。');
   if (!PERSONAL_TASK_INTENTS.includes(intent)) {
     throw badRequest('聊天 intent 无效，请使用 chat、deconstruct、expand、evidence 或 report。');
@@ -2247,11 +2277,43 @@ function validatePrematchChatPayload(body = {}) {
   if (suppliedRequestId && !isUuid(suppliedRequestId)) {
     throw badRequest('本轮消息标识无效，请重试。');
   }
+  if (requestedEvidenceAction && !['plan', 'search'].includes(requestedEvidenceAction)) {
+    throw badRequest('搜集论据操作无效，请重试。');
+  }
   return {
     question,
     intent,
+    evidenceAction: intent === 'evidence' ? requestedEvidenceAction || 'plan' : '',
     clientRequestId: suppliedRequestId || crypto.randomUUID()
   };
+}
+
+function findLatestPendingEvidencePlan(messages) {
+  const source = Array.isArray(messages) ? messages : [];
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    const search = source[index]?.contextManifest?.search;
+    if (source[index]?.role !== 'assistant' || search?.status !== 'pending_confirmation') continue;
+    const plan = parseEvidenceSearchPlan(JSON.stringify({
+      goal: search.goal,
+      queries: search.queries
+    }));
+    if (plan.queries.length) return plan;
+  }
+  return null;
+}
+
+function formatEvidenceScopeConfirmation(search) {
+  const queries = Array.isArray(search?.queries) ? search.queries : [];
+  return [
+    '先把这轮检索范围对齐一下，确认后我再真正联网。',
+    '',
+    `本轮目标：${normalizeText(search?.goal) || '围绕当前论点寻找可验证的事实材料'}`,
+    '',
+    '我准备优先检索：',
+    ...queries.map((item, index) => `${index + 1}. ${normalizeText(item.query)}`),
+    '',
+    '检索时会同时留意直接支持材料、反例、限制条件和适用边界，最终只保留 3—5 个最契合当前备战方向的有效来源。范围没问题就点击“按此范围搜索”；想调整，可以先告诉我希望增加、删除或收窄哪一部分。'
+  ].join('\n');
 }
 
 function validateReviewAssistantPayload(body) {
