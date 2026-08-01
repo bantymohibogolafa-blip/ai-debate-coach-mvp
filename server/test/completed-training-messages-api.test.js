@@ -39,7 +39,11 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
     });
     assert.equal(reviewed.status, 200, trainingMode);
     assert.equal(reviewed.body.structuredReview.score, 80, trainingMode);
-    assert.equal(reviewed.body.structuredReview.scoreLevel, '优势压制区', trainingMode);
+    assert.equal(
+      reviewed.body.structuredReview.scoreLevel,
+      ['constructive', 'summary', 'closing'].includes(trainingMode) ? '良好' : '优势压制区',
+      trainingMode
+    );
     if (trainingMode === 'attack') attackReview = reviewed.body;
     assertModelRequestClipped(harness.modelRequests[before], trainingMode);
   }
@@ -134,7 +138,7 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(ability.body.totalDimensionCount, 5);
   assert.equal(ability.body.coverage, 81);
   assert.equal(ability.body.overall, 76, 'unmeasured dimensions do not depress the observed-dimension aggregate');
-  assert.equal(ability.body.roleRecommendation.bestRole, '二辩');
+  assert.equal(ability.body.roleRecommendation.bestRole, '一辩');
 
   const beforeLinWan = harness.modelRequests.length;
   const linWan = await requestJson(port, '/api/debate-experience-chat', auth(token), 'POST', {

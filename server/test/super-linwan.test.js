@@ -197,8 +197,8 @@ test('review scoring excludes sparring difficulty and celebrity style prompts', 
   for (const celebrityDebater of ['none', 'huang_zhizhong_style']) {
     const reviewText = buildReviewText(celebrityDebater);
 
-    assert.match(reviewText, /难度标签不得进入评分判断/);
-    assert.doesNotMatch(reviewText, /当前为市赛难度/);
+    assert.match(reviewText, /本交互模式保留难度校准/);
+    assert.match(reviewText, /当前为市赛难度/);
     assert.doesNotMatch(reviewText, /提问风格：/);
     assert.doesNotMatch(reviewText, /问题设计：/);
     assert.doesNotMatch(reviewText, /当前为明星辩手模式/);

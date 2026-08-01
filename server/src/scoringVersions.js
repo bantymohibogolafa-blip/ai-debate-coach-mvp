@@ -32,6 +32,8 @@ export function getTrainingRecordVersionMetadata(record = {}) {
   return {
     scoringVersion,
     rubricId: normalizeVersion(record.rubric_id || record.rubricId) || (isLegacy ? 'legacy_unknown' : ''),
+    rubricVersion: normalizeVersion(record.rubric_version || record.rubricVersion)
+      || (isLegacy ? 'legacy_unknown' : ''),
     projectionVersion: normalizeVersion(record.projection_version || record.projectionVersion)
       || (isLegacy ? 'legacy_unknown' : CURRENT_PROJECTION_VERSION),
     difficultyCalibrationVersion: normalizeVersion(

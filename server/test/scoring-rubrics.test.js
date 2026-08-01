@@ -11,12 +11,12 @@ import {
 
 const modes = ['constructive', 'summary', 'free_debate', 'attack', 'defense', 'closing'];
 const expectedWeights = {
-  constructive: [27, 32, 21, 15, 5],
-  summary: [27, 32, 21, 15, 5],
+  constructive: [15, 20, 30, 20, 15],
+  summary: [20, 25, 30, 20, 5],
   free_debate: [32, 27, 21, 15, 5],
   attack: [26, 26, 20, 19, 9],
   defense: [27, 27, 26, 15, 5],
-  closing: [32, 18, 30, 15, 5]
+  closing: [20, 25, 25, 20, 10]
 };
 
 function scoresFor(mode, scores) {
@@ -35,7 +35,8 @@ test('all six rubrics sum to 100 and use the approved realtime weights', () => {
     assert.equal(rubric.dimensions.length, 5, mode);
     assert.deepEqual(rubric.dimensions.map((dimension) => dimension.maxScore), expectedWeights[mode], mode);
     assert.equal(rubric.dimensions.reduce((sum, dimension) => sum + dimension.maxScore, 0), 100, mode);
-    assert.equal(rubric.dimensions[4].maxScore, mode === 'attack' ? 9 : 5, mode);
+    const expectedFifth = mode === 'attack' ? 9 : mode === 'constructive' ? 15 : mode === 'closing' ? 10 : 5;
+    assert.equal(rubric.dimensions[4].maxScore, expectedFifth, mode);
   }
 });
 
@@ -145,12 +146,13 @@ test('score level is always regenerated from the deterministic final score', () 
   assert.equal(getScoreLevel(92.6), '大师致胜区');
 });
 
-test('review prompt keeps compatible score fields but makes backend authority explicit', () => {
+test('interactive review prompt keeps difficulty calibration and backend authority explicit', () => {
   const prompt = buildReviewRubricInstruction('defense', 'campus');
 
   assert.match(prompt, /score 和 scoreLevel 仅为兼容字段/);
   assert.match(prompt, /后端会忽略并根据五维权重重新生成/);
-  assert.match(prompt, /难度标签不得进入评分判断/);
+  assert.match(prompt, /本交互模式保留难度校准/);
+  assert.match(prompt, /当前为校赛模式/);
   assert.match(prompt, /表达稍长不等于表达低效/);
   assert.match(prompt, /“可以更精炼”通常对应85-92/);
   assert.match(prompt, /正面回应能力：权重 27%/);
@@ -168,23 +170,52 @@ test('free debate uses observable tactical judgment instead of team coordination
   assert.match(prompt, /知道何时回应、切割、反打和结算/);
 });
 
-test('difficulty does not alter realtime scoring prompts', () => {
-  const novice = buildReviewRubricInstruction('defense', 'novice');
-  const campus = buildReviewRubricInstruction('defense', 'campus');
-  const city = buildReviewRubricInstruction('defense', 'city');
+test('difficulty is isolated from text V2 but retained for interactive modes', () => {
+  const novice = buildReviewRubricInstruction('constructive', 'novice');
+  const campus = buildReviewRubricInstruction('constructive', 'campus');
+  const city = buildReviewRubricInstruction('constructive', 'city');
 
   assert.equal(novice, campus);
   assert.equal(campus, city);
-  assert.match(novice, /难度标签不得进入评分判断/);
+  assert.match(novice, /唯一的绝对评分标准/);
+
+  assert.notEqual(buildReviewRubricInstruction('defense', 'novice'), buildReviewRubricInstruction('defense', 'city'));
 });
 
 test('mandatory score caps are applied after weighted scoring', () => {
   assert.deepEqual(applyMandatoryScoreCaps(91.3, ['off_task']), {
     score: 40,
-    reasons: ['多数关键回合未回应当前模式核心任务']
+    reasons: ['多数关键回合未回应当前模式核心任务'],
+    triggeredCaps: []
   });
   assert.deepEqual(applyMandatoryScoreCaps(91.3, ['off_task', 'stance_reversal']), {
-    score: 20,
-    reasons: ['多数关键回合未回应当前模式核心任务', '明确转而为对方核心立场作证，或否定己方原定核心立场']
+    score: 30,
+    reasons: ['多数关键回合未回应当前模式核心任务', '明确转而为对方核心立场作证，或否定己方原定核心立场'],
+    triggeredCaps: []
   });
+});
+
+test('text V2 has seven levels, mode-specific anchors and lowest-cap semantics', () => {
+  for (const mode of ['constructive', 'summary', 'closing']) {
+    const { rubric } = getScoringRubric(mode);
+    assert.equal(rubric.rubricVersion, 'text_v2');
+    assert.equal(rubric.usesDifficulty, false);
+    assert.equal(Object.keys(rubric.dimensionAnchors).length, 5);
+    assert.ok(Object.values(rubric.dimensionAnchors).every((items) => items.length === 7));
+  }
+
+  assert.equal(getScoreLevel(49, 'constructive'), '严重失效');
+  assert.equal(getScoreLevel(50, 'constructive'), '明显不完整');
+  assert.equal(getScoreLevel(60, 'constructive'), '基础成立');
+  assert.equal(getScoreLevel(70, 'constructive'), '合格可用');
+  assert.equal(getScoreLevel(80, 'constructive'), '良好');
+  assert.equal(getScoreLevel(90, 'constructive'), '优秀');
+  assert.equal(getScoreLevel(95, 'constructive'), '卓越');
+
+  const rubric = getScoringRubric('constructive').rubric;
+  const capped = applyMandatoryScoreCaps(92, ['core_logic_invalid', 'wrong_or_missing_stance'], rubric);
+  assert.equal(capped.score, 49);
+  assert.equal(capped.triggeredCaps.length, 2);
+  assert.equal(applyMandatoryScoreCaps(45, ['core_logic_invalid'], rubric).score, 45);
+  assert.equal(applyMandatoryScoreCaps(82, [], rubric).score, 82);
 });

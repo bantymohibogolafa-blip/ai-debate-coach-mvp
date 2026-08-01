@@ -1539,7 +1539,7 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
   const aiSide = getOpponentSide(userSide);
   const celebrityDebater = normalizeCelebrityDebater(normalizeText(body.celebrityDebater));
   const trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode || body.mode));
-  const difficulty = celebrityDebater === 'none' ? normalizeDifficulty(normalizeText(body.difficulty)) : 'city';
+  let difficulty = celebrityDebater === 'none' ? normalizeDifficulty(normalizeText(body.difficulty)) : 'city';
   const rounds = Number(body.rounds);
   const defensePrep = normalizeText(body.defensePrep || body.defense_prep || '');
   const freeDebatePrep = normalizeText(body.freeDebatePrep || body.free_debate_prep || '');
@@ -1582,7 +1582,10 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
     });
   }
 
-  if (!isValidDifficulty(difficulty)) {
+  if (getScoringRubric(trainingMode).rubric.usesDifficulty === false) {
+    // Text V2 ignores request difficulty; this value only satisfies the legacy DB constraint.
+    difficulty = 'novice';
+  } else if (!isValidDifficulty(difficulty)) {
     throw badRequest('请选择训练难度。');
   }
 
@@ -1738,7 +1741,9 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     });
   }
 
-  if (!isValidDifficulty(difficulty)) {
+  if (getScoringRubric(trainingMode).rubric.usesDifficulty === false) {
+    difficulty = 'novice';
+  } else if (!isValidDifficulty(difficulty)) {
     throw badRequest('训练记录缺少有效难度。');
   }
 
@@ -1753,8 +1758,12 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   if (dimensionScores.length) {
     try {
       const weightedResult = calculateWeightedScore(dimensionScores, getScoringRubric(trainingMode).rubric);
-      score = applyMandatoryScoreCaps(weightedResult.score, capTriggers).score;
-      scoreLevel = getScoreLevel(score);
+      score = applyMandatoryScoreCaps(
+        weightedResult.rawScore,
+        capTriggers,
+        getScoringRubric(trainingMode).rubric
+      ).score;
+      scoreLevel = getScoreLevel(score, trainingMode);
       dimensionScores = weightedResult.dimensionScores.map((dimension) => ({
         ...dimension,
         comment: limitLength(normalizeText(dimension.comment), 240)
@@ -1818,10 +1827,11 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     result,
     battlefield,
     mode_display_name: modeDisplayName || getScoringRubric(trainingMode).rubric.displayName,
-    score_level: scoreLevel || getScoreLevel(score) || '',
+    score_level: scoreLevel || getScoreLevel(score, trainingMode) || '',
     dimension_scores: dimensionScores,
     scoring_version: CURRENT_SCORING_VERSION,
     rubric_id: getScoringRubric(trainingMode).rubric.id,
+    rubric_version: getScoringRubric(trainingMode).rubric.rubricVersion || null,
     projection_version: CURRENT_PROJECTION_VERSION,
     difficulty_calibration_version: CURRENT_DIFFICULTY_CALIBRATION_VERSION,
     estimator_version: CURRENT_ESTIMATOR_VERSION,
@@ -6421,7 +6431,7 @@ async function insertTrainingRecord(record) {
   } catch (error) {
     if (!isSupabaseSchemaError(error)) throw error;
     const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
-    const isVersionSchemaOnly = /scoring_version|rubric_id|projection_version|difficulty_calibration_version|estimator_version/i.test(detailText);
+    const isVersionSchemaOnly = /scoring_version|rubric_id|rubric_version|projection_version|difficulty_calibration_version|estimator_version/i.test(detailText);
     const isLegacyScoringSchemaOnly = /mode_display_name|score_level|dimension_scores/i.test(detailText);
     const isScoringSchemaOnly = isVersionSchemaOnly || isLegacyScoringSchemaOnly;
     if (record.task_id && !isScoringSchemaOnly) throw error;
@@ -6429,6 +6439,7 @@ async function insertTrainingRecord(record) {
     const legacyRecord = { ...record };
     delete legacyRecord.scoring_version;
     delete legacyRecord.rubric_id;
+    delete legacyRecord.rubric_version;
     delete legacyRecord.projection_version;
     delete legacyRecord.difficulty_calibration_version;
     delete legacyRecord.estimator_version;
@@ -6535,6 +6546,7 @@ function mapTrainingRecordFromDb(record = {}) {
     modeDisplayName: completedRecord.mode_display_name || '',
     scoreLevel: completedRecord.score_level || '',
     dimensionScores: Array.isArray(completedRecord.dimension_scores) ? completedRecord.dimension_scores : [],
+    rubricVersion: completedRecord.rubric_version || '',
     ...versionMetadata,
     createdAt: completedRecord.created_at
   };
@@ -6704,7 +6716,7 @@ function normalizeStructuredReview(parsed, trainingMode, difficulty = '') {
     throw reviewParseError();
   }
   const weightedResult = calculateWeightedScore(parsed?.dimensionScores, rubric);
-  const scoreCap = applyMandatoryScoreCaps(weightedResult.score, parsed?.capTriggers);
+  const scoreCap = applyMandatoryScoreCaps(weightedResult.rawScore, parsed?.capTriggers, rubric);
   const score = scoreCap.score;
   const dimensionScores = weightedResult.dimensionScores.map((dimension) => ({
     ...dimension,
@@ -6726,10 +6738,17 @@ function normalizeStructuredReview(parsed, trainingMode, difficulty = '') {
 
   return {
     score,
-    scoreLevel: getScoreLevel(score),
+    rawScore: weightedResult.rawScore,
+    totalScore: score,
+    scoreLevel: getScoreLevel(score, trainingMode),
+    rubricId: rubric.id,
+    rubricVersion: rubric.rubricVersion || null,
     capTriggers: Array.isArray(parsed?.capTriggers)
-      ? parsed.capTriggers.filter((trigger) => trigger === 'off_task' || trigger === 'stance_reversal')
+      ? parsed.capTriggers.filter((trigger) => (
+          ['off_task', 'stance_reversal', ...(rubric.capRules || []).map((rule) => rule.code)].includes(trigger)
+        ))
       : [],
+    triggeredCaps: scoreCap.triggeredCaps,
     scoreCapReasons: scoreCap.reasons,
     mode: rubric.appMode,
     modeDisplayName: rubric.displayName,
@@ -6740,6 +6759,7 @@ function normalizeStructuredReview(parsed, trainingMode, difficulty = '') {
     weaknesses: normalizeStringList(parsed?.weaknesses, 5, 120),
     reviewText: `${isFallback ? '当前训练模式未识别，已使用通用评分。\n' : ''}${reviewText}`,
     nextStepAdvice: normalizeStringList(parsed?.nextStepAdvice, 5, 500),
+    improvementAdvice: normalizeStringList(parsed?.nextStepAdvice, 5, 500),
     template: normalizeText(parsed?.template)
   };
 }

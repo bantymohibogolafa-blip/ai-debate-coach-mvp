@@ -1,3 +1,5 @@
+import { isTextRubricMode, textRubricsV2, textScoreLevels } from './textRubricsV2.js';
+
 const scoreLevels = [
   { min: 90, max: 100, label: '大师致胜区' },
   { min: 80, max: 89, label: '优势压制区' },
@@ -20,8 +22,11 @@ const rubricAliases = {
   closing_speech: 'closing_speech'
 };
 
-export const scoringRubrics = {
-  constructive_speech: {
+const rubricCatalog = {
+  constructive_speech: textRubricsV2.constructive_speech,
+  cx_summary: textRubricsV2.cx_summary,
+  /* legacy text rubrics retained below only until this block is removed */
+  _legacy_constructive_speech: {
     id: 'constructive_speech',
     appMode: 'constructive',
     displayName: '立论训练',
@@ -65,7 +70,7 @@ export const scoringRubrics = {
     outputFocus: '不要评价“追问是否连续”，重点评价立论框架、定义判准、论据支撑和可防守性。',
     templateHint: '给出一段可直接用于一辩立论的结构模板。'
   },
-  cx_summary: {
+  _legacy_cx_summary: {
     id: 'cx_summary',
     appMode: 'summary',
     displayName: '攻辩小结',
@@ -244,7 +249,8 @@ export const scoringRubrics = {
     outputFocus: '不能评价用户“问题问得不够好”，因为用户任务是防守而不是提问。有效类比、概念切割、重构标准和反压应得到实质认可；回答稍长但逻辑清楚、回应有效时不得明显扣分。',
     templateHint: '给出一段被质询时正面回应、切割和回到标准的模板。'
   },
-  closing_speech: {
+  closing_speech: textRubricsV2.closing_speech,
+  _legacy_closing_speech: {
     id: 'closing_speech',
     appMode: 'closing',
     displayName: '结辩训练',
@@ -289,6 +295,17 @@ export const scoringRubrics = {
     outputFocus: '不能套用攻辩评分，重点评价战场整合、胜负比较和价值升华。价值升华必须服务于已完成的战场结算；标准清楚且能指导裁决即可获得高分，不强制华丽语言、哲学名句或舞台式感染力。',
     templateHint: '给出一段结辩终局收束模板。'
   }
+};
+
+// Only the three V2 text rubrics and the unchanged interactive rubrics are active.
+// Legacy text definitions remain private so historical dimension names stay auditable.
+export const scoringRubrics = {
+  constructive_speech: textRubricsV2.constructive_speech,
+  cx_summary: textRubricsV2.cx_summary,
+  free_debate: rubricCatalog.free_debate,
+  offensive_cx: rubricCatalog.offensive_cx,
+  defensive_cx: rubricCatalog.defensive_cx,
+  closing_speech: textRubricsV2.closing_speech
 };
 
 const genericRubric = {
@@ -338,11 +355,12 @@ export function getScoringRubric(mode) {
   };
 }
 
-export function getScoreLevel(score) {
+export function getScoreLevel(score, mode = '') {
   const numericScore = Number(score);
   if (!Number.isFinite(numericScore)) return '';
   const boundedScore = Math.max(30, Math.min(100, numericScore));
-  return scoreLevels.find((level) => boundedScore >= level.min && boundedScore <= level.max)?.label || '';
+  const levels = isTextRubricMode(mode) ? textScoreLevels : scoreLevels;
+  return levels.find((level) => boundedScore >= level.min && boundedScore <= level.max)?.label || '';
 }
 
 export function calculateWeightedScore(dimensionScores, rubric) {
@@ -396,33 +414,54 @@ export function calculateWeightedScore(dimensionScores, rubric) {
     };
   });
 
-  const weightedScore = rubricDimensions.reduce((total, dimension, index) => (
-    total + normalizedDimensions[index].score * (Number(dimension.maxScore) / 100)
+  const dimensionScoresWithContribution = normalizedDimensions.map((dimension, index) => ({
+    ...dimension,
+    weightedContribution: roundToOne(dimension.score * (Number(rubricDimensions[index].maxScore) / 100))
+  }));
+  const weightedScore = normalizedDimensions.reduce((total, dimension, index) => (
+    total + dimension.score * (Number(rubricDimensions[index].maxScore) / 100)
   ), 0);
+  const rawScore = roundToOne(clamp(weightedScore, 30, 100));
 
   return {
-    score: roundToOne(clamp(weightedScore, 30, 100)),
-    dimensionScores: normalizedDimensions
+    score: rawScore,
+    rawScore,
+    dimensionScores: dimensionScoresWithContribution
   };
 }
 
-export function applyMandatoryScoreCaps(score, capTriggers = []) {
+export function applyMandatoryScoreCaps(score, capTriggers = [], rubricOrMode = '') {
   const triggers = new Set(Array.isArray(capTriggers) ? capTriggers : []);
   let cappedScore = score;
   const reasons = [];
+  const triggeredCaps = [];
+  const rubric = typeof rubricOrMode === 'object'
+    ? rubricOrMode
+    : getScoringRubric(rubricOrMode).rubric;
 
-  if (triggers.has('off_task')) {
-    cappedScore = Math.min(cappedScore, 40);
-    reasons.push('多数关键回合未回应当前模式核心任务');
+  if (Array.isArray(rubric?.capRules)) {
+    for (const rule of rubric.capRules) {
+      if (!triggers.has(rule.code)) continue;
+      cappedScore = Math.min(cappedScore, Number(rule.maxScore));
+      triggeredCaps.push(rule.description);
+    }
+  } else {
+    if (triggers.has('off_task')) {
+      cappedScore = Math.min(cappedScore, 40);
+      reasons.push('多数关键回合未回应当前模式核心任务');
+    }
+    if (triggers.has('stance_reversal')) {
+      cappedScore = Math.min(cappedScore, 20);
+      reasons.push('明确转而为对方核心立场作证，或否定己方原定核心立场');
+    }
   }
-  if (triggers.has('stance_reversal')) {
-    cappedScore = Math.min(cappedScore, 20);
-    reasons.push('明确转而为对方核心立场作证，或否定己方原定核心立场');
-  }
+
+  reasons.push(...triggeredCaps);
 
   return {
-    score: roundToOne(clamp(cappedScore, 0, 100)),
-    reasons
+    score: roundToOne(clamp(cappedScore, 30, 100)),
+    reasons,
+    triggeredCaps
   };
 }
 
@@ -444,15 +483,22 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function buildReviewRubricInstruction(mode) {
+export function buildReviewRubricInstruction(mode, difficulty = '') {
   const { rubric, rubricId, isFallback } = getScoringRubric(mode);
+  const isTextV2 = rubric.rubricVersion === 'text_v2';
   const dimensions = rubric.dimensions
     .map((dimension, index) => `${index + 1}. ${dimension.name}：权重 ${dimension.maxScore}%`)
     .join('\n');
   const ranges = Object.entries(rubric.ranges)
     .map(([title, lines]) => `${title}\n${lines.map((line) => `- ${line}`).join('\n')}`)
     .join('\n\n');
-  const penalties = rubric.penalties.map((item) => `- ${item}`).join('\n');
+  const penalties = Array.isArray(rubric.capRules)
+    ? rubric.capRules.map((item) => `- ${item.code}: ${item.description}`).join('\n')
+    : (rubric.penalties || []).map((item) => `- ${item}`).join('\n');
+  const anchors = Object.entries(rubric.dimensionAnchors || {})
+    .map(([name, items]) => `${name}\n${items.map((item) => `- ${item.ratio}：${item.description}`).join('\n')}`)
+    .join('\n\n');
+  const scoringPrinciples = (rubric.scoringPrinciples || []).map((item) => `- ${item}`).join('\n');
   const highScoreConditions = rubric.highScoreConditions.map((item) => `- ${item}`).join('\n');
   const focus = rubric.focus.map((item) => `- ${item}`).join('\n');
   const fifthDimension = rubric.dimensions.at(-1);
@@ -463,6 +509,7 @@ export function buildReviewRubricInstruction(mode) {
 当前复盘评分标准：
 mode: ${rubric.appMode}
 rubricId: ${rubricId}
+rubricVersion: ${rubric.rubricVersion || 'legacy'}
 modeDisplayName: ${rubric.displayName}
 ${fallbackNote}
 
@@ -481,12 +528,20 @@ ${ranges}
 特殊扣分规则：
 ${penalties}
 
+逐维度评分锚点：
+${anchors || '使用本模式现有校准。'}
+
+维度边界与补充规则：
+${scoringPrinciples || '按各维度名称分别评价，不重复计分。'}
+
 高分条件：
 ${highScoreConditions}
 
 训练型共同校准原则：
 1. 这是中学生辩论训练产品的教练评分，不是全国总决赛或职业辩手评分；必须客观、有区分度，但不得过度压分。
-2. 新手、校赛、市赛使用完全相同的评分维度、权重、分数锚点和封顶规则；难度标签不得进入评分判断。
+2. ${isTextV2
+    ? '本模式采用唯一的绝对评分标准。不得根据用户水平、训练难度、自我描述或历史成绩改变评分松紧；即使请求传入 difficulty 也必须忽略。'
+    : `本交互模式保留难度校准：\n${buildDifficultyScoringInstruction(difficulty)}`}
 3. 高分首先取决于用户是否高质量完成“${rubric.coreGoal}”；核心任务完成度很高时，应允许核心维度进入90分以上。
 4. 不得因为还能继续压缩、还能补充例证或还能更完美，就把高质量表现限制在80-85；次要改进空间不妨碍进入90分以上。
 5. 只有真正影响当前模式任务完成的缺陷才应实质扣分，不要用“不完美即压分”的逻辑。
@@ -500,7 +555,7 @@ ${rubric.outputFocus}
 AI评分总规则：
 1. 评分必须只根据当前训练环节对应 rubric。
 2. 不允许所有环节都使用攻辩训练标准。
-3. 你只负责给出五个维度的 0-100 分和文字评价；不要计算、猜测或输出最终总分与 scoreLevel，后端会按权重确定性计算。
+3. 先逐维度列出当前材料中真实可观察的证据，再给出五个维度的 0-100 分；不得评价当前模式无法观察的能力。
 4. 不要因为语言流畅就给高分。
 5. 不要因为价值表达华丽但逻辑空洞就给高分。
 6. 不要因为用户表达很多就给高分。
@@ -512,7 +567,10 @@ AI评分总规则：
 12. 维度分允许细分并保留一位小数；不要总是输出整数或固定分，可以使用66.5、72.8、78.3、84.6、89.2、92.5等。
 13. 对明显优秀的表现要敢给高分；不得因为表达仍可精炼，就把逻辑完整、交锋有效的表现压到低分。
 14. 不得因为语言强势、信息量大，就忽略其没有回应或没有真实战果。
-15. ${rubric.templateHint}
+15. 维度得分由后端加权得到 rawScore；后端再检查所有封顶条件，totalScore 取 rawScore 与最低封顶上限中的较低值。
+16. 不得先凭整体印象给总分再倒推维度分；同一能力不得在多个维度重复计分。
+17. 表达风格不得掩盖事实、逻辑、战场和裁决任务；不因语言华丽自动进入高分区，也不因表达克制自动扣分。
+18. ${rubric.templateHint}
 
 复盘必须输出严格 JSON，不要包裹 Markdown 代码块，不要输出 JSON 之外的文字。JSON 结构如下：
 {
@@ -539,11 +597,27 @@ JSON填写要求：
 3. battlefield 要概括本轮核心战场归属或胜负焦点。
 4. reviewText 用自然语言说明本轮表现，必须先肯定一个具体亮点，再指出主要问题。
 5. template 给出该环节可直接复用的表达模板。
-6. capTriggers 只能使用 "off_task"（多数关键回合未回应当前模式核心任务）和 "stance_reversal"（明确转而为对方核心立场作证或否定己方原定核心立场）；未触发时输出 []。虚构对方观点只在相关维度扣分，不放入 capTriggers。
+6. capTriggers ${isTextV2
+    ? `只能使用以下代码：${rubric.capRules.map((rule) => `"${rule.code}"`).join('、')}；必须逐条核对，未触发时输出 []。`
+    : '只能使用 "off_task"（多数关键回合未回应核心任务）和 "stance_reversal"（转而为对方核心立场作证）；未触发时输出 []。'}
 `;
 }
 
 function buildFifthDimensionCalibration(rubric) {
+  if (rubric.rubricVersion === 'text_v2' && rubric.appMode === 'constructive') {
+    return [
+      '1. 内部按战场设计10分、表达完成度5分理解，但最终仍输出一个15分权重维度。',
+      '2. 战场设计只看核心争点、攻击预判、后续资源和可防守性；表达只看结构、完整、时间适配和可理解性。',
+      '3. 不要求华丽语言、舞台感或煽情；只有表达问题时不得大幅封顶。'
+    ].join('\n');
+  }
+  if (rubric.rubricVersion === 'text_v2') {
+    return [
+      '1. 只评价该模式可观察的结构、凝练度、节奏、时间适配和任务完成度。',
+      '2. 不因表达克制、冷静或不煽情扣分，也不因华丽语言自动加分。',
+      '3. 表达问题只在本维度计分，不得掩盖或重复事实、逻辑、战场与裁决维度。'
+    ].join('\n');
+  }
   if (rubric.appMode === 'free_debate') {
     return [
       '1. 该维度只评价当前单人训练中可观察的战术选择，不得因无法观察团队协同而扣分。',

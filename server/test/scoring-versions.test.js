@@ -16,6 +16,7 @@ test('empty historical dimensions are explicitly classified as legacy_missing', 
   assert.deepEqual(getTrainingRecordVersionMetadata({ dimension_scores: [] }), {
     scoringVersion: 'legacy_missing',
     rubricId: 'legacy_unknown',
+    rubricVersion: 'legacy_unknown',
     projectionVersion: 'legacy_unknown',
     difficultyCalibrationVersion: 'legacy_unknown',
     estimatorVersion: 'legacy_unknown'
@@ -44,6 +45,7 @@ test('explicit current metadata is preserved without legacy inference', () => {
   assert.deepEqual(metadata, {
     scoringVersion: CURRENT_SCORING_VERSION,
     rubricId: 'defensive_cx',
+    rubricVersion: '',
     projectionVersion: CURRENT_PROJECTION_VERSION,
     difficultyCalibrationVersion: CURRENT_DIFFICULTY_CALIBRATION_VERSION,
     estimatorVersion: CURRENT_ESTIMATOR_VERSION

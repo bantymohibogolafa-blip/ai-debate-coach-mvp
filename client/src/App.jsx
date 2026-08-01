@@ -217,36 +217,42 @@ const trainingModes = [
   {
     label: '立论训练',
     value: 'constructive',
+    usesDifficulty: false,
     rounds: 1,
     description: '一辩立论，AI 只给对立面观点，发言后再复盘。'
   },
   {
     label: '攻辩小结',
     value: 'summary',
+    usesDifficulty: false,
     rounds: 1,
     description: 'AI 只给场上交锋点和对方论点，用户自主小结。'
   },
   {
     label: '自由辩论',
     value: 'free_debate',
+    usesDifficulty: true,
     rounds: 3,
     description: '双方可回应、推进并提问，发言短促，可选择3轮或5轮。'
   },
   {
     label: '攻辩训练',
     value: 'attack',
+    usesDifficulty: true,
     rounds: 3,
     description: '用户只攻不防，AI 只能防守，可选择3轮或5轮。'
   },
   {
     label: '防守训练',
     value: 'defense',
+    usesDifficulty: true,
     rounds: 3,
     description: 'AI 只攻，用户只能防守，可选择3轮或5轮。'
   },
   {
     label: '结辩训练',
     value: 'closing',
+    usesDifficulty: false,
     rounds: 1,
     description: 'AI 只给对立面关键交锋点，结辩后再评分分析。'
   }
@@ -487,6 +493,7 @@ function App() {
     : '待定';
   const selectedDebater = celebrityDebaters.find((item) => item.value === config.celebrityDebater);
   const selectedTrainingMode = trainingModes.find((item) => item.value === config.trainingMode);
+  const usesDifficulty = selectedTrainingMode?.usesDifficulty !== false;
   const currentPolishOptions = polishOptionsByMode[config.trainingMode] || polishOptionsByMode.general;
   const activePolishType = currentPolishOptions.some((option) => option.id === selectedPolishType)
     ? selectedPolishType
@@ -1600,7 +1607,7 @@ function App() {
         topic: config.topic,
         userSide: config.userSide,
         aiSide: getOpponentSideValue(config.userSide),
-        difficulty: config.difficulty,
+        ...(usesDifficulty ? { difficulty: config.difficulty } : {}),
         styleId: config.celebrityDebater,
         trainingMode: config.trainingMode,
         taskId: activeTaskSession?.taskId || '',
@@ -3080,10 +3087,12 @@ function App() {
             <span>我的立场</span>
             <strong>{selectedSideLabel}</strong>
           </div>
-          <div>
-            <span>难度</span>
-            <strong>{selectedDifficultyLabel}</strong>
-          </div>
+          {usesDifficulty && (
+            <div>
+              <span>难度</span>
+              <strong>{selectedDifficultyLabel}</strong>
+            </div>
+          )}
           <div>
             <span>训练模式</span>
             <strong>{selectedTrainingMode?.label || '待选择'}</strong>
@@ -3258,17 +3267,19 @@ function App() {
 
               {isCelebrityMode && (
                 <p className="mode-note">
-                  已启用市赛难度。{selectedDebater?.description || '该模式仅做公开表达风格的训练模拟，不代表人物本人观点或真实发言。'}以上为基于公开表达特征的风格化模拟，仅用于辩论训练，不代表相关人物本人观点或真实发言。
+                  {usesDifficulty ? '已启用市赛难度。' : '本模式仍采用固定绝对评分标准。'}{selectedDebater?.description || '该模式仅做公开表达风格的训练模拟，不代表人物本人观点或真实发言。'}以上为基于公开表达特征的风格化模拟，仅用于辩论训练，不代表相关人物本人观点或真实发言。
                 </p>
               )}
 
-              <OptionGroup
-                label="难度"
-                options={difficulties}
-                value={config.difficulty}
-                disabled={isBusy || isCelebrityMode}
-                onChange={(value) => updateConfig({ ...config, difficulty: value })}
-              />
+              {usesDifficulty && (
+                <OptionGroup
+                  label="难度"
+                  options={difficulties}
+                  value={config.difficulty}
+                  disabled={isBusy || isCelebrityMode}
+                  onChange={(value) => updateConfig({ ...config, difficulty: value })}
+                />
+              )}
 
               <button className="primary-button" onClick={goToModeStep} disabled={isBusy}>
                 下一步：选择训练模式
@@ -6369,9 +6380,11 @@ function MobileTrainingSetup({
           <div data-mobile-field="userSide">
             <OptionGroup label="我的立场" options={sides} value={config.userSide} disabled={isBusy} onChange={(value) => onConfigChange({ userSide: value })} />
           </div>
-          <div data-mobile-field="difficulty">
-            <OptionGroup label="难度" options={difficulties} value={config.difficulty} disabled={isBusy || config.celebrityDebater !== 'none'} onChange={(value) => onConfigChange({ difficulty: value })} />
-          </div>
+          {selectedMode?.usesDifficulty !== false && (
+            <div data-mobile-field="difficulty">
+              <OptionGroup label="难度" options={difficulties} value={config.difficulty} disabled={isBusy || config.celebrityDebater !== 'none'} onChange={(value) => onConfigChange({ difficulty: value })} />
+            </div>
+          )}
           <div className="mobile-mode-field" data-mobile-field="trainingMode">
             <span className="mobile-field-label">训练模式</span>
             <div className="mobile-mode-grid">
@@ -6439,7 +6452,7 @@ function MobileTrainingSetup({
             <div><dt>辩题</dt><dd>{snapshot.topic}</dd></div>
             <div><dt>我的立场</dt><dd>{getOptionLabel(sides, snapshot.userSide)}</dd></div>
             <div><dt>训练模式</dt><dd>{selectedMode?.label || '待选择'}</dd></div>
-            <div><dt>难度</dt><dd>{getOptionLabel(difficulties, snapshot.difficulty)}</dd></div>
+            {selectedMode?.usesDifficulty !== false && <div><dt>难度</dt><dd>{getOptionLabel(difficulties, snapshot.difficulty)}</dd></div>}
             <div><dt>轮数</dt><dd>{snapshot.rounds}轮</dd></div>
             <div><dt>明星辩手</dt><dd>{selectedCelebrity?.label || '关闭'}</dd></div>
             {snapshot.trainingMode === 'defense' && <div><dt>防守准备</dt><dd>{snapshot.defensePrep ? '已填写' : '未填写'}</dd></div>}
@@ -6880,7 +6893,7 @@ function ReviewReport({ reviewText, structuredReview, fallbackMode, assistantCon
   }
 
   const modeDisplayName = reviewData.modeDisplayName || getOptionLabel(trainingModes, fallbackMode) || '训练复盘';
-  const score = reviewData.score ?? extractScoreFromReview(reviewText);
+  const score = reviewData.totalScore ?? reviewData.score ?? extractScoreFromReview(reviewText);
   const scoreLevel = reviewData.scoreLevel || '';
 
   return (
@@ -6901,6 +6914,20 @@ function ReviewReport({ reviewText, structuredReview, fallbackMode, assistantCon
           </div>
         )}
       </div>
+
+      {reviewData.rubricVersion === 'text_v2' && (
+        <p className="mode-note">评分标准已于2026年8月1日更新，新旧分数不建议直接比较。</p>
+      )}
+
+      {reviewData.rawScore !== null && reviewData.rawScore !== undefined && reviewData.rawScore !== score && (
+        <p className="mode-note">维度原始总分 {reviewData.rawScore}，应用封顶规则后为 {score}。</p>
+      )}
+      {reviewData.triggeredCaps?.length > 0 && (
+        <div className="review-text-block">
+          <h3>本次触发的封顶规则</h3>
+          <ul>{reviewData.triggeredCaps.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      )}
 
       <DimensionScoreChart dimensions={reviewData.dimensionScores} />
 
@@ -6990,7 +7017,10 @@ function RecordDetail({ record, onClose }) {
         <span>我的立场：{getOptionLabel(sides, record.userSide)}</span>
         <span>AI 立场：{getOptionLabel(sides, record.aiSide)}</span>
         <span>模式：{getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'}</span>
-        <span>难度：{getOptionLabel(difficulties, record.difficulty)}</span>
+        {trainingModes.find((mode) => mode.value === record.trainingMode)?.usesDifficulty !== false && <span>难度：{getOptionLabel(difficulties, record.difficulty)}</span>}
+        {trainingModes.find((mode) => mode.value === record.trainingMode)?.usesDifficulty === false && (
+          <span>评分标准：{record.rubricVersion === 'text_v2' ? '文本评分 V2' : '旧版评分标准'}</span>
+        )}
         <span>风格：{getOptionLabel(celebrityDebaters, record.styleId) || '普通 AI'}</span>
         {record.battlefield && <span>战场：{record.battlefield}</span>}
       </div>
@@ -7338,8 +7368,13 @@ function normalizeStructuredReview(value) {
 
   return {
     score: formatScoreValue(value.score),
+    rawScore: formatScoreValue(value.rawScore ?? value.raw_score),
+    totalScore: formatScoreValue(value.totalScore ?? value.total_score ?? value.score),
     scoreLevel: value.scoreLevel || value.score_level || '',
     capTriggers: Array.isArray(value.capTriggers) ? value.capTriggers : [],
+    triggeredCaps: Array.isArray(value.triggeredCaps) ? value.triggeredCaps : [],
+    rubricId: value.rubricId || value.rubric_id || '',
+    rubricVersion: value.rubricVersion || value.rubric_version || '',
     mode: value.mode || value.trainingMode || value.training_mode || '',
     modeDisplayName: value.modeDisplayName || value.mode_display_name || '',
     dimensionScores: dimensionScores
@@ -7355,6 +7390,9 @@ function normalizeStructuredReview(value) {
       : Array.isArray(value.next_step_advice)
         ? value.next_step_advice.filter(Boolean)
         : [],
+    improvementAdvice: Array.isArray(value.improvementAdvice)
+      ? value.improvementAdvice.filter(Boolean)
+      : [],
     template: value.template || ''
   };
 }

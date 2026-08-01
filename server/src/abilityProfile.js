@@ -32,18 +32,18 @@ const abilityAssessmentRecommendations = {
 // subdimension is treated as part of argument validity and feeds logic.
 export const abilityModeProjection = {
   constructive: {
-    '辩题理解与定义判准': { logic: 0.7, battlefieldControl: 0.3 },
+    '辩题理解、立场与举证责任': { logic: 0.7, battlefieldControl: 0.3 },
+    '定义、判准与裁决框架': { logic: 0.7, battlefieldControl: 0.3 },
     '论证结构与逻辑链条': { logic: 1 },
-    '论据、数据与例证支撑': { logic: 1 },
-    '战场设计与可防守性': { battlefieldControl: 1 },
-    '表达清晰度与时间控制': { expression: 1 }
+    '论据支撑与现实适配': { logic: 1 },
+    '战场设计与表达完成度': { battlefieldControl: 0.7, expression: 0.3 }
   },
   summary: {
-    '攻辩内容提炼': { battlefieldControl: 0.7, logic: 0.3 },
-    '战场结算能力': { battlefieldControl: 1 },
-    '漏洞归纳与反击转化': { counterPressure: 0.7, battlefieldControl: 0.3 },
-    '与本方主线连接': { logic: 0.6, battlefieldControl: 0.4 },
-    '表达简洁度与节奏': { expression: 1 }
+    '交锋事实还原与关键材料提取': { battlefieldControl: 0.7, logic: 0.3 },
+    '核心漏洞识别与责任判定': { counterPressure: 0.7, logic: 0.3 },
+    '战场结算与胜负比较': { battlefieldControl: 1 },
+    '攻防成果向本方主线转化': { logic: 0.6, battlefieldControl: 0.4 },
+    '表达凝练与节奏控制': { expression: 1 }
   },
   free_debate: {
     '战场识别与控制': { battlefieldControl: 1 },
@@ -67,17 +67,70 @@ export const abilityModeProjection = {
     '表达效率与稳定性': { expression: 0.7, defenseStability: 0.3 }
   },
   closing: {
-    '战场整合与胜负比较': { battlefieldControl: 0.8, logic: 0.2 },
-    '对攻防成果的吸收': { battlefieldControl: 1 },
-    '价值升华与判断标准': { battlefieldControl: 0.6, logic: 0.4 },
-    '逻辑收束与表达感染力': { logic: 0.6, expression: 0.4 },
-    '时间控制与结构完整': { expression: 0.7, logic: 0.3 }
+    '交锋事实吸收与比赛还原': { battlefieldControl: 0.7, logic: 0.3 },
+    '核心战场整合': { battlefieldControl: 1 },
+    '双方胜负比较与责任结算': { battlefieldControl: 0.6, logic: 0.4 },
+    '裁决标准与价值收束': { battlefieldControl: 0.6, logic: 0.4 },
+    '终局表达与结构完成度': { expression: 0.7, logic: 0.3 }
+  }
+};
+
+const legacyTextAbilityProjection = {
+  constructive: {
+    weights: [27, 32, 21, 15, 5],
+    projection: {
+      '辩题理解与定义判准': { logic: 0.7, battlefieldControl: 0.3 },
+      '论证结构与逻辑链条': { logic: 1 },
+      '论据、数据与例证支撑': { logic: 1 },
+      '战场设计与可防守性': { battlefieldControl: 1 },
+      '表达清晰度与时间控制': { expression: 1 }
+    }
+  },
+  summary: {
+    weights: [27, 32, 21, 15, 5],
+    projection: {
+      '攻辩内容提炼': { battlefieldControl: 0.7, logic: 0.3 },
+      '战场结算能力': { battlefieldControl: 1 },
+      '漏洞归纳与反击转化': { counterPressure: 0.7, battlefieldControl: 0.3 },
+      '与本方主线连接': { logic: 0.6, battlefieldControl: 0.4 },
+      '表达简洁度与节奏': { expression: 1 }
+    }
+  },
+  closing: {
+    weights: [32, 18, 30, 15, 5],
+    projection: {
+      '战场整合与胜负比较': { battlefieldControl: 0.8, logic: 0.2 },
+      '对攻防成果的吸收': { battlefieldControl: 1 },
+      '价值升华与判断标准': { battlefieldControl: 0.6, logic: 0.4 },
+      '逻辑收束与表达感染力': { logic: 0.6, expression: 0.4 },
+      '时间控制与结构完整': { expression: 0.7, logic: 0.3 }
+    }
   }
 };
 
 const abilityDimensionNameAliases = {
+  constructive: {
+    '辩题理解与定义判准': '辩题理解、立场与举证责任',
+    '论据、数据与例证支撑': '论据支撑与现实适配',
+    '战场设计与可防守性': '定义、判准与裁决框架',
+    '表达清晰度与时间控制': '战场设计与表达完成度'
+  },
+  summary: {
+    '攻辩内容提炼': '交锋事实还原与关键材料提取',
+    '战场结算能力': '战场结算与胜负比较',
+    '漏洞归纳与反击转化': '核心漏洞识别与责任判定',
+    '与本方主线连接': '攻防成果向本方主线转化',
+    '表达简洁度与节奏': '表达凝练与节奏控制'
+  },
   free_debate: {
     '团队协同与战术意识': '战术选择与临场判断'
+  },
+  closing: {
+    '战场整合与胜负比较': '核心战场整合',
+    '对攻防成果的吸收': '交锋事实吸收与比赛还原',
+    '价值升华与判断标准': '裁决标准与价值收束',
+    '逻辑收束与表达感染力': '双方胜负比较与责任结算',
+    '时间控制与结构完整': '终局表达与结构完成度'
   }
 };
 
@@ -411,7 +464,8 @@ function normalizeAbilityRecord(record = {}) {
     ? (record.training_mode || record.trainingMode)
     : 'free_debate';
   const difficulty = record.difficulty || '';
-  const difficultyBonus = abilityDifficultyBonus[difficulty] || 0;
+  const rubricVersion = record.rubric_version || record.rubricVersion || '';
+  const difficultyBonus = rubricVersion === 'text_v2' ? 0 : (abilityDifficultyBonus[difficulty] || 0);
   const rawProjectedScores = projectAbilityDimensions({
     ...record,
     training_mode: trainingMode
@@ -465,13 +519,25 @@ export function projectAbilityDimensions(record = {}) {
     : Array.isArray(record.dimensionScores)
       ? record.dimensionScores
       : [];
+  const legacyText = legacyTextAbilityProjection[trainingMode];
+  const currentDimensionNames = new Set(rubric.dimensions.map((dimension) => dimension.name));
+  const useLegacyTextProjection = Boolean(
+    legacyText && providedScores.some((dimension) => {
+      const name = String(dimension?.name || '').trim();
+      return legacyText.projection[name] && !currentDimensionNames.has(name);
+    })
+  );
+  const effectiveProjection = useLegacyTextProjection ? legacyText.projection : projection;
+  const effectiveDimensions = useLegacyTextProjection
+    ? Object.keys(effectiveProjection).map((name, index) => ({ name, maxScore: legacyText.weights[index] }))
+    : rubric.dimensions;
   const scoreByName = new Map();
   const nameAliases = abilityDimensionNameAliases[trainingMode] || {};
 
   const normalizedProvidedScores = providedScores
     .map((dimension) => {
       const sourceName = String(dimension?.name || '').trim();
-      const name = projection[sourceName] ? sourceName : nameAliases[sourceName];
+      const name = effectiveProjection[sourceName] ? sourceName : nameAliases[sourceName];
       const score = parseFiniteScore(dimension?.score);
       const maxScore = parseFiniteScore(dimension?.maxScore ?? dimension?.max_score ?? 100);
       if (!name || score === null || maxScore === null || maxScore <= 0 || score < 0) return null;
@@ -493,9 +559,9 @@ export function projectAbilityDimensions(record = {}) {
   });
 
   const accumulators = new Map();
-  rubric.dimensions.forEach((rubricDimension) => {
+  effectiveDimensions.forEach((rubricDimension) => {
     const score = scoreByName.get(rubricDimension.name);
-    const targets = projection[rubricDimension.name];
+    const targets = effectiveProjection[rubricDimension.name];
     const rubricWeight = Number(rubricDimension.maxScore);
     if (!Number.isFinite(score) || !targets || !Number.isFinite(rubricWeight) || rubricWeight <= 0) return;
 
@@ -559,6 +625,7 @@ function buildAbilityHistorySource(record = {}) {
     projectedOverall: roundNullable(record.projectedOverall),
     scoringVersion: record.scoringVersion || '',
     rubricId: record.rubricId || '',
+    rubricVersion: record.rubricVersion || '',
     projectionVersion: record.projectionVersion || '',
     difficultyCalibrationVersion: record.difficultyCalibrationVersion || '',
     estimatorVersion: record.estimatorVersion || '',
