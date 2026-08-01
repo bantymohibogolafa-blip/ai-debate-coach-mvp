@@ -879,7 +879,6 @@ export function buildReviewMessages({
   userSide,
   aiSide,
   difficulty,
-  celebrityDebater,
   trainingMode,
   history,
   defensePrep,
@@ -891,7 +890,6 @@ export function buildReviewMessages({
 }) {
   const userSideLabel = getSideLabel(userSide);
   const opponentSideLabel = getSideLabel(aiSide || getOpponentSide(userSide));
-  const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
   const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
   const transcript = formatHistory(history);
   const prepContext = getReviewPrepContext(trainingMode, { defensePrep, freeDebatePrep });
@@ -910,7 +908,6 @@ export function buildReviewMessages({
         `当前训练模式：${modeProfile.label}。`,
         sideJudgementInstruction,
         completeOutputInstruction,
-        modeInstruction,
         '如果辩题涉及未成年人、校园关系、情感关系等内容，只做辩论表达、逻辑和价值分析。',
         buildReviewRubricInstruction(trainingMode, difficulty),
         `请根据用户已经完成的训练内容生成复盘报告。额外关注：${modeProfile.reviewFocus}。`,

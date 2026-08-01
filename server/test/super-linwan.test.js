@@ -178,6 +178,33 @@ test('all formal training prompts carry bounded preparation goals without changi
   assert.match(reviewText, /当前训练模式：结辩训练/);
 });
 
+test('review scoring excludes sparring difficulty and celebrity style prompts', () => {
+  const buildReviewText = (celebrityDebater) => buildReviewMessages({
+    topic: '测试辩题',
+    userSide: 'affirmative',
+    aiSide: 'negative',
+    difficulty: 'city',
+    celebrityDebater,
+    trainingMode: 'defense',
+    history: [
+      { role: 'ai', content: '请说明你方标准。' },
+      { role: 'user', content: '我方标准是比较长期影响。' }
+    ],
+    completedRounds: 1,
+    defensePrep: '长期影响比短期收益更重要。'
+  }).map((message) => message.content).join('\n');
+
+  for (const celebrityDebater of ['none', 'huang_zhizhong_style']) {
+    const reviewText = buildReviewText(celebrityDebater);
+
+    assert.match(reviewText, /当前为市赛难度：面向较强校队成员和区市级比赛准备/);
+    assert.doesNotMatch(reviewText, /提问风格：/);
+    assert.doesNotMatch(reviewText, /问题设计：/);
+    assert.doesNotMatch(reviewText, /当前为明星辩手模式/);
+    assert.doesNotMatch(reviewText, /你正在进行“黄执中式”风格化辩论陪练/);
+  }
+});
+
 test('personal task prompt is isolated from training, daily history, other tasks and ability profiles', () => {
   const messages = buildPersonalTaskLinWanMessages({
     task: {
