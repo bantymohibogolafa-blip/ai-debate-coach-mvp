@@ -47,6 +47,28 @@ const difficultyProfiles = {
   }
 };
 
+const realtimeDifficultyProfiles = {
+  attack: {
+    novice: '攻辩训练·新手：只防守用户问题，回答直接、结构简单，围绕一个明确论点；保留一个明显且真实的前提、因果或例证漏洞。被准确指出后可承认并修正局部问题，但不得替用户定位漏洞或设计追问。',
+    campus: '攻辩训练·校赛：只防守用户问题，正面回应并对明显漏洞作一次合理修补；可作基本概念切割和边界限定，多轮口径保持一致，同时保留较隐蔽但真实的攻击空间。',
+    city: '攻辩训练·市赛：只防守用户问题，迅速识别质询目的，区分真实问题与错误预设；可切割概念、边界和举证责任，以有限让步守住核心论证并动态调整防线。不得依靠无关细节、无限补充前提、强行否认或编造事实实现无敌防守。'
+  },
+  defense: {
+    novice: '防守训练·新手：每轮只攻击一个明显问题，表达直接清楚，从定义、理由、例证或简单因果中选一个角度；沿用户回答中最明显的薄弱点追问，为用户保留明确、合理的回应路径。',
+    campus: '防守训练·校赛：每轮处理一至两个紧密相关的问题，针对具体分论点、论据或因果链持续推进；可使用常见反例和轻度预设，但必须允许用户合理切割，压力来自逻辑而非堆字。',
+    city: '防守训练·市赛：优先攻击核心前提、判准和因果机制；可组合两个服务于同一争点的压力点，预判常见回应并转换攻击路径。可制造有限两难，但不得设置无解陷阱、跳到无关议题、虚构数据或依赖冷僻知识。'
+  },
+  free_debate: {
+    novice: '自由辩论·新手：每轮优先回应用户一个主要观点，再推进一个己方观点；战场较少，使用常见逻辑和生活化例子，保留清晰直接的回应入口，发言简洁。',
+    campus: '自由辩论·校赛：每轮都完成回应、反击和推进；调用用户上一轮内容，围绕一至两个相关战场展开并作简单小结算。用户回避时继续追击，有效回应后调整方向，主线必须清楚。',
+    city: '自由辩论·市赛：判断最重要战场并调用前几轮的矛盾和让步；在回应时重构己方优势，主动放弃枝节并选择追击、转场或结算。复合问题必须围绕同一核心争点，不得虚构用户观点或把错误二选一当作结论。'
+  }
+};
+
+function buildRealtimeDifficultyInstruction(trainingMode, difficulty) {
+  return realtimeDifficultyProfiles[trainingMode]?.[difficulty] || '';
+}
+
 const sideLabels = {
   affirmative: '正方',
   negative: '反方'
@@ -632,7 +654,7 @@ export function buildStartMessages({
   const userSideLabel = getSideLabel(userSide);
   const opponentSide = aiSide || getOpponentSide(userSide);
   const opponentSideLabel = getSideLabel(opponentSide);
-  const modeInstruction = getOpeningModeInstruction(difficulty, celebrityDebater);
+  const modeInstruction = getOpeningModeInstruction(difficulty, celebrityDebater, trainingMode);
   const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
   const stanceLockInstruction = buildStanceLockInstruction({ topic, userSide, aiSide: opponentSide });
   const prematchContext = buildPrematchTrainingPromptContext({
@@ -765,7 +787,7 @@ export function buildRespondMessages({
   const userSideLabel = getSideLabel(userSide);
   const opponentSide = aiSide || getOpponentSide(userSide);
   const opponentSideLabel = getSideLabel(opponentSide);
-  const modeInstruction = getModeInstruction(difficulty, celebrityDebater);
+  const modeInstruction = getModeInstruction(difficulty, celebrityDebater, trainingMode);
   const modeProfile = trainingModeProfiles[trainingMode] || trainingModeProfiles.free_debate;
   const transcript = formatHistory(history);
   const stanceLockInstruction = buildStanceLockInstruction({ topic, userSide, aiSide: opponentSide });
@@ -1017,7 +1039,9 @@ export function buildPolishMessages({
   ];
 }
 
-function getModeInstruction(difficulty, celebrityDebater) {
+function getModeInstruction(difficulty, celebrityDebater, trainingMode) {
+  const realtimeInstruction = buildRealtimeDifficultyInstruction(trainingMode, difficulty);
+  if (realtimeInstruction) return realtimeInstruction;
   const debater = celebrityDebaters[celebrityDebater];
 
   if (!debater) {
@@ -1030,7 +1054,9 @@ function getModeInstruction(difficulty, celebrityDebater) {
   ].join('\n');
 }
 
-function getOpeningModeInstruction(difficulty, celebrityDebater) {
+function getOpeningModeInstruction(difficulty, celebrityDebater, trainingMode) {
+  const realtimeInstruction = buildRealtimeDifficultyInstruction(trainingMode, difficulty);
+  if (realtimeInstruction) return realtimeInstruction;
   const debater = celebrityDebaters[celebrityDebater];
 
   if (!debater) {

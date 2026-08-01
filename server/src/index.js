@@ -24,6 +24,7 @@ import {
   normalizeTrainingMode
 } from './prompts.js';
 import {
+  applyMandatoryScoreCaps,
   calculateWeightedScore,
   getScoreLevel,
   getScoringRubric,
@@ -1547,6 +1548,7 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   const modeDisplayName = normalizeText(body.modeDisplayName || body.mode_display_name);
   let scoreLevel = normalizeText(body.scoreLevel || body.score_level);
   let dimensionScores = normalizeDimensionScores(body.dimensionScores || body.dimension_scores);
+  const capTriggers = Array.isArray(body.capTriggers) ? body.capTriggers : [];
 
   if (!isValidLocalUserId(localUserId)) {
     throw badRequest('用户身份无效，请刷新页面后重试。');
@@ -1634,7 +1636,7 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   if (dimensionScores.length) {
     try {
       const weightedResult = calculateWeightedScore(dimensionScores, getScoringRubric(trainingMode).rubric);
-      score = weightedResult.score;
+      score = applyMandatoryScoreCaps(weightedResult.score, capTriggers).score;
       scoreLevel = getScoreLevel(score);
       dimensionScores = weightedResult.dimensionScores.map((dimension) => ({
         ...dimension,
@@ -6579,7 +6581,8 @@ function normalizeStructuredReview(parsed, trainingMode, difficulty = '') {
     throw reviewParseError();
   }
   const weightedResult = calculateWeightedScore(parsed?.dimensionScores, rubric);
-  const score = weightedResult.score;
+  const scoreCap = applyMandatoryScoreCaps(weightedResult.score, parsed?.capTriggers);
+  const score = scoreCap.score;
   const dimensionScores = weightedResult.dimensionScores.map((dimension) => ({
     ...dimension,
     comment: limitLength(normalizeText(dimension.comment), 800)
@@ -6592,6 +6595,7 @@ function normalizeStructuredReview(parsed, trainingMode, difficulty = '') {
       modelScore: Number.isFinite(Number(parsed?.score)) ? Number(parsed.score) : null,
       modelScoreLevel: normalizeText(parsed?.scoreLevel) || null,
       weightedScore: score,
+      capReasons: scoreCap.reasons,
       dimensionScores: dimensionScores.map((dimension) => ({ name: dimension.name, score: dimension.score })),
       weights: rubric.dimensions.map((dimension) => ({ name: dimension.name, weight: dimension.maxScore }))
     });
@@ -6600,6 +6604,10 @@ function normalizeStructuredReview(parsed, trainingMode, difficulty = '') {
   return {
     score,
     scoreLevel: getScoreLevel(score),
+    capTriggers: Array.isArray(parsed?.capTriggers)
+      ? parsed.capTriggers.filter((trigger) => trigger === 'off_task' || trigger === 'stance_reversal')
+      : [],
+    scoreCapReasons: scoreCap.reasons,
     mode: rubric.appMode,
     modeDisplayName: rubric.displayName,
     dimensionScores,

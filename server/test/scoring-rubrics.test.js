@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  applyMandatoryScoreCaps,
   buildReviewRubricInstruction,
   calculateWeightedScore,
   getScoreLevel,
@@ -13,7 +14,7 @@ const expectedWeights = {
   constructive: [27, 32, 21, 15, 5],
   summary: [27, 32, 21, 15, 5],
   free_debate: [32, 27, 21, 15, 5],
-  attack: [27, 27, 21, 20, 5],
+  attack: [26, 26, 20, 19, 9],
   defense: [27, 27, 26, 15, 5],
   closing: [32, 18, 30, 15, 5]
 };
@@ -28,13 +29,13 @@ function scoresFor(mode, scores) {
   }));
 }
 
-test('all six rubrics sum to 100 and assign only 5 percent to the fifth dimension', () => {
+test('all six rubrics sum to 100 and use the approved realtime weights', () => {
   for (const mode of modes) {
     const { rubric } = getScoringRubric(mode);
     assert.equal(rubric.dimensions.length, 5, mode);
     assert.deepEqual(rubric.dimensions.map((dimension) => dimension.maxScore), expectedWeights[mode], mode);
     assert.equal(rubric.dimensions.reduce((sum, dimension) => sum + dimension.maxScore, 0), 100, mode);
-    assert.equal(rubric.dimensions[4].maxScore, 5, mode);
+    assert.equal(rubric.dimensions[4].maxScore, mode === 'attack' ? 9 : 5, mode);
   }
 });
 
@@ -149,11 +150,11 @@ test('review prompt keeps compatible score fields but makes backend authority ex
 
   assert.match(prompt, /score 和 scoreLevel 仅为兼容字段/);
   assert.match(prompt, /后端会忽略并根据五维权重重新生成/);
-  assert.match(prompt, /校赛90分不代表全国总决赛大师/);
+  assert.match(prompt, /难度标签不得进入评分判断/);
   assert.match(prompt, /表达稍长不等于表达低效/);
   assert.match(prompt, /“可以更精炼”通常对应85-92/);
   assert.match(prompt, /正面回应能力：权重 27%/);
-  assert.match(prompt, /表达效率与稳定性：权重 5%/);
+  assert.match(prompt, /capTriggers/);
   assert.equal(Object.keys(scoringRubrics).length, 6);
 });
 
@@ -167,14 +168,23 @@ test('free debate uses observable tactical judgment instead of team coordination
   assert.match(prompt, /知道何时回应、切割、反打和结算/);
 });
 
-test('three difficulty prompts use independent anchors rather than fixed score shifts', () => {
+test('difficulty does not alter realtime scoring prompts', () => {
   const novice = buildReviewRubricInstruction('defense', 'novice');
   const campus = buildReviewRubricInstruction('defense', 'campus');
   const city = buildReviewRubricInstruction('defense', 'city');
 
-  assert.match(novice, /新手难度/);
-  assert.match(novice, /不得按“校赛固定加10-15分”机械换算/);
-  assert.match(campus, /不得根据新手或市赛分数做固定平移/);
-  assert.match(city, /不得按“校赛固定减10-15分”机械换算/);
-  assert.match(city, /89-93表示高水平市赛或强校队表现/);
+  assert.equal(novice, campus);
+  assert.equal(campus, city);
+  assert.match(novice, /难度标签不得进入评分判断/);
+});
+
+test('mandatory score caps are applied after weighted scoring', () => {
+  assert.deepEqual(applyMandatoryScoreCaps(91.3, ['off_task']), {
+    score: 40,
+    reasons: ['多数关键回合未回应当前模式核心任务']
+  });
+  assert.deepEqual(applyMandatoryScoreCaps(91.3, ['off_task', 'stance_reversal']), {
+    score: 20,
+    reasons: ['多数关键回合未回应当前模式核心任务', '明确转而为对方核心立场作证，或否定己方原定核心立场']
+  });
 });

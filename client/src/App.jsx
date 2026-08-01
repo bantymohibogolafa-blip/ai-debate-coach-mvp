@@ -1610,6 +1610,7 @@ function App() {
         modeDisplayName: reviewData?.modeDisplayName || getOptionLabel(trainingModes, config.trainingMode),
         scoreLevel: reviewData?.scoreLevel || '',
         dimensionScores: Array.isArray(reviewData?.dimensionScores) ? reviewData.dimensionScores : [],
+        capTriggers: Array.isArray(reviewData?.capTriggers) ? reviewData.capTriggers : [],
         ...buildPrematchTrainingPayload(activePrepTrainingContext),
         prepResultSummary: activePrepTrainingContext ? {
           score: recordScore,
@@ -7298,6 +7299,7 @@ function normalizeStructuredReview(value) {
   return {
     score: formatScoreValue(value.score),
     scoreLevel: value.scoreLevel || value.score_level || '',
+    capTriggers: Array.isArray(value.capTriggers) ? value.capTriggers : [],
     mode: value.mode || value.trainingMode || value.training_mode || '',
     modeDisplayName: value.modeDisplayName || value.mode_display_name || '',
     dimensionScores: dimensionScores

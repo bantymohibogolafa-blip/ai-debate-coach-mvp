@@ -167,11 +167,11 @@ export const scoringRubrics = {
       '表达是否短、准、狠'
     ],
     dimensions: [
-      { name: '问题精准度', maxScore: 27 },
-      { name: '连续追问能力', maxScore: 27 },
-      { name: '抓漏洞能力', maxScore: 21 },
-      { name: '逻辑压迫与战场推进', maxScore: 20 },
-      { name: '表达简洁度与节奏控制', maxScore: 5 }
+      { name: '问题精准度', maxScore: 26 },
+      { name: '连续追问能力', maxScore: 26 },
+      { name: '抓漏洞能力', maxScore: 20 },
+      { name: '逻辑压迫与战场推进', maxScore: 19 },
+      { name: '表达简洁度与节奏控制', maxScore: 9 }
     ],
     ranges: {
       '30-49 严重失效': ['问题与辩题无关、涉及人身攻击、含义不明，无法形成有效质询。'],
@@ -406,6 +406,26 @@ export function calculateWeightedScore(dimensionScores, rubric) {
   };
 }
 
+export function applyMandatoryScoreCaps(score, capTriggers = []) {
+  const triggers = new Set(Array.isArray(capTriggers) ? capTriggers : []);
+  let cappedScore = score;
+  const reasons = [];
+
+  if (triggers.has('off_task')) {
+    cappedScore = Math.min(cappedScore, 40);
+    reasons.push('多数关键回合未回应当前模式核心任务');
+  }
+  if (triggers.has('stance_reversal')) {
+    cappedScore = Math.min(cappedScore, 20);
+    reasons.push('明确转而为对方核心立场作证，或否定己方原定核心立场');
+  }
+
+  return {
+    score: roundToOne(clamp(cappedScore, 0, 100)),
+    reasons
+  };
+}
+
 function scoringDimensionsError(message) {
   const error = new Error(message);
   error.code = 'SCORING_DIMENSIONS_INVALID';
@@ -424,12 +444,11 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function buildReviewRubricInstruction(mode, difficulty = 'campus') {
+export function buildReviewRubricInstruction(mode) {
   const { rubric, rubricId, isFallback } = getScoringRubric(mode);
   const dimensions = rubric.dimensions
     .map((dimension, index) => `${index + 1}. ${dimension.name}：权重 ${dimension.maxScore}%`)
     .join('\n');
-  const difficultyInstruction = buildDifficultyScoringInstruction(difficulty);
   const ranges = Object.entries(rubric.ranges)
     .map(([title, lines]) => `${title}\n${lines.map((line) => `- ${line}`).join('\n')}`)
     .join('\n\n');
@@ -465,12 +484,9 @@ ${penalties}
 高分条件：
 ${highScoreConditions}
 
-难度修正规则：
-${difficultyInstruction}
-
 训练型共同校准原则：
 1. 这是中学生辩论训练产品的教练评分，不是全国总决赛或职业辩手评分；必须客观、有区分度，但不得过度压分。
-2. 三档难度分别依据自身训练目标和实际缺陷严重程度评分，不得把校赛分数机械加减固定分数。
+2. 新手、校赛、市赛使用完全相同的评分维度、权重、分数锚点和封顶规则；难度标签不得进入评分判断。
 3. 高分首先取决于用户是否高质量完成“${rubric.coreGoal}”；核心任务完成度很高时，应允许核心维度进入90分以上。
 4. 不得因为还能继续压缩、还能补充例证或还能更完美，就把高质量表现限制在80-85；次要改进空间不妨碍进入90分以上。
 5. 只有真正影响当前模式任务完成的缺陷才应实质扣分，不要用“不完美即压分”的逻辑。
@@ -494,14 +510,15 @@ AI评分总规则：
 10. 复盘语气要像辩论教练：reviewText 开头必须先具体肯定用户本轮一个真实亮点，再指出主要问题，最后给下一步训练建议；不得嘲讽、打击用户，也不要空泛夸奖。
 11. 鼓励必须具体，例如指出用户抓住了核心矛盾、没有完全失守、有基本战场意识、表达结构清楚等真实表现。
 12. 维度分允许细分并保留一位小数；不要总是输出整数或固定分，可以使用66.5、72.8、78.3、84.6、89.2、92.5等。
-13. 对明显优秀的表现要敢给高分。市赛难度可以更严格，但优秀结辩、优秀攻防不应被压在80分左右。
-14. 即使是市赛模式，也不等于全国冠军标准；市赛模式应更严格，但仍需对训练者保持客观、鼓励和可进步的评价。
+13. 对明显优秀的表现要敢给高分；不得因为表达仍可精炼，就把逻辑完整、交锋有效的表现压到低分。
+14. 不得因为语言强势、信息量大，就忽略其没有回应或没有真实战果。
 15. ${rubric.templateHint}
 
 复盘必须输出严格 JSON，不要包裹 Markdown 代码块，不要输出 JSON 之外的文字。JSON 结构如下：
 {
   "score": 0,
   "scoreLevel": "",
+  "capTriggers": [],
   "mode": "${rubric.appMode}",
   "modeDisplayName": "${rubric.displayName}",
   "dimensionScores": [
@@ -522,6 +539,7 @@ JSON填写要求：
 3. battlefield 要概括本轮核心战场归属或胜负焦点。
 4. reviewText 用自然语言说明本轮表现，必须先肯定一个具体亮点，再指出主要问题。
 5. template 给出该环节可直接复用的表达模板。
+6. capTriggers 只能使用 "off_task"（多数关键回合未回应当前模式核心任务）和 "stance_reversal"（明确转而为对方核心立场作证或否定己方原定核心立场）；未触发时输出 []。虚构对方观点只在相关维度扣分，不放入 capTriggers。
 `;
 }
 
