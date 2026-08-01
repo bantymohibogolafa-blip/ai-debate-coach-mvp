@@ -109,6 +109,16 @@ const aliyunTokenCache = {
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
+// Keep this ahead of static-file serving and the SPA fallback so deployment
+// monitors receive a JSON response instead of client/index.html.
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    service: 'ai-debate-coach',
+    timestamp: new Date().toISOString()
+  });
+});
+
 async function optionalAuth(req, res, next) {
   const token = extractBearerToken(req);
   if (!token) return next();
