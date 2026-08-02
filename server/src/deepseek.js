@@ -34,7 +34,41 @@ export async function callDeepSeek(messages, options = {}) {
     })
   });
 
-  const data = await response.json().catch(() => ({}));
+  const responseText = await response.text();
+  let data;
+
+  try {
+    data = JSON.parse(responseText);
+  } catch (cause) {
+    if (!response.ok) {
+      console.error('DeepSeek request failed with a non-JSON response', {
+        status: response.status,
+        contentType: response.headers.get('content-type') || '',
+        bodyPreview: createSafeBodyPreview(responseText)
+      });
+
+      const error = createDeepSeekError('DeepSeek API request failed.', 'DEEPSEEK_REQUEST_FAILED', {
+        status: response.status === 429 ? 429 : 502,
+        upstreamStatus: response.status,
+        upstreamBodyPreview: createSafeBodyPreview(responseText),
+        cause
+      });
+      throw error;
+    }
+
+    console.error('DeepSeek returned an invalid JSON response', {
+      status: response.status,
+      contentType: response.headers.get('content-type') || '',
+      bodyPreview: createSafeBodyPreview(responseText)
+    });
+
+    throw createDeepSeekError('DeepSeek API returned an invalid response.', 'DEEPSEEK_INVALID_RESPONSE', {
+      status: 502,
+      upstreamStatus: response.status,
+      upstreamBodyPreview: createSafeBodyPreview(responseText),
+      cause
+    });
+  }
 
   if (!response.ok) {
     console.error('DeepSeek request failed', {
@@ -42,19 +76,54 @@ export async function callDeepSeek(messages, options = {}) {
       message: data?.error?.message
     });
 
-    const error = new Error('DeepSeek API request failed.');
-    error.code = 'DEEPSEEK_REQUEST_FAILED';
-    error.status = response.status === 429 ? 429 : 502;
-    throw error;
+    throw createDeepSeekError('DeepSeek API request failed.', 'DEEPSEEK_REQUEST_FAILED', {
+      status: response.status === 429 ? 429 : 502,
+      upstreamStatus: response.status,
+      upstreamMessage: typeof data?.error?.message === 'string' ? data.error.message : ''
+    });
   }
 
   const choice = data?.choices?.[0];
+  const finishReason = choice?.finish_reason;
+
+  if (finishReason === 'length') {
+    console.error('DeepSeek output was truncated', { model, finishReason });
+    throw createDeepSeekError('DeepSeek API output was truncated.', 'DEEPSEEK_OUTPUT_TRUNCATED', {
+      status: 502,
+      finishReason
+    });
+  }
+
+  if (finishReason === 'content_filter') {
+    console.error('DeepSeek output was filtered', { model, finishReason });
+    throw createDeepSeekError('DeepSeek API output was filtered.', 'DEEPSEEK_CONTENT_FILTERED', {
+      status: 502,
+      finishReason
+    });
+  }
+
+  if (finishReason === 'insufficient_system_resource') {
+    console.error('DeepSeek had insufficient system resources', { model, finishReason });
+    throw createDeepSeekError('DeepSeek API resources were unavailable.', 'DEEPSEEK_RESOURCE_UNAVAILABLE', {
+      status: 502,
+      finishReason
+    });
+  }
+
+  if (finishReason === 'tool_calls' || choice?.message?.tool_calls?.length) {
+    console.error('DeepSeek returned unsupported tool calls', { model, finishReason });
+    throw createDeepSeekError('DeepSeek API returned unsupported tool calls.', 'DEEPSEEK_UNSUPPORTED_TOOL_CALLS', {
+      status: 502,
+      finishReason: finishReason || 'tool_calls'
+    });
+  }
+
   const content = choice?.message?.content?.trim();
 
   if (!content) {
     console.error('DeepSeek returned empty content', {
       model,
-      finishReason: choice?.finish_reason,
+      finishReason,
       hasChoices: Array.isArray(data?.choices),
       choiceCount: data?.choices?.length || 0
     });
@@ -66,4 +135,20 @@ export async function callDeepSeek(messages, options = {}) {
   }
 
   return content;
+}
+
+function createDeepSeekError(message, code, details = {}) {
+  const error = new Error(message, details.cause ? { cause: details.cause } : undefined);
+  error.code = code;
+  Object.entries(details).forEach(([key, value]) => {
+    if (key !== 'cause' && value !== undefined) error[key] = value;
+  });
+  return error;
+}
+
+function createSafeBodyPreview(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
 }
