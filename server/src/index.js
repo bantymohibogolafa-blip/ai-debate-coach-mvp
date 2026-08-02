@@ -61,6 +61,7 @@ import {
   validateLinWanProfile
 } from './linwan.js';
 import {
+  buildEvidenceIntentClassificationMessages,
   buildEvidenceSearchPlanMessages,
   buildPersonalTaskLinWanMessages,
   createPersonalTaskContextManifest,
@@ -72,6 +73,7 @@ import {
   normalizePrematchResultSummary,
   normalizePersonalTaskMemory,
   parseEvidenceSearchPlan,
+  parseEvidenceIntentClassification,
   parsePersonalTaskLinWanResponse,
   PERSONAL_TASK_INTENTS
 } from './superLinwan.js';
@@ -552,6 +554,34 @@ app.delete('/api/prematch/tasks/:taskId', requireAuth, async (req, res, next) =>
   }
 });
 
+app.patch('/api/prematch/tasks/:taskId/note', requireAuth, async (req, res, next) => {
+  try {
+    const task = await requireAuthorizedPrematchTask(req.params.taskId, req.user.id, { manage: true });
+    const payload = validatePrematchNotePayload(req.body, task);
+    const updated = await savePrematchTaskNote(task, payload);
+    res.json({ task: mapPrematchTaskFromDb(updated) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/prematch/tasks/:taskId/revoke-latest', requireAuth, async (req, res, next) => {
+  try {
+    const task = await requireAuthorizedPrematchTask(req.params.taskId, req.user.id, { manage: true });
+    const expectedVersion = Number(req.body?.expectedVersion);
+    if (!Number.isInteger(expectedVersion) || expectedVersion !== Number(task.version)) {
+      throw httpError(409, '任务已在其他设备更新，请刷新后再撤回。');
+    }
+    const revoked = await revokeLatestPrematchExchange(task, req.user.id);
+    res.json({
+      ...(await fetchPrematchTaskDetail(revoked.task, req.user.id)),
+      revokedClientRequestId: revoked.clientRequestId
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next) => {
   try {
     const chatPayload = validatePrematchChatPayload(req.body);
@@ -582,34 +612,53 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
     const recentMessages = await fetchPrematchRecentMessages(task.id, 24);
     const mappedRecentMessages = recentMessages.map(mapPrematchMessageFromDb);
     const currentMemory = normalizePersonalTaskMemory(task.strategy_state);
+    const effectiveIntent = await resolvePrematchChatIntent(chatPayload, task);
+    const evidenceAction = effectiveIntent === 'evidence'
+      ? chatPayload.evidenceAction || 'plan'
+      : '';
     let searchContext = null;
     let nextEvidenceLibrary = currentMemory.evidenceLibrary;
 
-    if (chatPayload.intent === 'evidence') {
+    if (effectiveIntent === 'evidence') {
       let searchPlan;
-      if (chatPayload.evidenceAction === 'plan') {
+      if (evidenceAction === 'plan' || evidenceAction === 'adjust') {
+        const previousPlan = evidenceAction === 'adjust'
+          ? findLatestPendingEvidencePlan(mappedRecentMessages)
+          : null;
+        if (evidenceAction === 'adjust' && !previousPlan) {
+          throw badRequest('没有可调整的检索范围，请先提出一次论据检索需求。');
+        }
         try {
           const rawPlan = await callDeepSeek(buildEvidenceSearchPlanMessages({
             task: mapPrematchTaskFromDb(task),
             memory: currentMemory,
             taskSummary: task.context_summary,
             recentMessages: mappedRecentMessages,
-            currentQuestion: chatPayload.question
+            currentQuestion: chatPayload.question,
+            previousPlan,
+            originalRequest: previousPlan?.originalRequest || chatPayload.question,
+            adjustment: evidenceAction === 'adjust' ? chatPayload.question : ''
           }), { maxTokens: 700, temperature: 0.2 });
           searchPlan = parseEvidenceSearchPlan(rawPlan, {
             debateTopic: task.debate_topic,
             currentQuestion: chatPayload.question
           });
-        } catch {
+        } catch (error) {
+          if (evidenceAction === 'adjust') throw error;
           searchPlan = parseEvidenceSearchPlan('', {
             debateTopic: task.debate_topic,
             currentQuestion: chatPayload.question
           });
         }
+        if (previousPlan && evidencePlanFingerprint(previousPlan) === evidencePlanFingerprint(searchPlan)) {
+          throw httpError(422, '新的检索范围与上一轮没有变化，请进一步说明希望增加、删除或修改的方向。');
+        }
         searchContext = {
           provider: 'anysearch',
           status: 'pending_confirmation',
           goal: searchPlan.goal,
+          originalRequest: previousPlan?.originalRequest || chatPayload.question,
+          adjustment: evidenceAction === 'adjust' ? chatPayload.question : '',
           queries: searchPlan.queries,
           retrievedAt: '',
           totalResults: 0,
@@ -690,12 +739,12 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
         taskSummary: task.context_summary,
         recentMessages: mappedRecentMessages,
         currentQuestion: chatPayload.question,
-        intent: chatPayload.intent,
+        intent: effectiveIntent,
         displayName: req.user.displayName,
         search: searchContext
       });
       const rawResponse = await callDeepSeek(modelMessages, {
-        maxTokens: chatPayload.intent === 'report' ? 2600 : 1900,
+        maxTokens: effectiveIntent === 'report' ? 2600 : 1900,
         temperature: 0.5
       });
       parsedResponse = parsePersonalTaskLinWanResponse(rawResponse);
@@ -712,15 +761,18 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
       parsedResponse.usedEvidenceIds,
       nextEvidenceLibrary
     );
+    if (searchContext?.sources?.length) {
+      searchContext.sources = buildEvidenceDisplaySources(searchContext.sources, parsedResponse.evidenceItems);
+    }
     const structuredUpdate = {
       ...parsedResponse.structuredUpdate,
-      ...(chatPayload.intent === 'evidence' && searchContext?.sources?.length
+      ...(effectiveIntent === 'evidence' && searchContext?.sources?.length
         ? { evidenceLibrary: nextEvidenceLibrary }
         : {}),
       usedEvidenceIds: allowedEvidenceIds
     };
     const contextManifest = createPersonalTaskContextManifest(
-      chatPayload.intent,
+      effectiveIntent,
       recentMessages,
       searchContext ? {
         ...searchContext,
@@ -2464,7 +2516,7 @@ function validatePrematchChatPayload(body = {}) {
   if (suppliedRequestId && !isUuid(suppliedRequestId)) {
     throw badRequest('本轮消息标识无效，请重试。');
   }
-  if (requestedEvidenceAction && !['plan', 'search'].includes(requestedEvidenceAction)) {
+  if (requestedEvidenceAction && !['plan', 'adjust', 'search'].includes(requestedEvidenceAction)) {
     throw badRequest('搜集论据操作无效，请重试。');
   }
   return {
@@ -2473,6 +2525,49 @@ function validatePrematchChatPayload(body = {}) {
     evidenceAction: intent === 'evidence' ? requestedEvidenceAction || 'plan' : '',
     clientRequestId: suppliedRequestId || crypto.randomUUID()
   };
+}
+
+function validatePrematchNotePayload(body = {}, currentTask = {}) {
+  const expectedVersion = Number(body.expectedVersion ?? body.expected_version);
+  if (!Number.isInteger(expectedVersion) || expectedVersion !== Number(currentTask.version)) {
+    throw httpError(409, '任务已在其他设备更新，请刷新后再保存笔记。');
+  }
+  return {
+    note: limitLength(normalizeText(body.note), 10000),
+    expectedVersion
+  };
+}
+
+async function resolvePrematchChatIntent(chatPayload, task) {
+  if (chatPayload.intent !== 'chat' || !mayContainEvidenceRequest(chatPayload.question)) {
+    return chatPayload.intent;
+  }
+  try {
+    const raw = await callDeepSeek(buildEvidenceIntentClassificationMessages({
+      task: mapPrematchTaskFromDb(task),
+      currentQuestion: chatPayload.question
+    }), { maxTokens: 120, temperature: 0 });
+    return parseEvidenceIntentClassification(raw)
+      || (isStrongEvidenceRequest(chatPayload.question) ? 'evidence' : 'chat');
+  } catch (error) {
+    console.warn('[prematch-intent] Semantic evidence classification failed; conservative fallback used.', {
+      code: normalizeText(error?.code || 'classification_failed')
+    });
+    return isStrongEvidenceRequest(chatPayload.question) ? 'evidence' : 'chat';
+  }
+}
+
+function mayContainEvidenceRequest(value) {
+  const text = normalizeText(value);
+  const asksForMaterial = /(论据|证据|数据|统计|案例|研究|论文|报道|政策|事实|材料|出处|来源|原文|文献)/i.test(text);
+  const requestsAction = /(帮我|请|能否|可以|想要|需要|给我|有没有|寻找|查找|搜集|搜索|检索|核实|验证|提供|find|search|source|evidence)/i.test(text);
+  return asksForMaterial && requestsAction;
+}
+
+function isStrongEvidenceRequest(value) {
+  const text = normalizeText(value);
+  return /(寻找|查找|搜集|搜索|检索|核实|给我|提供|帮我找|帮我查)/i.test(text)
+    && /(论据|证据|数据|统计|案例|研究|论文|报道|政策|事实|材料|出处|来源|原文|文献)/i.test(text);
 }
 
 function findLatestPendingEvidencePlan(messages) {
@@ -2484,9 +2579,42 @@ function findLatestPendingEvidencePlan(messages) {
       goal: search.goal,
       queries: search.queries
     }));
-    if (plan.queries.length) return plan;
+    if (plan.queries.length) {
+      return {
+        ...plan,
+        originalRequest: normalizeText(search.originalRequest),
+        adjustment: normalizeText(search.adjustment)
+      };
+    }
   }
   return null;
+}
+
+function evidencePlanFingerprint(plan) {
+  return JSON.stringify({
+    queries: (Array.isArray(plan?.queries) ? plan.queries : [])
+      .map((item) => normalizeText(item?.query).toLocaleLowerCase('zh-CN'))
+      .filter(Boolean)
+      .sort()
+  });
+}
+
+function buildEvidenceDisplaySources(sources, evidenceItems) {
+  const itemById = new Map(
+    (Array.isArray(evidenceItems) ? evidenceItems : []).map((item) => [item.sourceId, item])
+  );
+  return (Array.isArray(sources) ? sources : []).map((source) => {
+    const item = itemById.get(source.id) || {};
+    return {
+      ...source,
+      sourceName: source.title || source.domain,
+      coreConclusion: item.coreConclusion || source.title,
+      evidenceContent: item.evidenceContent || source.snippet,
+      originalExcerpt: source.contentExcerpt || source.snippet,
+      chineseExplanation: item.chineseExplanation || '暂未生成中文说明，请结合来源原文谨慎使用。',
+      applicationAnalysis: item.applicationAnalysis || '请结合当前辩题、材料适用范围和来源限制审慎使用。'
+    };
+  });
 }
 
 function formatEvidenceScopeConfirmation(search) {
@@ -3422,13 +3550,99 @@ async function deletePrematchTask(task) {
   );
 }
 
+async function savePrematchTaskNote(task, payload) {
+  const strategy = normalizePersonalTaskMemory(task.strategy_state);
+  strategy.note = payload.note;
+  strategy.updatedAt = new Date().toISOString();
+  const rows = await supabaseRequest(`${prematchTasksTable}?${new URLSearchParams({
+    id: `eq.${task.id}`,
+    version: `eq.${payload.expectedVersion}`
+  }).toString()}`, {
+    method: 'PATCH',
+    body: {
+      strategy_state: strategy,
+      version: payload.expectedVersion + 1,
+      updated_at: new Date().toISOString()
+    },
+    prefer: 'return=representation'
+  });
+  if (!rows[0]) throw httpError(409, '任务已在其他设备更新，请刷新后再保存笔记。');
+  return rows[0];
+}
+
+async function revokeLatestPrematchExchange(task, userId) {
+  const messages = await fetchPrematchRecentMessages(task.id, 1000);
+  const mapped = messages.map(mapPrematchMessageFromDb);
+  const latestUserMessage = [...mapped].reverse().find((message) => (
+    message.role === 'user' && isUuid(message.clientRequestId)
+  ));
+  if (!latestUserMessage) throw httpError(404, '当前没有可撤回的用户消息。');
+  const matchingAssistant = mapped.find((message) => (
+    message.role === 'assistant'
+    && message.clientRequestId === latestUserMessage.clientRequestId
+  ));
+  if (!matchingAssistant) throw httpError(409, '最近一轮消息尚未形成完整回复，暂时无法撤回。');
+
+  await supabaseRequest(`${prematchMessagesTable}?${new URLSearchParams({
+    task_id: `eq.${task.id}`,
+    user_id: `eq.${userId}`,
+    client_request_id: `eq.${latestUserMessage.clientRequestId}`
+  }).toString()}`, { method: 'DELETE' });
+
+  let currentTask = task;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const remainingRows = await fetchPrematchRecentMessages(task.id, 1000);
+    const rebuilt = rebuildPrematchStateFromMessages(currentTask, remainingRows.map(mapPrematchMessageFromDb));
+    const rows = await supabaseRequest(`${prematchTasksTable}?${new URLSearchParams({
+      id: `eq.${task.id}`,
+      version: `eq.${currentTask.version}`
+    }).toString()}`, {
+      method: 'PATCH',
+      body: {
+        strategy_state: rebuilt.memory,
+        context_summary: rebuilt.taskSummary,
+        current_stage: 'understanding',
+        version: Number(currentTask.version) + 1,
+        updated_at: new Date().toISOString()
+      },
+      prefer: 'return=representation'
+    });
+    if (rows[0]) {
+      return { task: rows[0], clientRequestId: latestUserMessage.clientRequestId };
+    }
+    currentTask = await fetchPrematchTaskRow(task.id);
+    if (!currentTask) throw httpError(404, '备战任务已在撤回过程中被删除。');
+  }
+  throw httpError(409, '消息已撤回，但任务状态仍在变化，请刷新页面。');
+}
+
+function rebuildPrematchStateFromMessages(task, messages) {
+  let memory = getDefaultPersonalTaskMemory();
+  memory.currentPosition.stance = ['affirmative', 'negative', 'undecided'].includes(task.stance)
+    ? task.stance
+    : 'undecided';
+  memory.note = normalizePersonalTaskMemory(task.strategy_state).note;
+  let taskSummary = '';
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message.role !== 'assistant' || !message.structuredUpdate) continue;
+    const update = message.structuredUpdate;
+    memory = mergePersonalTaskMemory(memory, update, {
+      appliedRequestId: message.clientRequestId,
+      updatedAt: message.createdAt
+    });
+    if (normalizeText(update.taskSummary)) taskSummary = limitLength(normalizeText(update.taskSummary), 4000);
+  }
+  memory.note = normalizePersonalTaskMemory(task.strategy_state).note;
+  return { memory: normalizePersonalTaskMemory(memory), taskSummary };
+}
+
 async function fetchPrematchRecentMessages(taskId, limit = 24) {
   const rows = await supabaseRequest(
     `${prematchMessagesTable}?${new URLSearchParams({
       select: 'id,task_id,user_id,role,content,structured_update,context_manifest,client_request_id,created_at',
       task_id: `eq.${taskId}`,
       order: 'created_at.desc,id.desc',
-      limit: String(Math.floor(clampNumber(limit, 1, 100)))
+      limit: String(Math.floor(clampNumber(limit, 1, 1000)))
     }).toString()}`
   );
   assertPrematchRowsBelongToTask(rows, taskId, 'messages');

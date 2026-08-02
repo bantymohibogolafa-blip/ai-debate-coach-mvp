@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildEvidenceIntentClassificationMessages,
+  buildEvidenceSearchPlanMessages,
   buildPersonalTaskLinWanMessages,
   buildSuperLinWanMessages,
   createPersonalTaskContextManifest,
@@ -13,6 +15,7 @@ import {
   normalizePersonalTaskMemory,
   normalizePrematchStrategy,
   parsePersonalTaskLinWanResponse,
+  parseEvidenceIntentClassification,
   parseSuperLinWanResponse
 } from '../src/superLinwan.js';
 import { buildReviewMessages, buildStartMessages } from '../src/prompts.js';
@@ -379,4 +382,74 @@ test('task evidence library survives normalization and remains available to late
     assert.match(prompt, /\[E1\] 已保存来源/);
     assert.match(prompt, /任务内持续使用的摘要/);
   }
+});
+
+test('evidence intent classifier distinguishes material retrieval from ordinary analysis semantically', () => {
+  const messages = buildEvidenceIntentClassificationMessages({
+    task: { debateTopic: '人工智能能否替代教师' },
+    currentQuestion: '给我找几项能支持教师情感陪伴价值的研究。'
+  });
+  assert.match(messages[0].content, /完整语义判断/);
+  assert.match(messages[0].content, /只是要求分析观点/);
+  assert.equal(parseEvidenceIntentClassification('{"intent":"evidence"}'), 'evidence');
+  assert.equal(parseEvidenceIntentClassification('{"intent":"chat"}'), 'chat');
+  assert.equal(parseEvidenceIntentClassification('不是 JSON'), null);
+});
+
+test('adjusted evidence plan prompt preserves original request and previous scope', () => {
+  const messages = buildEvidenceSearchPlanMessages({
+    task: { debateTopic: '人工智能能否替代教师', stance: 'negative' },
+    memory: getDefaultPersonalTaskMemory(),
+    taskSummary: '',
+    recentMessages: [],
+    currentQuestion: '不要只看效率，也看情感陪伴和教育公平。',
+    originalRequest: '查找人工智能不能完全替代教师的论据。',
+    adjustment: '不要只看效率，也看情感陪伴和教育公平。',
+    previousPlan: {
+      goal: '比较课堂效率',
+      queries: [{ query: 'AI 教师 课堂效率', zone: 'cn', language: 'zh-CN' }]
+    }
+  });
+  const prompt = messages.map((message) => message.content).join('\n');
+  assert.match(prompt, /用户原始检索需求：查找人工智能不能完全替代教师的论据/);
+  assert.match(prompt, /上一轮检索范围：AI 教师 课堂效率/);
+  assert.match(prompt, /用户本次调整：不要只看效率，也看情感陪伴和教育公平/);
+  assert.match(prompt, /不得把你自行推测的假设变成唯一检索边界/);
+});
+
+test('personal response parser keeps bounded Chinese evidence presentation fields', () => {
+  const parsed = parsePersonalTaskLinWanResponse(JSON.stringify({
+    answer: '已找到一项可用研究。',
+    taskSummary: '正在核实教师情感支持。',
+    structuredUpdate: {},
+    usedEvidenceIds: ['E1'],
+    evidenceItems: [{
+      sourceId: 'E1',
+      coreConclusion: '教师情感支持影响学习投入',
+      evidenceContent: '研究观察到情感支持与学习投入相关。',
+      chineseExplanation: '这是外文原文的中文说明。',
+      applicationAnalysis: '可支持教师角色不只包含知识传递，但相关性不等于因果。'
+    }, {
+      sourceId: '伪造编号',
+      coreConclusion: '不应保留'
+    }]
+  }));
+  assert.equal(parsed.evidenceItems.length, 1);
+  assert.equal(parsed.evidenceItems[0].sourceId, 'E1');
+  assert.match(parsed.evidenceItems[0].applicationAnalysis, /相关性不等于因果/);
+});
+
+test('task note remains task-local state and is not inserted into the model prompt', () => {
+  const memory = normalizePersonalTaskMemory({ note: '只给用户看的私人备战笔记' });
+  assert.equal(memory.note, '只给用户看的私人备战笔记');
+  const prompt = buildPersonalTaskLinWanMessages({
+    task: { id: 'personal-a', debateTopic: '测试辩题', stance: 'undecided' },
+    memory,
+    taskSummary: '',
+    recentMessages: [],
+    currentQuestion: '继续讨论',
+    intent: 'chat'
+  }).map((message) => message.content).join('\n');
+  assert.equal(prompt.includes('只给用户看的私人备战笔记'), false);
+  assert.match(prompt, /默认使用中文/);
 });

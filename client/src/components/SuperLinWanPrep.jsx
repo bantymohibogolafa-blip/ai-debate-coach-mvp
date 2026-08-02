@@ -55,11 +55,16 @@ export default function SuperLinWanPrep({
   const [editForm, setEditForm] = useState(emptyForm);
   const [question, setQuestion] = useState('');
   const [questionIntent, setQuestionIntent] = useState('chat');
+  const [isAdjustingEvidenceScope, setIsAdjustingEvidenceScope] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendingIntent, setSendingIntent] = useState('chat');
   const [sendingEvidenceAction, setSendingEvidenceAction] = useState('');
   const [chatError, setChatError] = useState('');
   const [actionStatus, setActionStatus] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
+  const [noteStatus, setNoteStatus] = useState('');
+  const [isSavingNote, setIsSavingNote] = useState(false);
+  const [isRevoking, setIsRevoking] = useState(false);
   const chatEndRef = useRef(null);
   const openingTaskRef = useRef('');
   const draftRef = useRef('');
@@ -134,6 +139,7 @@ export default function SuperLinWanPrep({
     setActionStatus('');
     setChatError('');
     setIsEditing(false);
+    setIsAdjustingEvidenceScope(false);
     try {
       const data = await api.getJson(`/api/prematch/tasks/${encodeURIComponent(taskId)}`);
       applyDetail(data);
@@ -161,6 +167,8 @@ export default function SuperLinWanPrep({
     if (nextDetail.task) {
       setTasks((current) => upsertTask(current, nextDetail.task));
       setEditForm(taskToForm(nextDetail.task));
+      setNoteDraft(nextDetail.task.strategyState?.note || '');
+      setNoteStatus('');
     }
   }
 
@@ -251,9 +259,12 @@ export default function SuperLinWanPrep({
     const cleanQuestion = text.trim();
     if (!cleanQuestion || !detail?.task || isSending) return;
     const clientRequestId = createUuid();
+    const resolvedEvidenceAction = intent === 'evidence'
+      ? evidenceAction || (isAdjustingEvidenceScope ? 'adjust' : 'plan')
+      : '';
     setIsSending(true);
     setSendingIntent(intent);
-    setSendingEvidenceAction(intent === 'evidence' ? evidenceAction || 'plan' : '');
+    setSendingEvidenceAction(resolvedEvidenceAction);
     setChatError('');
     setActionStatus('');
     if (!preserveDraft) {
@@ -267,7 +278,7 @@ export default function SuperLinWanPrep({
           question: cleanQuestion,
           clientRequestId,
           intent,
-          ...(intent === 'evidence' ? { evidenceAction: evidenceAction || 'plan' } : {})
+          ...(intent === 'evidence' ? { evidenceAction: resolvedEvidenceAction } : {})
         }
       );
       setDetail((current) => {
@@ -282,6 +293,7 @@ export default function SuperLinWanPrep({
         };
       });
       if (data.task) setTasks((current) => upsertTask(current, data.task));
+      setIsAdjustingEvidenceScope(false);
     } catch (error) {
       if (!preserveDraft) {
         setQuestion(cleanQuestion);
@@ -340,6 +352,46 @@ export default function SuperLinWanPrep({
     if (isSending || !detail?.permissions?.canChat) return;
     setQuestion('我希望把检索范围调整为：');
     setQuestionIntent('evidence');
+    setIsAdjustingEvidenceScope(true);
+  }
+
+  async function saveNote() {
+    if (!detail?.task || isSavingNote) return;
+    setIsSavingNote(true);
+    setNoteStatus('');
+    try {
+      const data = await api.patchJson(
+        `/api/prematch/tasks/${encodeURIComponent(detail.task.id)}/note`,
+        { note: noteDraft, expectedVersion: detail.task.version }
+      );
+      setDetail((current) => current ? { ...current, task: data.task || current.task } : current);
+      if (data.task) setTasks((current) => upsertTask(current, data.task));
+      setNoteDraft(data.task?.strategyState?.note ?? noteDraft);
+      setNoteStatus('笔记已保存。');
+    } catch (error) {
+      setNoteStatus(friendlyError(error));
+    } finally {
+      setIsSavingNote(false);
+    }
+  }
+
+  async function revokeLatestMessage() {
+    if (!detail?.task || isSending || isRevoking) return;
+    if (!window.confirm('撤回最近一轮消息后，该消息和 Super 林婉的对应回复都会删除，且无法恢复。确认撤回？')) return;
+    setIsRevoking(true);
+    setChatError('');
+    try {
+      const data = await api.postJson(
+        `/api/prematch/tasks/${encodeURIComponent(detail.task.id)}/revoke-latest`,
+        { expectedVersion: detail.task.version }
+      );
+      applyDetail(data);
+      setActionStatus('最近一轮消息及对应回复已撤回。');
+    } catch (error) {
+      setChatError(friendlyError(error));
+    } finally {
+      setIsRevoking(false);
+    }
   }
 
   async function changeTaskStatus(nextStatus) {
@@ -415,11 +467,15 @@ export default function SuperLinWanPrep({
         sendingIntent={sendingIntent}
         sendingEvidenceAction={sendingEvidenceAction}
         isSaving={isSaving}
+        isSavingNote={isSavingNote}
+        isRevoking={isRevoking}
         isEditing={isEditing}
         editForm={editForm}
         formError={formError}
         chatError={chatError}
         actionStatus={actionStatus}
+        noteDraft={noteDraft}
+        noteStatus={noteStatus}
         chatEndRef={chatEndRef}
         onBack={() => {
           setDetail(null);
@@ -429,8 +485,14 @@ export default function SuperLinWanPrep({
         }}
         onQuestionChange={(value) => {
           setQuestion(value);
-          if (!value.trim()) setQuestionIntent('chat');
+          if (!value.trim() && !isAdjustingEvidenceScope) setQuestionIntent('chat');
         }}
+        onNoteChange={(value) => {
+          setNoteDraft(value);
+          setNoteStatus('');
+        }}
+        onSaveNote={saveNote}
+        onRevokeLatest={revokeLatestMessage}
         onSend={sendMessage}
         onQuickPrompt={useQuickPrompt}
         onConfirmEvidenceSearch={confirmEvidenceSearch}
@@ -541,14 +603,21 @@ function PrematchTaskWorkspace({
   sendingIntent,
   sendingEvidenceAction,
   isSaving,
+  isSavingNote,
+  isRevoking,
   isEditing,
   editForm,
   formError,
   chatError,
   actionStatus,
+  noteDraft,
+  noteStatus,
   chatEndRef,
   onBack,
   onQuestionChange,
+  onNoteChange,
+  onSaveNote,
+  onRevokeLatest,
   onSend,
   onQuickPrompt,
   onConfirmEvidenceSearch,
@@ -569,6 +638,9 @@ function PrematchTaskWorkspace({
   const confirmableSearchMessageId = latestSearchMessage?.contextManifest?.search?.status === 'pending_confirmation'
     ? latestSearchMessage.id
     : '';
+  const latestRevocableUserMessageId = [...messages].reverse().find((message) => (
+    message.role === 'user' && message.clientRequestId
+  ))?.id || '';
 
   return (
     <section className="prematch-workspace">
@@ -617,6 +689,30 @@ function PrematchTaskWorkspace({
         </section>
       )}
 
+      <section className="panel prematch-note-card">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">当前任务笔记</p>
+            <h2>记录你的备战想法</h2>
+          </div>
+          <span className="badge">仅当前任务</span>
+        </div>
+        <textarea
+          value={noteDraft}
+          onChange={(event) => onNoteChange(event.target.value)}
+          rows={5}
+          maxLength={10000}
+          placeholder="写下当前辩题的想法、待办或临场提醒。"
+          disabled={isSavingNote}
+        />
+        <div className="prematch-note-actions">
+          <span>{noteStatus}</span>
+          <button type="button" onClick={onSaveNote} disabled={isSavingNote}>
+            {isSavingNote ? '保存中…' : '保存笔记'}
+          </button>
+        </div>
+      </section>
+
       <div className="prematch-workspace-grid">
         <section className="panel prematch-chat-card">
           <div className="panel-header">
@@ -640,6 +736,16 @@ function PrematchTaskWorkspace({
                       : '我'}
                   </span>
                   <time>{formatMessageTime(message.createdAt)}</time>
+                  {message.id === latestRevocableUserMessageId && (
+                    <button
+                      type="button"
+                      className="prematch-revoke-button"
+                      disabled={isSending || isRevoking}
+                      onClick={onRevokeLatest}
+                    >
+                      {isRevoking ? '撤回中…' : '撤回本轮'}
+                    </button>
+                  )}
                 </div>
                 <p>{message.content}</p>
                 <MessageEvidenceSources
@@ -795,10 +901,31 @@ function MessageEvidenceSources({ search, canConfirm, isSending, onConfirm, onAd
             <article className="prematch-evidence-source" key={`${source.id}:${source.url}`}>
               <div className="prematch-evidence-heading">
                 <b>{source.id}</b>
-                <span>{source.domain}</span>
+                <span>{source.sourceName || source.domain}</span>
               </div>
-              <h3>{source.title}</h3>
-              {source.snippet && <p>{source.snippet}</p>}
+              <h3>{source.coreConclusion || source.title}</h3>
+              <dl className="prematch-evidence-details">
+                <div>
+                  <dt>论据内容</dt>
+                  <dd>{source.evidenceContent || source.snippet || '该来源暂未提供可用摘要。'}</dd>
+                </div>
+                <div>
+                  <dt>来源名称</dt>
+                  <dd>{source.sourceName || source.title || source.domain}</dd>
+                </div>
+                <div>
+                  <dt>相关原文</dt>
+                  <dd>{source.contentExcerpt || source.snippet || '来源未返回可展示的原文节选。'}</dd>
+                </div>
+                <div>
+                  <dt>中文翻译或说明</dt>
+                  <dd>{source.chineseExplanation || '暂未生成中文说明，请结合来源原文谨慎使用。'}</dd>
+                </div>
+                <div>
+                  <dt>适用分析</dt>
+                  <dd>{source.applicationAnalysis || '请结合当前辩题和来源限制审慎使用。'}</dd>
+                </div>
+              </dl>
               <a href={source.url} target="_blank" rel="noopener noreferrer">查看原始来源</a>
             </article>
           ))}

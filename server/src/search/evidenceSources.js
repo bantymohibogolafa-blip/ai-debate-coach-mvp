@@ -125,7 +125,13 @@ export function publicEvidenceSource(source) {
     url,
     domain: domainOf(url),
     snippet: clean(source?.snippet, 500),
-    sourceType: normalizeSourceType(source?.sourceType, url)
+    contentExcerpt: clean(source?.contentExcerpt || source?.originalExcerpt, 1800),
+    sourceType: normalizeSourceType(source?.sourceType, url),
+    sourceName: clean(source?.sourceName, 240) || clean(source?.title, 240) || domainOf(url),
+    coreConclusion: clean(source?.coreConclusion, 500),
+    evidenceContent: clean(source?.evidenceContent, 1200),
+    chineseExplanation: clean(source?.chineseExplanation, 1200),
+    applicationAnalysis: clean(source?.applicationAnalysis, 1200)
   };
 }
 

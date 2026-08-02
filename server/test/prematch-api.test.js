@@ -253,6 +253,166 @@ test('evidence search cannot bypass scope confirmation', async (t) => {
   assert.equal(harness.modelRequests.length, 0);
 });
 
+test('natural-language evidence request uses semantic classification and the existing evidence plan flow', async (t) => {
+  const harness = createHarness({
+    classifiedIntent: 'evidence',
+    searchPlan: {
+      goal: '寻找人工智能不能完全替代教师的可靠材料',
+      queries: [
+        { query: 'AI 教师 情感陪伴 教育研究', zone: 'cn', language: 'zh-CN' },
+        { query: 'AI cannot replace teachers study', zone: 'intl', language: 'en' }
+      ]
+    }
+  });
+  const port = await listen(t, harness.fetch);
+  const response = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '帮我找几个支持人工智能不能完全替代教师的论据和研究。',
+    clientRequestId: '83000000-0000-4000-8000-000000000018'
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.contextManifest.intent, 'evidence');
+  assert.equal(response.body.contextManifest.search.status, 'pending_confirmation');
+  assert.equal(harness.modelRequests.length, 2);
+  assert.match(harness.modelRequests[0][0].content, /完整语义判断/);
+  assert.match(harness.modelRequests[1][0].content, /生成少量联网检索词/);
+});
+
+test('ordinary analysis is not misclassified as an evidence search', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const response = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '帮我分析人工智能能否替代教师。',
+    clientRequestId: '83000000-0000-4000-8000-000000000019'
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.contextManifest.intent, 'chat');
+  assert.equal(response.body.contextManifest.search, undefined);
+  assert.equal(harness.modelRequests.length, 1);
+  assert.match(harness.modelRequests[0][0].content, /本轮 intent=chat/);
+});
+
+test('adjusting evidence scope combines the original request, previous scope, and current changes', async (t) => {
+  const harness = createHarness({
+    searchPlanSequence: [
+      {
+        goal: '验证课堂效率',
+        queries: [
+          { query: 'AI 教师 课堂效率 研究', zone: 'cn', language: 'zh-CN' },
+          { query: 'AI teacher classroom efficiency', zone: 'intl', language: 'en' }
+        ]
+      },
+      {
+        goal: '综合比较课堂效率、情感陪伴与教育公平',
+        queries: [
+          { query: '教师 情感陪伴 学生发展 研究', zone: 'cn', language: 'zh-CN' },
+          { query: 'AI 教育公平 数字鸿沟 案例', zone: 'cn', language: 'zh-CN' },
+          { query: 'teacher emotional support education equity study', zone: 'intl', language: 'en' }
+        ]
+      }
+    ]
+  });
+  const port = await listen(t, harness.fetch);
+  const originalRequest = '帮我查找人工智能替代教师的研究。';
+  const first = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: originalRequest,
+    clientRequestId: '83000000-0000-4000-8000-000000000020',
+    intent: 'evidence'
+  });
+  assert.equal(first.status, 200);
+
+  const adjustment = '不要只找课堂效率方面，我还想看情感陪伴和教育公平。';
+  const adjusted = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: adjustment,
+    clientRequestId: '83000000-0000-4000-8000-000000000021',
+    intent: 'evidence',
+    evidenceAction: 'adjust'
+  });
+  assert.equal(adjusted.status, 200);
+  assert.equal(adjusted.body.contextManifest.search.originalRequest, originalRequest);
+  assert.equal(adjusted.body.contextManifest.search.adjustment, adjustment);
+  assert.match(adjusted.body.contextManifest.search.queries.map((item) => item.query).join('\n'), /情感陪伴/);
+  assert.match(adjusted.body.contextManifest.search.queries.map((item) => item.query).join('\n'), /教育公平/);
+  const adjustmentPrompt = harness.modelRequests[1].map((message) => message.content).join('\n');
+  assert.match(adjustmentPrompt, /上一轮检索范围/);
+  assert.match(adjustmentPrompt, new RegExp(originalRequest));
+  assert.match(adjustmentPrompt, new RegExp(adjustment));
+});
+
+test('scope adjustment does not pretend to change when search queries remain identical', async (t) => {
+  const unchangedPlan = {
+    goal: '验证课堂效率',
+    queries: [
+      { query: 'AI 教师 课堂效率 研究', zone: 'cn', language: 'zh-CN' },
+      { query: 'AI teacher classroom efficiency', zone: 'intl', language: 'en' }
+    ]
+  };
+  const harness = createHarness({ searchPlanSequence: [unchangedPlan, unchangedPlan] });
+  const port = await listen(t, harness.fetch);
+  await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '查找人工智能替代教师的效率研究。',
+    clientRequestId: '83000000-0000-4000-8000-000000000024',
+    intent: 'evidence'
+  });
+  const adjusted = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '保持原样。',
+    clientRequestId: '83000000-0000-4000-8000-000000000025',
+    intent: 'evidence',
+    evidenceAction: 'adjust'
+  });
+  assert.equal(adjusted.status, 422);
+  assert.match(adjusted.body.message, /没有变化/);
+});
+
+test('task note persists per owner and task without a new table', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const saved = await requestJson(port, `/api/prematch/tasks/${TASK_A}/note`, auth(signToken(USER_A)), 'PATCH', {
+    note: '优先检查情感陪伴与教育公平。',
+    expectedVersion: 1
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.task.strategyState.note, '优先检查情感陪伴与教育公平。');
+
+  const reloaded = await requestJson(port, `/api/prematch/tasks/${TASK_A}`, auth(signToken(USER_A)));
+  assert.equal(reloaded.body.task.strategyState.note, '优先检查情感陪伴与教育公平。');
+  const denied = await requestJson(port, `/api/prematch/tasks/${TASK_A}/note`, auth(signToken(USER_B)), 'PATCH', {
+    note: '不应写入', expectedVersion: 2
+  });
+  assert.equal(denied.status, 404);
+  const otherTask = await requestJson(port, `/api/prematch/tasks/${TASK_B}`, auth(signToken(USER_B)));
+  assert.equal(otherTask.body.task.strategyState.note, '');
+});
+
+test('revoking the latest exchange removes both rows and rebuilds future model context', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const revokedText = '这条私有消息撤回后不能再进入模型';
+  const sent = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: revokedText,
+    clientRequestId: '83000000-0000-4000-8000-000000000022',
+    intent: 'deconstruct'
+  });
+  assert.equal(sent.status, 200);
+
+  const revoked = await requestJson(port, `/api/prematch/tasks/${TASK_A}/revoke-latest`, auth(signToken(USER_A)), 'POST', {
+    expectedVersion: sent.body.task.version
+  });
+  assert.equal(revoked.status, 200);
+  assert.equal(revoked.body.messages.some((message) => message.content === revokedText), false);
+  assert.equal(harness.messages.some((message) => message.client_request_id === '83000000-0000-4000-8000-000000000022'), false);
+
+  harness.modelRequests.length = 0;
+  const continued = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '继续讨论当前任务。',
+    clientRequestId: '83000000-0000-4000-8000-000000000023',
+    intent: 'deconstruct'
+  });
+  assert.equal(continued.status, 200);
+  assert.equal(harness.modelRequests.at(-1).map((message) => message.content).join('\n').includes(revokedText), false);
+});
+
 test('evidence intent searches after idempotency, persists stable sources and filters invented IDs', async (t) => {
   const previousKey = process.env.ANYSEARCH_API_KEY;
   process.env.ANYSEARCH_API_KEY = 'route-test-key';
@@ -269,12 +429,19 @@ test('evidence intent searches after idempotency, persists stable sources and fi
       ]
     },
     anysearchResults: [{
-      title: '官方研究摘要',
+      title: 'Teacher Emotional Support Study',
       url: 'https://example.gov.cn/study?utm_source=test#detail',
-      snippet: '可用于比较，但仍需查看原文。',
-      content: '原文节选'
+      snippet: 'The study reports an association between teacher support and student engagement.',
+      content: 'Teachers provide emotional support that is associated with stronger student engagement.'
     }],
-    usedEvidenceIds: ['E1', 'E999']
+    usedEvidenceIds: ['E1', 'E999'],
+    evidenceItems: [{
+      sourceId: 'E1',
+      coreConclusion: '机制具有长期影响',
+      evidenceContent: '该研究提供了可比较的数据。',
+      chineseExplanation: '原文说明教师的情感支持与更高的学生投入度相关。',
+      applicationAnalysis: '可用于支持长期影响的比较，但不能直接证明唯一因果。'
+    }]
   });
   const port = await listen(t, harness.fetch);
   const planRequestId = '83000000-0000-4000-8000-000000000098';
@@ -298,7 +465,11 @@ test('evidence intent searches after idempotency, persists stable sources and fi
   assert.equal(searched.body.contextManifest.search.sources[0].id, 'E1');
   assert.equal(searched.body.task.strategyState.evidenceLibrary[0].id, 'E1');
   assert.deepEqual(searched.body.assistantMessage.structuredUpdate.usedEvidenceIds, ['E1']);
-  assert.equal(JSON.stringify(searched.body).includes('原文节选'), false);
+  assert.equal(JSON.stringify(searched.body).includes('Teachers provide emotional support'), true);
+  assert.equal(searched.body.contextManifest.search.sources[0].sourceName, 'Teacher Emotional Support Study');
+  assert.equal(searched.body.contextManifest.search.sources[0].coreConclusion, '机制具有长期影响');
+  assert.equal(searched.body.contextManifest.search.sources[0].chineseExplanation, '原文说明教师的情感支持与更高的学生投入度相关。');
+  assert.equal(searched.body.contextManifest.search.sources[0].applicationAnalysis.includes('不能直接证明'), true);
   const finalPrompt = harness.modelRequests.at(-1).map((message) => message.content).join('\n');
   assert.match(finalPrompt, /不可信外部资料/);
   assert.match(finalPrompt, /\[E1\]/);
@@ -706,6 +877,7 @@ function createHarness(options = {}) {
   const modelRequests = [];
   const anysearchRequests = [];
   let sequence = 0;
+  let searchPlanSequence = 0;
   const tasks = [
     taskRow(TASK_A, USER_A, '任务 A', '测试辩题 A'),
     taskRow(TASK_B, USER_B, '任务 B', '测试辩题 B'),
@@ -739,8 +911,17 @@ function createHarness(options = {}) {
     if (url.hostname === 'deepseek.prematch.test') {
       const body = JSON.parse(init.body);
       modelRequests.push(body.messages);
+      if (body.messages[0]?.content?.includes('判断用户本轮是否明确要求查找外部事实材料')) {
+        return Response.json({ choices: [{ message: { content: JSON.stringify({
+          intent: options.classifiedIntent || 'evidence',
+          reason: '测试语义分类'
+        }) } }] });
+      }
       if (body.messages[0]?.content?.includes('只负责为当前个人辩论任务生成少量联网检索词')) {
-        return Response.json({ choices: [{ message: { content: JSON.stringify(options.searchPlan || {}) } }] });
+        const plans = Array.isArray(options.searchPlanSequence) ? options.searchPlanSequence : [];
+        const plan = plans[searchPlanSequence] || options.searchPlan || {};
+        searchPlanSequence += 1;
+        return Response.json({ choices: [{ message: { content: JSON.stringify(plan) } }] });
       }
       return Response.json({
         choices: [{
@@ -749,6 +930,7 @@ function createHarness(options = {}) {
               answer: '这个方向有价值，但要先补足比较对象。',
               taskSummary: '已确认保留机制比较，下一步验证制度可预期性。',
               usedEvidenceIds: options.usedEvidenceIds || [],
+              evidenceItems: options.evidenceItems || [],
               structuredUpdate: {
                 taskUnderstanding: '比较两种机制的长期影响',
                 currentPosition: {
@@ -843,6 +1025,11 @@ function createHarness(options = {}) {
       }));
       messages.push(...rows);
       return Response.json(rows);
+    }
+    if (table === 'prematch_messages' && method === 'DELETE') {
+      const matches = filterRows(messages, url);
+      matches.forEach((row) => messages.splice(messages.indexOf(row), 1));
+      return Response.json(matches);
     }
     if (table === 'prematch_training_links' && method === 'GET') {
       return Response.json(filterRows(trainingLinks, url));

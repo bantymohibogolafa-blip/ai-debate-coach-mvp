@@ -6418,6 +6418,41 @@ textarea:focus {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.prematch-note-card textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #cbd9dc;
+  border-radius: 10px;
+  padding: 11px 12px;
+  color: #273f46;
+  background: #fbfdfd;
+  font: inherit;
+  line-height: 1.65;
+}
+
+.prematch-note-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.prematch-note-actions span {
+  color: #526d73;
+  font-size: 13px;
+}
+
+.prematch-revoke-button {
+  margin-left: auto;
+  border: 0;
+  padding: 0;
+  color: #8a5532;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .prematch-boundary-note {
   margin: 0 0 12px;
   border-radius: 8px;
@@ -6623,6 +6658,31 @@ textarea:focus {
   line-height: 1.55;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+}
+
+.prematch-evidence-details {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.prematch-evidence-details div {
+  min-width: 0;
+}
+
+.prematch-evidence-details dt {
+  color: #526d73;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.prematch-evidence-details dd {
+  margin: 2px 0 0;
+  color: #273f46;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .prematch-evidence-source a {
@@ -6890,6 +6950,11 @@ textarea:focus {
 
   .prematch-chat-input button {
     width: 100%;
+  }
+
+  .prematch-note-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .prematch-manage-actions {
