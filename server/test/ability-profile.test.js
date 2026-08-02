@@ -18,7 +18,93 @@ import {
   projectAbilityDimensions
 } from '../src/abilityProfile.js';
 import { getScoringRubric } from '../src/scoringRubrics.js';
-import { CURRENT_DIFFICULTY_CALIBRATION_VERSION } from '../src/scoringVersions.js';
+import {
+  CURRENT_DIFFICULTY_CALIBRATION_VERSION,
+  CURRENT_PROJECTION_VERSION
+} from '../src/scoringVersions.js';
+
+const finalizedProjectionMatrix = {
+  constructive: {
+    '辩题理解、立场与举证责任': { logic: 0.7, battlefieldControl: 0.3 },
+    '定义、判准与裁决框架': { logic: 0.5, battlefieldControl: 0.5 },
+    '论证结构与逻辑链条': { logic: 1 },
+    '论据支撑与现实适配': { logic: 1 },
+    '战场设计与表达完成度': { battlefieldControl: 0.7, expression: 0.3 }
+  },
+  summary: {
+    '交锋事实还原与关键材料提取': { battlefieldControl: 0.6, logic: 0.4 },
+    '核心漏洞识别与责任判定': { counterPressure: 0.7, logic: 0.3 },
+    '战场结算与胜负比较': { battlefieldControl: 0.5, logic: 0.3, expression: 0.2 },
+    '攻防成果向本方主线转化': { logic: 0.4, battlefieldControl: 0.6 },
+    '表达凝练与节奏控制': { expression: 1 }
+  },
+  free_debate: {
+    '战场识别与控制': { battlefieldControl: 1 },
+    '临场回应与反击': { defenseStability: 0.65, counterPressure: 0.35 },
+    '逻辑推进与攻守转换': { logic: 0.5, battlefieldControl: 0.2, counterPressure: 0.3 },
+    '表达效率与节奏感': { expression: 1 },
+    '战术选择与临场判断': { battlefieldControl: 0.7, counterPressure: 0.3 }
+  },
+  attack: {
+    '问题精准度': { counterPressure: 0.6, logic: 0.4 },
+    '连续追问能力': { counterPressure: 0.7, battlefieldControl: 0.3 },
+    '抓漏洞能力': { logic: 0.6, counterPressure: 0.4 },
+    '逻辑压迫与战场推进': { battlefieldControl: 0.6, counterPressure: 0.4 },
+    '表达简洁度与节奏控制': { expression: 1 }
+  },
+  defense: {
+    '正面回应能力': { defenseStability: 0.8, logic: 0.2 },
+    '逻辑防守能力': { defenseStability: 0.4, logic: 0.6 },
+    '概念切割与陷阱识别': { defenseStability: 0.6, logic: 0.4 },
+    '反压能力': { counterPressure: 1 },
+    '表达效率与稳定性': { expression: 1 }
+  },
+  closing: {
+    '交锋事实吸收与比赛还原': { battlefieldControl: 0.7, logic: 0.3 },
+    '核心战场整合': { battlefieldControl: 0.7, expression: 0.3 },
+    '双方胜负比较与责任结算': { battlefieldControl: 0.6, logic: 0.4 },
+    '裁决标准与价值收束': { battlefieldControl: 0.4, logic: 0.6 },
+    '终局表达与结构完成度': { expression: 0.7, logic: 0.3 }
+  }
+};
+
+const finalizedInternalWeights = {
+  constructive: {
+    logic: [14.89, 14.18, 42.55, 28.37],
+    battlefieldControl: [18, 40, 42],
+    expression: [100]
+  },
+  summary: {
+    logic: [24.62, 23.08, 27.69, 24.62],
+    counterPressure: [100],
+    battlefieldControl: [30.77, 38.46, 30.77],
+    expression: [54.55, 45.45]
+  },
+  free_debate: {
+    logic: [100],
+    defenseStability: [100],
+    counterPressure: [54.78, 36.52, 8.7],
+    battlefieldControl: [80.6, 10.58, 8.82],
+    expression: [100]
+  },
+  attack: {
+    logic: [46.43, 53.57],
+    counterPressure: [31.58, 36.84, 16.19, 15.38],
+    battlefieldControl: [40.62, 59.38],
+    expression: [100]
+  },
+  defense: {
+    logic: [16.88, 50.63, 32.5],
+    defenseStability: [45, 22.5, 32.5],
+    counterPressure: [100],
+    expression: [100]
+  },
+  closing: {
+    logic: [19.35, 32.26, 38.71, 9.68],
+    battlefieldControl: [25.69, 32.11, 27.52, 14.68],
+    expression: [51.72, 48.28]
+  }
+};
 
 test('high-score curve is exact at its endpoints and monotonic on 90-100', () => {
   assert.equal(calculateHighScoreCurve(90), 0);
@@ -148,6 +234,7 @@ test('a complete city record preserves raw projections and adjusts each projecte
   assert.deepEqual(Object.keys(historySource.rawProjectedScores).sort(), Object.keys(rawProjectedScores).sort());
   assert.equal(historySource.rawScore, 84);
   assert.equal(historySource.adjustedScore, 87);
+  assert.equal(historySource.appliedProjectionVersion, CURRENT_PROJECTION_VERSION);
   assert.equal(historySource.appliedDifficultyCalibrationVersion, CURRENT_DIFFICULTY_CALIBRATION_VERSION);
 });
 
@@ -207,7 +294,7 @@ test('ability estimate exposes coverage and sample counts without confidence fie
     record('single', 80, '2026-01-01T00:00:00.000Z', 'constructive')
   ]);
 
-  assert.equal(estimate.coverage, 62);
+  assert.equal(estimate.coverage, 65);
   assert.equal(estimate.totalDimensionCount, 5);
   assert.equal(estimate.dimensions.some((dimension) => dimension.key === 'evidence'), false);
   assert.equal(estimate.scoredRecordCount, 1);
@@ -279,8 +366,14 @@ test('all six review modes have complete, normalized mappings into exactly five 
   };
 
   assert.deepEqual(
-    abilityDimensions.map((dimension) => dimension.key),
-    ['logic', 'defenseStability', 'counterPressure', 'battlefieldControl', 'expression']
+    abilityDimensions.map(({ key, weight }) => [key, weight]),
+    [
+      ['logic', 0.3],
+      ['defenseStability', 0.15],
+      ['counterPressure', 0.2],
+      ['battlefieldControl', 0.15],
+      ['expression', 0.2]
+    ]
   );
   assertClose(abilityDimensions.reduce((sum, dimension) => sum + dimension.weight, 0), 1);
 
@@ -292,7 +385,7 @@ test('all six review modes have complete, normalized mappings into exactly five 
       `${mode} must map every review subdimension by its canonical rubric name`
     );
     Object.values(abilityModeProjection[mode]).forEach((targets) => {
-      assert.equal(Object.keys(targets).length <= 2, true);
+      assert.equal(Object.keys(targets).length <= 3, true);
       assertClose(Object.values(targets).reduce((sum, share) => sum + share, 0), 1);
     });
 
@@ -308,6 +401,45 @@ test('all six review modes have complete, normalized mappings into exactly five 
   });
 });
 
+test('all six projection maps exactly match the finalized v4 matrix', () => {
+  assert.deepEqual(abilityModeProjection, finalizedProjectionMatrix);
+});
+
+test('derived per-ability source weights match the finalized internal-weight tables', () => {
+  for (const [mode, expectedByAbility] of Object.entries(finalizedInternalWeights)) {
+    const rubric = getScoringRubric(mode).rubric;
+    const actualByAbility = {};
+
+    rubric.dimensions.forEach((dimension) => {
+      const targets = abilityModeProjection[mode][dimension.name];
+      Object.entries(targets).forEach(([abilityKey, share]) => {
+        actualByAbility[abilityKey] ||= [];
+        actualByAbility[abilityKey].push(dimension.maxScore * share);
+      });
+    });
+
+    Object.entries(actualByAbility).forEach(([abilityKey, sourceWeights]) => {
+      const total = sourceWeights.reduce((sum, weight) => sum + weight, 0);
+      actualByAbility[abilityKey] = sourceWeights.map((weight) => (
+        Math.round(((weight / total) * 100 + Number.EPSILON) * 100) / 100
+      ));
+    });
+
+    assert.deepEqual(Object.keys(actualByAbility).sort(), Object.keys(expectedByAbility).sort());
+    Object.entries(actualByAbility).forEach(([abilityKey, actualWeights]) => {
+      const expectedWeights = expectedByAbility[abilityKey];
+      assert.equal(actualWeights.length, expectedWeights.length);
+      actualWeights.forEach((actualWeight, index) => {
+        assert.equal(
+          Math.abs(actualWeight - expectedWeights[index]) <= 0.011,
+          true,
+          `${mode}.${abilityKey}[${index}] must match the finalized two-decimal verification table`
+        );
+      });
+    });
+  }
+});
+
 test('missing review subdimensions do not become zero or create unrelated ability updates', () => {
   const projected = projectAbilityDimensions({
     training_mode: 'defense',
@@ -316,10 +448,7 @@ test('missing review subdimensions do not become zero or create unrelated abilit
     ]
   });
 
-  assert.deepEqual(projected, {
-    counterPressure: 82,
-    defenseStability: 82
-  });
+  assert.deepEqual(projected, { counterPressure: 82 });
   assert.equal(Object.hasOwn(projected, 'logic'), false);
   assert.equal(Object.hasOwn(projected, 'expression'), false);
 });

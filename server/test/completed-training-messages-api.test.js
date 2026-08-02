@@ -147,7 +147,7 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(ability.body.history[0].overall, ability.body.history[0].source.projectedOverall);
   assert.equal(ability.body.observedDimensionCount, 4);
   assert.equal(ability.body.totalDimensionCount, 5);
-  assert.equal(ability.body.coverage, 81);
+  assert.equal(ability.body.coverage, 85);
   assert.equal(ability.body.overall, 79, 'novice applies the v2 base discount without filling unmeasured dimensions');
   assert.equal(ability.body.roleRecommendation.bestRole, '一辩');
 

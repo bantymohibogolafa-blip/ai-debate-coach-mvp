@@ -10,6 +10,11 @@ import {
   inferTrainingRecordScoringVersion
 } from '../src/scoringVersions.js';
 
+test('current projection and difficulty versions match the finalized ability specification', () => {
+  assert.equal(CURRENT_PROJECTION_VERSION, 'ability_projection_v4');
+  assert.equal(CURRENT_DIFFICULTY_CALIBRATION_VERSION, 'difficulty_calibration_v2');
+});
+
 test('empty historical dimensions are explicitly classified as legacy_missing', () => {
   assert.equal(inferTrainingRecordScoringVersion({ dimension_scores: [] }), 'legacy_missing');
   assert.equal(inferTrainingRecordScoringVersion({}), 'legacy_missing');

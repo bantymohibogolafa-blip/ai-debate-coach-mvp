@@ -19,7 +19,7 @@ test('team task recommendations use ability estimates instead of raw-score avera
   const result = buildAbilityTaskRecommendations(members, records);
 
   assert.equal(result.basis, 'ability_estimate');
-  assert.equal(result.teamAbilityOverall, 81.5, 'city adjusts the interactive record while the text-mode record stays unadjusted');
+  assert.equal(result.teamAbilityOverall, 81.4, 'city adjusts the interactive record while the text-mode record stays unadjusted');
   assert.equal(result.teamRecommendation.basis, 'ability_estimate');
   assert.equal(result.teamRecommendation.difficulty, 'campus', 'difficulty is selected from the v2 ability overall');
   assert.equal(typeof result.teamRecommendation.abilityDimensionKey, 'string');

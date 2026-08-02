@@ -118,9 +118,9 @@ test('legacy weighted subscores are normalized by maxScore before ability projec
   assert.equal(projected.logic, 70);
   assert.equal(projected.defenseStability, 72);
   assert.equal(projected.expression, 80);
-  assertClose(projected.counterPressure, 70.8);
-  assertClose(projected.battlefieldControl, 71.71451355661883);
-  assert.equal(estimate.overall, 75, 'legacy subscores must remain normalized before the score-banded city adjustment');
+  assertClose(projected.counterPressure, 70.22608695652174);
+  assertClose(projected.battlefieldControl, 71.80520570948782);
+  assert.equal(estimate.overall, 74.8, 'legacy names and maxScore normalization must feed the v4 projection');
 });
 
 test('all six modes leave genuinely non-evaluated abilities absent', () => {
