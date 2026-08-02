@@ -1,5 +1,8 @@
 import { getScoringRubric } from './scoringRubrics.js';
-import { getTrainingRecordVersionMetadata } from './scoringVersions.js';
+import {
+  CURRENT_DIFFICULTY_CALIBRATION_VERSION,
+  getTrainingRecordVersionMetadata
+} from './scoringVersions.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -134,11 +137,38 @@ const abilityDimensionNameAliases = {
   }
 };
 
-const abilityDifficultyBonus = {
-  novice: -4,
-  campus: 2,
-  city: 7
-};
+export function calculateHighScoreCurve(score) {
+  const numericScore = Number(score);
+  if (!Number.isFinite(numericScore)) return 0;
+  const boundedScore = clamp(numericScore, 90, 100);
+  return (1 - Math.exp(-0.15 * (boundedScore - 90))) / (1 - Math.exp(-1.5));
+}
+
+export function calculateDifficultyAdjustment({
+  score,
+  difficulty,
+  usesDifficulty,
+  finalScore
+} = {}) {
+  const numericScore = parseFiniteScore(score);
+  if (numericScore === null || usesDifficulty !== true) return 0;
+
+  if (difficulty === 'campus') return 0;
+
+  if (difficulty === 'novice') {
+    return numericScore < 90 ? -1 : -1 - calculateHighScoreCurve(numericScore);
+  }
+
+  if (difficulty === 'city') {
+    const authoritativeFinalScore = parseFiniteScore(finalScore);
+    if (authoritativeFinalScore === null || authoritativeFinalScore < 50) return 0;
+    if (numericScore < 80) return 2;
+    if (numericScore < 90) return 3;
+    return 3 + calculateHighScoreCurve(numericScore);
+  }
+
+  return 0;
+}
 
 export function calculatePackageAlpha(recordCount) {
   const count = Number(recordCount);
@@ -464,22 +494,39 @@ function normalizeAbilityRecord(record = {}) {
     ? (record.training_mode || record.trainingMode)
     : 'free_debate';
   const difficulty = record.difficulty || '';
-  const rubricVersion = record.rubric_version || record.rubricVersion || '';
-  const difficultyBonus = rubricVersion === 'text_v2' ? 0 : (abilityDifficultyBonus[difficulty] || 0);
+  const rubric = getScoringRubric(trainingMode).rubric;
+  const usesDifficulty = rubric.usesDifficulty === true;
   const rawProjectedScores = projectAbilityDimensions({
     ...record,
     training_mode: trainingMode
   });
+  const difficultyAdjustments = Object.fromEntries(
+    Object.entries(rawProjectedScores).map(([key, value]) => [
+      key,
+      calculateDifficultyAdjustment({
+        score: value,
+        difficulty,
+        usesDifficulty,
+        finalScore: score
+      })
+    ])
+  );
   const projectedScores = Object.fromEntries(
     Object.entries(rawProjectedScores).map(([key, value]) => [
       key,
-      clamp(value + difficultyBonus, 0, 100)
+      clamp(value + difficultyAdjustments[key], 0, 100)
     ])
   );
   const coveredDimensions = Object.keys(projectedScores);
   if (!coveredDimensions.length) return null;
   const projectedOverall = calculateProjectedOverall(projectedScores);
   const versionMetadata = getTrainingRecordVersionMetadata(record);
+  const difficultyAdjustment = calculateDifficultyAdjustment({
+    score,
+    difficulty,
+    usesDifficulty,
+    finalScore: score
+  });
 
   const id = String(record.id || '').trim();
   const stableKey = [
@@ -500,12 +547,16 @@ function normalizeAbilityRecord(record = {}) {
     timestampMs,
     stableKey,
     rawScore: score,
-    adjustedScore: clamp(score + difficultyBonus, 0, 100),
+    adjustedScore: clamp(score + difficultyAdjustment, 0, 100),
+    difficultyAdjustment,
+    difficultyAdjustments,
+    rawProjectedScores,
     projectedScores,
     projectedOverall,
     trainingMode,
     coveredDimensions,
-    ...versionMetadata
+    ...versionMetadata,
+    appliedDifficultyCalibrationVersion: CURRENT_DIFFICULTY_CALIBRATION_VERSION
   };
 }
 
@@ -619,6 +670,15 @@ function buildAbilityHistorySource(record = {}) {
     userSide: record.user_side || record.userSide || '',
     aiSide: record.ai_side || record.aiSide || '',
     score: roundNullable(record.rawScore),
+    rawScore: roundNullable(record.rawScore),
+    adjustedScore: roundNullable(record.adjustedScore),
+    difficultyAdjustment: record.difficultyAdjustment,
+    difficultyAdjustments: Object.fromEntries(
+      Object.entries(record.difficultyAdjustments || {}).map(([key, value]) => [key, value])
+    ),
+    rawProjectedScores: Object.fromEntries(
+      Object.entries(record.rawProjectedScores || {}).map(([key, value]) => [key, roundNullable(value)])
+    ),
     projectedScores: Object.fromEntries(
       Object.entries(record.projectedScores || {}).map(([key, value]) => [key, roundNullable(value)])
     ),
@@ -628,6 +688,7 @@ function buildAbilityHistorySource(record = {}) {
     rubricVersion: record.rubricVersion || '',
     projectionVersion: record.projectionVersion || '',
     difficultyCalibrationVersion: record.difficultyCalibrationVersion || '',
+    appliedDifficultyCalibrationVersion: record.appliedDifficultyCalibrationVersion || '',
     estimatorVersion: record.estimatorVersion || '',
     teamCode: record.team_code || record.teamCode || '',
     spaceType: record.space_type || record.spaceType || '',

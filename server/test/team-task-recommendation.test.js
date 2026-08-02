@@ -19,9 +19,9 @@ test('team task recommendations use ability estimates instead of raw-score avera
   const result = buildAbilityTaskRecommendations(members, records);
 
   assert.equal(result.basis, 'ability_estimate');
-  assert.equal(result.teamAbilityOverall, 87, 'city records receive the same ability-estimate adjustment used by the profile');
+  assert.equal(result.teamAbilityOverall, 81.5, 'city adjusts the interactive record while the text-mode record stays unadjusted');
   assert.equal(result.teamRecommendation.basis, 'ability_estimate');
-  assert.equal(result.teamRecommendation.difficulty, 'city', 'difficulty is selected from ability overall, not the raw average of 80');
+  assert.equal(result.teamRecommendation.difficulty, 'campus', 'difficulty is selected from the v2 ability overall');
   assert.equal(typeof result.teamRecommendation.abilityDimensionKey, 'string');
   assert.equal(Object.hasOwn(result.teamRecommendation, 'abilityConfidence'), false);
   assert.equal(result.personalRecommendations.every((item) => item.basis === 'ability_estimate'), true);

@@ -120,7 +120,7 @@ test('legacy weighted subscores are normalized by maxScore before ability projec
   assert.equal(projected.expression, 80);
   assertClose(projected.counterPressure, 70.8);
   assertClose(projected.battlefieldControl, 71.71451355661883);
-  assert.equal(estimate.overall, 79.8, 'the real legacy 72-point shape must not reappear as a roughly 22-point ability value');
+  assert.equal(estimate.overall, 75, 'legacy subscores must remain normalized before the score-banded city adjustment');
 });
 
 test('all six modes leave genuinely non-evaluated abilities absent', () => {
@@ -144,7 +144,7 @@ test('all six modes leave genuinely non-evaluated abilities absent', () => {
   }
 });
 
-test('difficulty calibration is a fixed additive shift after projection', () => {
+test('difficulty calibration uses the projected score after projection', () => {
   const base = {
     id: 'difficulty',
     training_mode: 'defense',
@@ -156,9 +156,9 @@ test('difficulty calibration is a fixed additive shift after projection', () => 
   const novice = buildAbilityEstimate([{ ...base, difficulty: 'novice' }]);
   const campus = buildAbilityEstimate([{ ...base, difficulty: 'campus' }]);
   const city = buildAbilityEstimate([{ ...base, difficulty: 'city' }]);
-  assert.equal(novice.dimensions.find((dimension) => dimension.key === 'logic').score, 66);
-  assert.equal(campus.dimensions.find((dimension) => dimension.key === 'logic').score, 72);
-  assert.equal(city.dimensions.find((dimension) => dimension.key === 'logic').score, 77);
+  assert.equal(novice.dimensions.find((dimension) => dimension.key === 'logic').score, 69);
+  assert.equal(campus.dimensions.find((dimension) => dimension.key === 'logic').score, 70);
+  assert.equal(city.dimensions.find((dimension) => dimension.key === 'logic').score, 72);
 });
 
 test('an extreme score is accepted without outlier filtering and receives normal exponential weight', () => {

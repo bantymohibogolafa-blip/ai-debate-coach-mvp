@@ -9,12 +9,194 @@ import {
   buildRecentBehaviorEvidence,
   buildPackageWeightDebug,
   calculateAbilityProfile,
+  calculateDifficultyAdjustment,
   calculateDimensionProfile,
+  calculateHighScoreCurve,
   calculatePackageAlpha,
   calculatePackageWeightedAverage,
+  calculateProjectedOverall,
   projectAbilityDimensions
 } from '../src/abilityProfile.js';
 import { getScoringRubric } from '../src/scoringRubrics.js';
+import { CURRENT_DIFFICULTY_CALIBRATION_VERSION } from '../src/scoringVersions.js';
+
+test('high-score curve is exact at its endpoints and monotonic on 90-100', () => {
+  assert.equal(calculateHighScoreCurve(90), 0);
+  assert.equal(calculateHighScoreCurve(100), 1);
+  assert.equal(calculateHighScoreCurve(0), 0);
+  assert.equal(calculateHighScoreCurve(110), 1);
+  assertClose(calculateHighScoreCurve(92), 0.33362317086193194);
+  assertClose(calculateHighScoreCurve(95), 0.679178699175393);
+  assertClose(calculateHighScoreCurve(98), 0.8995146319765904);
+
+  const values = [90, 92, 95, 98, 100].map(calculateHighScoreCurve);
+  assert.equal(values.every((value, index) => index === 0 || value > values[index - 1]), true);
+});
+
+test('modes whose rubric does not use difficulty always receive zero adjustment', () => {
+  for (const mode of ['constructive', 'summary', 'closing']) {
+    const rubric = getScoringRubric(mode).rubric;
+    assert.equal(rubric.usesDifficulty, false);
+    for (const difficulty of ['novice', 'campus', 'city']) {
+      assert.equal(calculateDifficultyAdjustment({
+        score: 100,
+        difficulty,
+        usesDifficulty: rubric.usesDifficulty,
+        finalScore: 100
+      }), 0);
+    }
+  }
+});
+
+test('campus is the zero-adjustment baseline at all score boundaries', () => {
+  for (const score of [0, 50, 79, 80, 90, 100]) {
+    assert.equal(calculateDifficultyAdjustment({
+      score,
+      difficulty: 'campus',
+      usesDifficulty: true,
+      finalScore: score
+    }), 0);
+  }
+});
+
+test('novice adjustment keeps the base discount and adds only the high-score curve', () => {
+  for (const score of [0, 50, 89.999]) {
+    assert.equal(calculateDifficultyAdjustment({ score, difficulty: 'novice', usesDifficulty: true }), -1);
+  }
+  assert.equal(calculateDifficultyAdjustment({ score: 90, difficulty: 'novice', usesDifficulty: true }), -1);
+  assertClose(
+    calculateDifficultyAdjustment({ score: 95, difficulty: 'novice', usesDifficulty: true }),
+    -1.679178699175393
+  );
+  assert.equal(calculateDifficultyAdjustment({ score: 100, difficulty: 'novice', usesDifficulty: true }), -2);
+
+  const adjustments = [90, 92, 95, 98, 100].map((score) => (
+    calculateDifficultyAdjustment({ score, difficulty: 'novice', usesDifficulty: true })
+  ));
+  assert.equal(adjustments.every((value, index) => index === 0 || value < adjustments[index - 1]), true);
+  assert.equal(adjustments.every((value) => value >= -2), true);
+});
+
+test('city qualification uses only finalScore and applies score-specific bands', () => {
+  assert.equal(calculateDifficultyAdjustment({
+    score: 100,
+    difficulty: 'city',
+    usesDifficulty: true,
+    finalScore: 49.999
+  }), 0);
+  assert.equal(calculateDifficultyAdjustment({
+    score: 70,
+    difficulty: 'city',
+    usesDifficulty: true,
+    finalScore: 50
+  }), 2);
+
+  for (const score of [0, 50, 79.999]) {
+    assert.equal(calculateDifficultyAdjustment({ score, difficulty: 'city', usesDifficulty: true, finalScore: 80 }), 2);
+  }
+  for (const score of [80, 85, 89.999]) {
+    assert.equal(calculateDifficultyAdjustment({ score, difficulty: 'city', usesDifficulty: true, finalScore: 80 }), 3);
+  }
+  assert.equal(calculateDifficultyAdjustment({ score: 90, difficulty: 'city', usesDifficulty: true, finalScore: 80 }), 3);
+  assertClose(
+    calculateDifficultyAdjustment({ score: 95, difficulty: 'city', usesDifficulty: true, finalScore: 80 }),
+    3.679178699175393
+  );
+  assert.equal(calculateDifficultyAdjustment({ score: 100, difficulty: 'city', usesDifficulty: true, finalScore: 80 }), 4);
+});
+
+test('unknown, missing and invalid difficulties do not adjust ability scores', () => {
+  for (const difficulty of ['', 'expert', null, undefined]) {
+    assert.equal(calculateDifficultyAdjustment({ score: 95, difficulty, usesDifficulty: true, finalScore: 95 }), 0);
+  }
+  assert.equal(calculateDifficultyAdjustment({ score: Number.NaN, difficulty: 'city', usesDifficulty: true, finalScore: 95 }), 0);
+});
+
+test('a complete city record preserves raw projections and adjusts each projected score independently', () => {
+  const rubric = getScoringRubric('free_debate').rubric;
+  const source = {
+    id: 'city-independent',
+    score: 84,
+    created_at: '2026-01-01T00:00:00.000Z',
+    training_mode: 'free_debate',
+    difficulty: 'city',
+    dimension_scores: rubric.dimensions.map((dimension, index) => ({
+      name: dimension.name,
+      score: [92, 86, 78, 95, 88][index]
+    }))
+  };
+  const rawProjectedScores = projectAbilityDimensions(source);
+  const estimate = buildAbilityEstimate([source]);
+  const normalized = calculateAbilityProfile([source]).validRecords[0];
+  const historySource = estimate.history[0].source;
+
+  assert.deepEqual(normalized.rawProjectedScores, rawProjectedScores);
+  for (const [key, rawProjectedScore] of Object.entries(rawProjectedScores)) {
+    const expectedAdjustment = calculateDifficultyAdjustment({
+      score: rawProjectedScore,
+      difficulty: 'city',
+      usesDifficulty: true,
+      finalScore: 84
+    });
+    assertClose(normalized.difficultyAdjustments[key], expectedAdjustment);
+    assertClose(normalized.projectedScores[key], Math.min(100, rawProjectedScore + expectedAdjustment));
+  }
+  assert.equal(new Set(Object.values(normalized.difficultyAdjustments)).size > 1, true);
+  assertClose(normalized.projectedOverall, calculateProjectedOverall(normalized.projectedScores));
+  assert.equal(normalized.rawScore, 84);
+  assert.equal(normalized.adjustedScore, 87);
+  assert.deepEqual(Object.keys(historySource.rawProjectedScores).sort(), Object.keys(rawProjectedScores).sort());
+  assert.equal(historySource.rawScore, 84);
+  assert.equal(historySource.adjustedScore, 87);
+  assert.equal(historySource.appliedDifficultyCalibrationVersion, CURRENT_DIFFICULTY_CALIBRATION_VERSION);
+});
+
+test('city records below the final-score threshold receive no projected or overall reward', () => {
+  const source = {
+    ...record('city-failed', 45, '2026-01-01T00:00:00.000Z', 'free_debate'),
+    difficulty: 'city',
+    dimension_scores: getScoringRubric('free_debate').rubric.dimensions.map((dimension) => ({
+      name: dimension.name,
+      score: 100
+    })),
+    cap_triggers: ['off_task', 'stance_reversal']
+  };
+  const normalized = calculateAbilityProfile([source]).validRecords[0];
+
+  assert.equal(Object.values(normalized.difficultyAdjustments).every((value) => value === 0), true);
+  assert.deepEqual(normalized.projectedScores, normalized.rawProjectedScores);
+  assert.equal(normalized.adjustedScore, 45);
+});
+
+test('text-mode placeholder difficulties do not affect normalized ability records', () => {
+  for (const mode of ['constructive', 'summary', 'closing']) {
+    for (const difficulty of ['novice', 'campus', 'city']) {
+      const normalized = calculateAbilityProfile([{
+        ...record(`${mode}-${difficulty}`, 95, '2026-01-01T00:00:00.000Z', mode),
+        difficulty
+      }]).validRecords[0];
+      assert.deepEqual(normalized.projectedScores, normalized.rawProjectedScores);
+      assert.equal(normalized.adjustedScore, 95);
+      assert.equal(normalized.difficultyAdjustment, 0);
+    }
+  }
+});
+
+test('adjusted ability scores remain clamped to 0-100', () => {
+  const novice = calculateAbilityProfile([{
+    ...record('novice-zero', 0, '2026-01-01T00:00:00.000Z', 'defense'),
+    difficulty: 'novice'
+  }]).validRecords[0];
+  const city = calculateAbilityProfile([{
+    ...record('city-perfect', 100, '2026-01-01T00:00:00.000Z', 'defense'),
+    difficulty: 'city'
+  }]).validRecords[0];
+
+  assert.equal(novice.adjustedScore, 0);
+  assert.equal(Object.values(novice.projectedScores).every((score) => score === 0), true);
+  assert.equal(city.adjustedScore, 100);
+  assert.equal(Object.values(city.projectedScores).every((score) => score === 100), true);
+});
 
 test('single record package returns the record score', () => {
   assert.equal(calculatePackageWeightedAverage([80]), 80);

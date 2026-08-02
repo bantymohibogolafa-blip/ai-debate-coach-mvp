@@ -1,6 +1,6 @@
 export const CURRENT_SCORING_VERSION = 'scoring_v4';
 export const CURRENT_PROJECTION_VERSION = 'ability_projection_v3';
-export const CURRENT_DIFFICULTY_CALIBRATION_VERSION = 'difficulty_bonus_v1';
+export const CURRENT_DIFFICULTY_CALIBRATION_VERSION = 'difficulty_calibration_v2';
 export const CURRENT_ESTIMATOR_VERSION = 'ability_estimator_v3';
 
 export const LEGACY_SCORING_VERSION = {
