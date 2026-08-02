@@ -586,11 +586,20 @@ export function projectAbilityDimensions(record = {}) {
     : rubric.dimensions;
   const scoreByName = new Map();
   const nameAliases = abilityDimensionNameAliases[trainingMode] || {};
+  const canonicalNameToLegacyName = useLegacyTextProjection
+    ? Object.fromEntries(
+        Object.entries(nameAliases).map(([legacyName, canonicalName]) => [canonicalName, legacyName])
+      )
+    : {};
 
   const normalizedProvidedScores = providedScores
     .map((dimension) => {
       const sourceName = String(dimension?.name || '').trim();
-      const name = effectiveProjection[sourceName] ? sourceName : nameAliases[sourceName];
+      const name = effectiveProjection[sourceName]
+        ? sourceName
+        : useLegacyTextProjection
+          ? canonicalNameToLegacyName[sourceName]
+          : nameAliases[sourceName];
       const score = parseFiniteScore(dimension?.score);
       const maxScore = parseFiniteScore(dimension?.maxScore ?? dimension?.max_score ?? 100);
       if (!name || score === null || maxScore === null || maxScore <= 0 || score < 0) return null;
@@ -599,7 +608,7 @@ export function projectAbilityDimensions(record = {}) {
       return {
         name,
         score: clamp(normalizedScore, 0, 100),
-        isCanonicalName: sourceName === name
+        isCanonicalName: currentDimensionNames.has(sourceName)
       };
     })
     .filter(Boolean)

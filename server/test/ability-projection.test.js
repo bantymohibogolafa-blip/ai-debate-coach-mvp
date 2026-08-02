@@ -66,16 +66,27 @@ test('missing, invalid, duplicate, and legacy names retain only valid non-duplic
   });
   assert.deepEqual(defense, { counterPressure: 82 });
 
-  const canonicalPriority = projectAbilityDimensions({
-    training_mode: 'constructive',
-    dimension_scores: [
-      { name: '辩题理解与定义判准', score: 20 },
-      { name: '辩题理解、立场与举证责任', score: 90 },
-      { name: '不存在的维度', score: 100 },
-      { name: '论证结构与逻辑链条', score: -1 }
-    ]
-  });
-  assert.deepEqual(canonicalPriority, { logic: 90, battlefieldControl: 90 });
+  const aliasPriorityCases = [
+    ['constructive', '辩题理解与定义判准', '辩题理解、立场与举证责任'],
+    ['summary', '攻辩内容提炼', '交锋事实还原与关键材料提取'],
+    ['closing', '战场整合与胜负比较', '核心战场整合']
+  ];
+  for (const [mode, legacyName, canonicalName] of aliasPriorityCases) {
+    const canonicalPriority = projectAbilityDimensions({
+      training_mode: mode,
+      dimension_scores: [
+        { name: legacyName, score: 20 },
+        { name: canonicalName, score: 90 },
+        { name: '不存在的维度', score: 100 },
+        { name: getScoringRubric(mode).rubric.dimensions[2].name, score: -1 }
+      ]
+    });
+    const expected = projectAbilityDimensions({
+      training_mode: mode,
+      dimension_scores: [{ name: legacyName, score: 90 }]
+    });
+    assert.deepEqual(canonicalPriority, expected, `${mode} must prefer the canonical value`);
+  }
 
   const duplicate = projectAbilityDimensions({
     training_mode: 'defense',
