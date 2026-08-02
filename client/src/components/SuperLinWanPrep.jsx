@@ -747,7 +747,7 @@ function PrematchTaskWorkspace({
                     </button>
                   )}
                 </div>
-                <p>{message.content}</p>
+                <p>{visiblePrematchMessageContent(message)}</p>
                 <MessageEvidenceSources
                   search={message.contextManifest?.search}
                   canConfirm={message.id === confirmableSearchMessageId}
@@ -883,8 +883,10 @@ function MessageEvidenceSources({ search, canConfirm, isSending, onConfirm, onAd
         <div className="prematch-evidence-scope">
           {search.goal && <p><b>检索目标：</b>{search.goal}</p>}
           <ol>
-            {(Array.isArray(search.queries) ? search.queries : []).map((item) => (
-              <li key={`${item.zone}:${item.language}:${item.query}`}>{item.query}</li>
+            {(Array.isArray(search.queries) ? search.queries : []).map((item, index) => (
+              <li key={`${item.zone}:${item.language}:${item.displayQuery || index}`}>
+                {item.displayQuery || `当前辩题的补充检索方向${index + 1}`}
+              </li>
             ))}
           </ol>
           {canConfirm && (
@@ -895,6 +897,9 @@ function MessageEvidenceSources({ search, canConfirm, isSending, onConfirm, onAd
           )}
         </div>
       )}
+      {search.status !== 'pending_confirmation' && search.languageNotice && (
+        <p className="prematch-evidence-language-notice">{search.languageNotice}</p>
+      )}
       {sources.length > 0 && (
         <div className="prematch-evidence-list">
           {sources.map((source) => (
@@ -902,6 +907,7 @@ function MessageEvidenceSources({ search, canConfirm, isSending, onConfirm, onAd
               <div className="prematch-evidence-heading">
                 <b>{source.id}</b>
                 <span>{source.sourceName || source.domain}</span>
+                <em>{source.sourceLanguageLabel || (source.sourceLanguage === 'zh-CN' ? '简体中文资料' : '外文原始资料')}</em>
               </div>
               <h3>{source.coreConclusion || source.title}</h3>
               <dl className="prematch-evidence-details">
@@ -933,6 +939,17 @@ function MessageEvidenceSources({ search, canConfirm, isSending, onConfirm, onAd
       )}
     </section>
   );
+}
+
+function visiblePrematchMessageContent(message) {
+  const searchStatus = message?.contextManifest?.search?.status;
+  if (message?.role === 'assistant' && searchStatus === 'pending_confirmation') {
+    return '已按你的需求整理本轮中文检索范围。请确认下方检索方向，确认后再开始联网搜索。';
+  }
+  if (message?.role === 'assistant' && ['fallback', 'unavailable'].includes(searchStatus)) {
+    return '本轮联网检索未取得可核验来源，请稍后重试或调整中文检索范围。系统不会把未核实内容作为有效论据。';
+  }
+  return message?.content || '';
 }
 
 function safeHttpUrl(value) {

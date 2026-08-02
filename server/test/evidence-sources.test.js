@@ -4,7 +4,8 @@ import {
   canonicalizeEvidenceUrl,
   cleanEvidenceResults,
   mergeEvidenceLibrary,
-  normalizeEvidenceLibrary
+  normalizeEvidenceLibrary,
+  publicEvidenceSource
 } from '../src/search/evidenceSources.js';
 
 test('source cleaning filters invalid URLs, deduplicates tracking variants and bounds fields', () => {
@@ -51,4 +52,28 @@ test('one evidence round keeps at most five concise sources', () => {
   })));
   assert.equal(sources.length, 5);
   assert.deepEqual(sources.map((item) => item.id), ['E1', 'E2', 'E3', 'E4', 'E5']);
+});
+
+test('quality ranking does not let a low-quality Chinese page displace an authoritative foreign source', () => {
+  const sources = cleanEvidenceResults([
+    {
+      title: '无来源中文观点',
+      url: 'https://zhihu.com/question/1',
+      snippet: '没有作者、数据或原始出处的中文内容。',
+      sourceLanguage: 'zh-CN',
+      sourceQuality: 0
+    },
+    {
+      title: 'Authoritative Original Study',
+      url: 'https://research.example.edu/paper',
+      snippet: 'Peer reviewed original research with methods and data.',
+      sourceLanguage: 'foreign',
+      sourceType: 'academic',
+      sourceQuality: 5
+    }
+  ]);
+  assert.equal(sources[0].title, 'Authoritative Original Study');
+  const publicSource = publicEvidenceSource(sources[0]);
+  assert.equal(publicSource.sourceLanguageLabel, '外文原始资料');
+  assert.equal(publicSource.isPrimarySource, true);
 });

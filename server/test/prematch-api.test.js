@@ -209,6 +209,9 @@ test('evidence intent confirms scope before searching and degrades explicitly wi
   assert.match(planPrompt, /生成少量联网检索词/);
   assert.match(response.body.assistantMessage.content, /确认后我再真正联网/);
   assert.equal(response.body.contextManifest.search.status, 'pending_confirmation');
+  assert.equal(response.body.contextManifest.search.queries.every((item) => /[\u3400-\u9FFF]/.test(item.displayQuery)), true);
+  assert.equal(response.body.contextManifest.search.queries.every((item) => item.language === 'zh-CN'), true);
+  assert.equal(response.body.assistantMessage.content.includes('AI cannot replace teachers study'), false);
   assert.deepEqual(response.body.contextManifest.search.sources, []);
   assert.equal(harness.anysearchRequests.length, 0);
 
@@ -259,8 +262,8 @@ test('natural-language evidence request uses semantic classification and the exi
     searchPlan: {
       goal: '寻找人工智能不能完全替代教师的可靠材料',
       queries: [
-        { query: 'AI 教师 情感陪伴 教育研究', zone: 'cn', language: 'zh-CN' },
-        { query: 'AI cannot replace teachers study', zone: 'intl', language: 'en' }
+        { displayQuery: '人工智能与教师情感陪伴的教育研究', searchQuery: 'AI 教师 情感陪伴 教育研究', zone: 'cn', language: 'zh-CN', phase: 'primary' },
+        { displayQuery: '人工智能不能完全替代教师的外文研究', searchQuery: 'AI cannot replace teachers study', zone: 'intl', language: 'en', phase: 'supplemental' }
       ]
     }
   });
@@ -273,6 +276,9 @@ test('natural-language evidence request uses semantic classification and the exi
   assert.equal(response.status, 200);
   assert.equal(response.body.contextManifest.intent, 'evidence');
   assert.equal(response.body.contextManifest.search.status, 'pending_confirmation');
+  assert.equal(response.body.contextManifest.search.queries.every((item) => /[\u3400-\u9FFF]/.test(item.displayQuery)), true);
+  assert.equal(response.body.contextManifest.search.queries.every((item) => item.language === 'zh-CN'), true);
+  assert.equal(response.body.assistantMessage.content.includes('AI cannot replace teachers study'), false);
   assert.equal(harness.modelRequests.length, 2);
   assert.match(harness.modelRequests[0][0].content, /完整语义判断/);
   assert.match(harness.modelRequests[1][0].content, /生成少量联网检索词/);
@@ -299,16 +305,16 @@ test('adjusting evidence scope combines the original request, previous scope, an
       {
         goal: '验证课堂效率',
         queries: [
-          { query: 'AI 教师 课堂效率 研究', zone: 'cn', language: 'zh-CN' },
-          { query: 'AI teacher classroom efficiency', zone: 'intl', language: 'en' }
+          { displayQuery: '人工智能与教师课堂效率研究', searchQuery: 'AI 教师 课堂效率 研究', zone: 'cn', language: 'zh-CN', phase: 'primary' },
+          { displayQuery: '人工智能与课堂效率的外文研究', searchQuery: 'AI teacher classroom efficiency', zone: 'intl', language: 'en', phase: 'supplemental' }
         ]
       },
       {
         goal: '综合比较课堂效率、情感陪伴与教育公平',
         queries: [
-          { query: '教师 情感陪伴 学生发展 研究', zone: 'cn', language: 'zh-CN' },
-          { query: 'AI 教育公平 数字鸿沟 案例', zone: 'cn', language: 'zh-CN' },
-          { query: 'teacher emotional support education equity study', zone: 'intl', language: 'en' }
+          { displayQuery: '教师情感陪伴与学生发展研究', searchQuery: '教师 情感陪伴 学生发展 研究', zone: 'cn', language: 'zh-CN', phase: 'primary' },
+          { displayQuery: '人工智能、教育公平与数字鸿沟案例', searchQuery: 'AI 教育公平 数字鸿沟 案例', zone: 'cn', language: 'zh-CN', phase: 'primary' },
+          { displayQuery: '教师情感支持与教育公平的外文研究', searchQuery: 'teacher emotional support education equity study', zone: 'intl', language: 'en', phase: 'supplemental' }
         ]
       }
     ]
@@ -332,8 +338,10 @@ test('adjusting evidence scope combines the original request, previous scope, an
   assert.equal(adjusted.status, 200);
   assert.equal(adjusted.body.contextManifest.search.originalRequest, originalRequest);
   assert.equal(adjusted.body.contextManifest.search.adjustment, adjustment);
-  assert.match(adjusted.body.contextManifest.search.queries.map((item) => item.query).join('\n'), /情感陪伴/);
-  assert.match(adjusted.body.contextManifest.search.queries.map((item) => item.query).join('\n'), /教育公平/);
+  assert.match(adjusted.body.contextManifest.search.queries.map((item) => item.displayQuery).join('\n'), /情感陪伴/);
+  assert.match(adjusted.body.contextManifest.search.queries.map((item) => item.displayQuery).join('\n'), /教育公平/);
+  assert.equal(adjusted.body.assistantMessage.content.includes('teacher emotional support education equity study'), false);
+  assert.equal(adjusted.body.contextManifest.search.queries.every((item) => item.language === 'zh-CN'), true);
   const adjustmentPrompt = harness.modelRequests[1].map((message) => message.content).join('\n');
   assert.match(adjustmentPrompt, /上一轮检索范围/);
   assert.match(adjustmentPrompt, new RegExp(originalRequest));
@@ -344,8 +352,8 @@ test('scope adjustment does not pretend to change when search queries remain ide
   const unchangedPlan = {
     goal: '验证课堂效率',
     queries: [
-      { query: 'AI 教师 课堂效率 研究', zone: 'cn', language: 'zh-CN' },
-      { query: 'AI teacher classroom efficiency', zone: 'intl', language: 'en' }
+      { displayQuery: '人工智能与教师课堂效率研究', searchQuery: 'AI 教师 课堂效率 研究', zone: 'cn', language: 'zh-CN', phase: 'primary' },
+      { displayQuery: '人工智能与课堂效率的外文研究', searchQuery: 'AI teacher classroom efficiency', zone: 'intl', language: 'en', phase: 'supplemental' }
     ]
   };
   const harness = createHarness({ searchPlanSequence: [unchangedPlan, unchangedPlan] });
@@ -424,9 +432,14 @@ test('evidence intent searches after idempotency, persists stable sources and fi
     searchPlan: {
       goal: '验证机制影响',
       queries: [
-        { query: '机制影响 官方数据', zone: 'cn', language: 'zh-CN' },
-        { query: 'mechanism effects study', zone: 'intl', language: 'en' }
+        { displayQuery: '机制影响的中文官方数据', searchQuery: '机制影响 官方数据', zone: 'cn', language: 'zh-CN', phase: 'primary' },
+        { displayQuery: '机制影响的外文原始研究', searchQuery: 'mechanism effects study', zone: 'intl', language: 'en', phase: 'supplemental' }
       ]
+    },
+    supplementalQuery: {
+      displayQuery: '机制影响的外文原始研究',
+      searchQuery: 'mechanism effects study',
+      zone: 'intl', language: 'en', phase: 'supplemental'
     },
     anysearchResults: [{
       title: 'Teacher Emotional Support Study',
@@ -451,6 +464,8 @@ test('evidence intent searches after idempotency, persists stable sources and fi
   assert.equal(first.status, 200);
   assert.equal(first.body.contextManifest.search.status, 'pending_confirmation');
   assert.equal(harness.anysearchRequests.length, 0);
+  assert.equal(first.body.assistantMessage.content.includes('mechanism effects study'), false);
+  assert.equal(first.body.contextManifest.search.queries.every((item) => item.language === 'zh-CN'), true);
 
   const requestId = '83000000-0000-4000-8000-000000000099';
   const searched = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
@@ -460,7 +475,10 @@ test('evidence intent searches after idempotency, persists stable sources and fi
     evidenceAction: 'search'
   });
   assert.equal(searched.status, 200);
-  assert.equal(harness.anysearchRequests.length, 2);
+  assert.equal(harness.anysearchRequests.length, 3);
+  assert.equal(harness.anysearchRequests[2].body.query, 'mechanism effects study');
+  assert.equal(searched.body.contextManifest.search.queries.at(-1).displayQuery, '机制影响的外文原始研究');
+  assert.equal(searched.body.contextManifest.search.languageNotice, '当前简体中文高质量资料不足，已补充外文原始研究。');
   assert.equal(searched.body.contextManifest.search.status, 'success');
   assert.equal(searched.body.contextManifest.search.sources[0].id, 'E1');
   assert.equal(searched.body.task.strategyState.evidenceLibrary[0].id, 'E1');
@@ -478,7 +496,7 @@ test('evidence intent searches after idempotency, persists stable sources and fi
     question: '重复提交', clientRequestId: requestId, intent: 'evidence'
   });
   assert.equal(duplicate.body.duplicated, true);
-  assert.equal(harness.anysearchRequests.length, 2);
+  assert.equal(harness.anysearchRequests.length, 3);
 });
 
 test('changing stance marks the existing strategy for reassessment with optimistic versioning', async (t) => {
@@ -922,6 +940,15 @@ function createHarness(options = {}) {
         const plan = plans[searchPlanSequence] || options.searchPlan || {};
         searchPlanSequence += 1;
         return Response.json({ choices: [{ message: { content: JSON.stringify(plan) } }] });
+      }
+      if (body.messages[0]?.content?.includes('只负责生成一个外文原始资料补充查询')) {
+        return Response.json({ choices: [{ message: { content: JSON.stringify(options.supplementalQuery || {
+          displayQuery: '当前论点的外文原始研究补充方向',
+          searchQuery: 'authoritative original research evidence study',
+          zone: 'intl',
+          language: 'en',
+          phase: 'supplemental'
+        }) } }] });
       }
       return Response.json({
         choices: [{

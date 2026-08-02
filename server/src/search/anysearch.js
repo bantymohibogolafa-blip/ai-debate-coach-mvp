@@ -18,7 +18,7 @@ export async function searchAnySearch(query, options = {}) {
   const timeoutMs = clamp(Number(options.timeoutMs ?? process.env.ANYSEARCH_TIMEOUT_MS ?? 18000), 1000, 30000);
   const maxResults = clamp(Number(query?.max_results ?? 6), 1, 10);
   const body = {
-    query: cleanQuery(query?.query),
+    query: cleanQuery(query?.searchQuery || query?.query),
     max_results: maxResults,
     zone: query?.zone === 'intl' ? 'intl' : 'cn',
     language: query?.language === 'en' ? 'en' : 'zh-CN',
@@ -49,7 +49,12 @@ export async function searchAnySearch(query, options = {}) {
       }
       if (data?.code !== 0) throw new AnySearchError('provider_error', 502, { requestId });
       return {
-        query: body,
+        query: {
+          ...body,
+          displayQuery: cleanQuery(query?.displayQuery),
+          searchQuery: body.query,
+          phase: query?.phase === 'supplemental' ? 'supplemental' : 'primary'
+        },
         requestId,
         results: Array.isArray(data?.data?.results) ? data.data.results : [],
         metadata: data?.data?.metadata && typeof data.data.metadata === 'object' ? data.data.metadata : {}

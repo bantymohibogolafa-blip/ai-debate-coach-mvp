@@ -63,6 +63,7 @@ import {
 import {
   buildEvidenceIntentClassificationMessages,
   buildEvidenceSearchPlanMessages,
+  buildEvidenceSupplementalSearchMessages,
   buildPersonalTaskLinWanMessages,
   createPersonalTaskContextManifest,
   filterUsedEvidenceIds,
@@ -73,6 +74,7 @@ import {
   normalizePrematchResultSummary,
   normalizePersonalTaskMemory,
   parseEvidenceSearchPlan,
+  parseEvidenceSupplementalQuery,
   parseEvidenceIntentClassification,
   parsePersonalTaskLinWanResponse,
   PERSONAL_TASK_INTENTS
@@ -641,13 +643,15 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
           }), { maxTokens: 700, temperature: 0.2 });
           searchPlan = parseEvidenceSearchPlan(rawPlan, {
             debateTopic: task.debate_topic,
-            currentQuestion: chatPayload.question
+            currentQuestion: chatPayload.question,
+            allowSupplemental: false
           });
         } catch (error) {
           if (evidenceAction === 'adjust') throw error;
           searchPlan = parseEvidenceSearchPlan('', {
             debateTopic: task.debate_topic,
-            currentQuestion: chatPayload.question
+            currentQuestion: chatPayload.question,
+            allowSupplemental: false
           });
         }
         if (previousPlan && evidencePlanFingerprint(previousPlan) === evidencePlanFingerprint(searchPlan)) {
@@ -674,6 +678,19 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
         try {
           searched = await searchEvidence({
             queries: searchPlan.queries,
+            supplementalQueryFactory: async (chineseAssessment) => {
+              const rawSupplemental = await callDeepSeek(buildEvidenceSupplementalSearchMessages({
+                task: mapPrematchTaskFromDb(task),
+                searchPlan,
+                originalRequest: searchPlan.originalRequest || searchPlan.goal,
+                chineseAssessment
+              }), { maxTokens: 400, temperature: 0.1 });
+              return parseEvidenceSupplementalQuery(rawSupplemental, {
+                debateTopic: task.debate_topic,
+                currentQuestion: searchPlan.originalRequest || searchPlan.goal,
+                goal: searchPlan.goal
+              });
+            },
             sensitiveValues: [
               task.id,
               req.user.id,
@@ -689,7 +706,10 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
             queries: searchPlan.queries,
             results: [],
             requestIds: [],
-            errors: [{ code: error?.code || 'search_unavailable', status: error?.status || 0 }]
+            errors: [{ code: error?.code || 'search_unavailable', status: error?.status || 0 }],
+            usedForeignSupplement: false,
+            foreignSupplementNeeded: false,
+            chineseAssessment: { resultCount: 0, chineseCount: 0, credibleCount: 0, sufficient: false }
           };
         }
         const cleanedSources = cleanEvidenceResults(searched.results, {
@@ -713,7 +733,13 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
           retrievedAt: new Date().toISOString(),
           totalResults: stableSources.length,
           sources: stableSources,
-          requestIds: searched.requestIds
+          requestIds: searched.requestIds,
+          usedForeignSupplement: Boolean(searched.usedForeignSupplement),
+          languageNotice: searched.usedForeignSupplement
+            ? '当前简体中文高质量资料不足，已补充外文原始研究。'
+            : searched.foreignSupplementNeeded
+              ? '本轮已优先检索简体中文资料；中文高质量资料仍不足，暂未取得可用的外文补充结果。'
+              : '本轮已优先检索并筛选简体中文资料。'
         };
         if (searched.errors.length) {
           console.warn('[prematch-search] AnySearch request incomplete', {
@@ -2578,7 +2604,9 @@ function findLatestPendingEvidencePlan(messages) {
     const plan = parseEvidenceSearchPlan(JSON.stringify({
       goal: search.goal,
       queries: search.queries
-    }));
+    }), {
+      currentQuestion: search.originalRequest || search.goal
+    });
     if (plan.queries.length) {
       return {
         ...plan,
@@ -2593,7 +2621,8 @@ function findLatestPendingEvidencePlan(messages) {
 function evidencePlanFingerprint(plan) {
   return JSON.stringify({
     queries: (Array.isArray(plan?.queries) ? plan.queries : [])
-      .map((item) => normalizeText(item?.query).toLocaleLowerCase('zh-CN'))
+      .filter((item) => item?.phase !== 'supplemental')
+      .map((item) => normalizeText(item?.displayQuery || item?.query).toLocaleLowerCase('zh-CN'))
       .filter(Boolean)
       .sort()
   });
@@ -2625,9 +2654,9 @@ function formatEvidenceScopeConfirmation(search) {
     `本轮目标：${normalizeText(search?.goal) || '围绕当前论点寻找可验证的事实材料'}`,
     '',
     '我准备优先检索：',
-    ...queries.map((item, index) => `${index + 1}. ${normalizeText(item.query)}`),
+    ...queries.map((item, index) => `${index + 1}. ${normalizeText(item.displayQuery) || '当前辩题的相关研究、数据与案例'}`),
     '',
-    '检索时会同时留意直接支持材料、反例、限制条件和适用边界，最终只保留 3—5 个最契合当前备战方向的有效来源。范围没问题就点击“按此范围搜索”；想调整，可以先告诉我希望增加、删除或收窄哪一部分。'
+    '检索时会先查找高质量、可验证的简体中文资料，并同时留意直接支持材料、反例、限制条件和适用边界；只有中文资料不足时才补充权威外文原始研究。最终只保留 3—5 个最契合当前备战方向的有效来源。范围没问题就点击“按此范围搜索”；想调整，可以先告诉我希望增加、删除或收窄哪一部分。'
   ].join('\n');
 }
 

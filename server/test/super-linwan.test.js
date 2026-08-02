@@ -13,6 +13,8 @@ import {
   mergePersonalTaskMemory,
   mergePrematchStrategy,
   normalizePersonalTaskMemory,
+  normalizePrematchContextManifest,
+  parseEvidenceSearchPlan,
   normalizePrematchStrategy,
   parsePersonalTaskLinWanResponse,
   parseEvidenceIntentClassification,
@@ -415,6 +417,48 @@ test('adjusted evidence plan prompt preserves original request and previous scop
   assert.match(prompt, /上一轮检索范围：AI 教师 课堂效率/);
   assert.match(prompt, /用户本次调整：不要只看效率，也看情感陪伴和教育公平/);
   assert.match(prompt, /不得把你自行推测的假设变成唯一检索边界/);
+  assert.match(prompt, /高质量可验证的简体中文一手资料/);
+  assert.match(prompt, /displayQuery/);
+  assert.match(prompt, /searchQuery/);
+});
+
+test('evidence plan separates Chinese display queries from internal foreign search queries', () => {
+  const plan = parseEvidenceSearchPlan(JSON.stringify({
+    goal: '验证生成式人工智能是否降低创作门槛',
+    queries: [{
+      displayQuery: '生成式人工智能降低创作门槛的相关研究与案例',
+      searchQuery: 'generative AI creativity democratization evidence study',
+      zone: 'intl',
+      language: 'en',
+      phase: 'supplemental'
+    }]
+  }), {
+    debateTopic: '人工智能是否降低创造力',
+    currentQuestion: '寻找相关研究与案例'
+  });
+  assert.equal(plan.queries[0].language, 'zh-CN');
+  assert.equal(plan.queries[0].phase, 'primary');
+  assert.match(plan.queries[0].displayQuery, /人工智能/);
+  assert.equal(plan.queries[1].displayQuery, '生成式人工智能降低创作门槛的相关研究与案例');
+  assert.equal(plan.queries[1].searchQuery, 'generative AI creativity democratization evidence study');
+});
+
+test('legacy English query is preserved internally but receives a Chinese display fallback', () => {
+  const manifest = normalizePrematchContextManifest({
+    version: 4,
+    scope: 'personal_task',
+    intent: 'evidence',
+    search: {
+      provider: 'anysearch',
+      status: 'pending_confirmation',
+      goal: '查找生成式人工智能与创造力研究',
+      originalRequest: '帮我查找人工智能是否降低创造力的研究',
+      queries: [{ query: 'generative AI creativity democratization evidence study', zone: 'intl', language: 'en' }]
+    }
+  });
+  assert.equal(manifest.search.queries[0].searchQuery, 'generative AI creativity democratization evidence study');
+  assert.match(manifest.search.queries[0].displayQuery, /人工智能/);
+  assert.equal(manifest.search.queries[0].displayQuery.includes('generative AI'), false);
 });
 
 test('personal response parser keeps bounded Chinese evidence presentation fields', () => {

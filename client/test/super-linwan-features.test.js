@@ -29,3 +29,16 @@ test('scope adjustment, task note, and latest-round revocation use the existing 
   assert.match(prepSource, /撤回本轮/);
   assert.match(prepSource, /expectedVersion: detail\.task\.version/);
 });
+
+test('evidence scope renders only Chinese displayQuery and keeps internal searchQuery hidden', () => {
+  const component = prepSource.slice(prepSource.indexOf('function MessageEvidenceSources'));
+  assert.match(component, /item\.displayQuery/);
+  assert.equal(component.includes('item.searchQuery'), false);
+  assert.equal(component.includes('item.query'), false);
+  assert.match(component, /简体中文资料/);
+  assert.match(component, /外文原始资料/);
+  assert.match(component, /search\.languageNotice/);
+  assert.match(prepSource, /visiblePrematchMessageContent\(message\)/);
+  assert.match(prepSource, /search\?\.status === 'pending_confirmation'/);
+  assert.match(prepSource, /已按你的需求整理本轮中文检索范围/);
+});

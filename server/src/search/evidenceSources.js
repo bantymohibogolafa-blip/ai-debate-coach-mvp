@@ -65,7 +65,12 @@ export function cleanEvidenceResults(rawResults, options = {}) {
   const sources = [];
   let contextLength = 0;
 
-  for (const raw of Array.isArray(rawResults) ? rawResults : []) {
+  const rankedResults = (Array.isArray(rawResults) ? rawResults : [])
+    .map((raw, index) => ({ raw, index, rank: evidenceRank(raw, index) }))
+    .sort((a, b) => b.rank - a.rank || a.index - b.index)
+    .map((item) => item.raw);
+
+  for (const raw of rankedResults) {
     if (sources.length >= (options.limit || SEARCH_SOURCE_LIMIT)) break;
     const url = canonicalizeEvidenceUrl(raw?.url);
     if (!url || sources.some((item) => item.url === url)) continue;
@@ -86,6 +91,8 @@ export function cleanEvidenceResults(rawResults, options = {}) {
       contentExcerpt,
       sourceType: normalizeSourceType(raw?.sourceType, url),
       query: clean(raw?.query, 200),
+      sourceLanguage: normalizeSourceLanguage(raw?.sourceLanguage, title, snippet, contentExcerpt),
+      isPrimarySource: isPrimaryEvidenceSource(raw?.sourceType, url),
       retrievedAt
     });
   }
@@ -131,8 +138,43 @@ export function publicEvidenceSource(source) {
     coreConclusion: clean(source?.coreConclusion, 500),
     evidenceContent: clean(source?.evidenceContent, 1200),
     chineseExplanation: clean(source?.chineseExplanation, 1200),
-    applicationAnalysis: clean(source?.applicationAnalysis, 1200)
+    applicationAnalysis: clean(source?.applicationAnalysis, 1200),
+    sourceLanguage: normalizeSourceLanguage(
+      source?.sourceLanguage,
+      source?.title,
+      source?.snippet,
+      source?.contentExcerpt || source?.originalExcerpt
+    ),
+    sourceLanguageLabel: normalizeSourceLanguage(
+      source?.sourceLanguage,
+      source?.title,
+      source?.snippet,
+      source?.contentExcerpt || source?.originalExcerpt
+    ) === 'zh-CN' ? '简体中文资料' : '外文原始资料',
+    isPrimarySource: Boolean(source?.isPrimarySource) || isPrimaryEvidenceSource(source?.sourceType, url)
   };
+}
+
+function evidenceRank(raw, index) {
+  const quality = Number(raw?.sourceQuality) || 0;
+  const relevance = Number(raw?.score ?? raw?.relevanceScore ?? raw?.relevance_score) || 0;
+  const languageBonus = raw?.sourceLanguage === 'zh-CN' ? 12 : 0;
+  const primaryBonus = isPrimaryEvidenceSource(raw?.sourceType, raw?.url) ? 18 : 0;
+  return quality * 100 + primaryBonus + languageBonus + relevance - index * 0.01;
+}
+
+function normalizeSourceLanguage(value, ...parts) {
+  if (value === 'zh-CN') return 'zh-CN';
+  if (value === 'foreign') return 'foreign';
+  const text = parts.join(' ');
+  const chinese = (text.match(/[\u3400-\u9FFF]/g) || []).length;
+  const latin = (text.match(/[A-Za-z]/g) || []).length;
+  return chinese >= 8 || chinese >= Math.ceil(latin * 0.2) ? 'zh-CN' : 'foreign';
+}
+
+function isPrimaryEvidenceSource(value, url) {
+  const type = normalizeSourceType(value, url);
+  return type === 'official' || type === 'academic';
 }
 
 function normalizeSourceType(value, url) {
