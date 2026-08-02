@@ -6670,35 +6670,58 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
-.prematch-evidence-source p {
+.prematch-evidence-summary {
+  margin: 8px 0;
+}
+
+.prematch-evidence-summary > b {
+  color: #526d73;
+  font-size: 12px;
+}
+
+.prematch-evidence-summary p {
   display: -webkit-box;
-  margin: 0 0 8px;
+  margin: 3px 0 0;
   overflow: hidden;
   color: #52686e;
   font-size: 13px;
   line-height: 1.55;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 5;
 }
 
-.prematch-evidence-details {
-  display: grid;
-  gap: 8px;
-  margin: 8px 0 10px;
-}
-
-.prematch-evidence-details div {
-  min-width: 0;
-}
-
-.prematch-evidence-details dt {
-  color: #526d73;
+.prematch-evidence-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 8px 0;
+  color: #687d82;
   font-size: 12px;
-  font-weight: 900;
+  line-height: 1.5;
 }
 
-.prematch-evidence-details dd {
-  margin: 2px 0 0;
+.prematch-evidence-links {
+  margin-top: 9px;
+}
+
+.prematch-evidence-original {
+  margin-top: 9px;
+  border-top: 1px solid #dfe9e8;
+  padding-top: 8px;
+  color: #52686e;
+  font-size: 12px;
+}
+
+.prematch-evidence-original summary {
+  cursor: pointer;
+  color: #476c6e;
+  font-weight: 800;
+}
+
+.prematch-evidence-original p {
+  margin: 8px 0;
+  max-height: 240px;
+  overflow: auto;
   color: #273f46;
   font-size: 13px;
   line-height: 1.6;

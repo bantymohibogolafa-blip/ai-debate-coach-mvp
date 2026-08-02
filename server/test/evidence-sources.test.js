@@ -77,3 +77,28 @@ test('quality ranking does not let a low-quality Chinese page displace an author
   assert.equal(publicSource.sourceLanguageLabel, '外文原始资料');
   assert.equal(publicSource.isPrimarySource, true);
 });
+
+test('public evidence keeps concise display fields separate from hidden source excerpts', () => {
+  const [source] = cleanEvidenceResults([{
+    title: 'Original Research Title',
+    url: 'https://example.edu/paper.pdf',
+    snippet: 'English search snippet that should not be the default card body.',
+    content: 'A longer original passage reserved for explicit expansion.',
+    sourceLanguage: 'foreign',
+    sourceType: 'academic',
+    publisher: 'Example University',
+    publishedAt: '2025-05-06'
+  }]);
+  const publicSource = publicEvidenceSource({
+    ...source,
+    evidenceTitle: '生成式 AI 降低参与创作的技术门槛',
+    displaySummary: '该研究说明创作门槛下降，可支持效率观点；但不能单独证明长期创造力提高。'
+  });
+
+  assert.equal(publicSource.sourceTitle, 'Original Research Title');
+  assert.equal(publicSource.sourceUrl, 'https://example.edu/paper.pdf');
+  assert.equal(publicSource.sourceExcerpt, 'A longer original passage reserved for explicit expansion.');
+  assert.match(publicSource.displaySummary, /不能单独证明/);
+  assert.equal(publicSource.publisher, 'Example University');
+  assert.equal(publicSource.publishedAt, '2025-05-06T00:00:00.000Z');
+});

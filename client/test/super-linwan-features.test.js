@@ -8,16 +8,18 @@ const prepSource = fs.readFileSync(
   'utf8'
 );
 
-test('evidence entries use one shared card with source text, Chinese explanation, and application analysis', () => {
+test('evidence entries default to concise Chinese debate summaries and keep original text collapsed', () => {
   assert.equal((prepSource.match(/function MessageEvidenceSources/g) || []).length, 1);
-  assert.match(prepSource, /论据内容/);
-  assert.match(prepSource, /来源名称/);
-  assert.match(prepSource, /相关原文/);
-  assert.match(prepSource, /中文翻译或说明/);
-  assert.match(prepSource, /适用分析/);
-  assert.match(prepSource, /source\.contentExcerpt/);
-  assert.match(prepSource, /source\.chineseExplanation/);
-  assert.match(prepSource, /source\.applicationAnalysis/);
+  assert.match(prepSource, /核心摘要/);
+  assert.match(prepSource, /evidenceDisplaySummary\(source\)/);
+  assert.match(prepSource, /source\?\.displaySummary/);
+  assert.match(prepSource, /source\.sourceTitle/);
+  assert.match(prepSource, /evidenceSourceTypeLabel/);
+  assert.match(prepSource, /查看原始来源/);
+  assert.match(prepSource, /<details className="prematch-evidence-original">/);
+  assert.match(prepSource, /展开原文与资料信息/);
+  assert.match(prepSource, /source\.sourceExcerpt/);
+  assert.equal(prepSource.includes('<dt>相关原文</dt>'), false);
 });
 
 test('scope adjustment, task note, and latest-round revocation use the existing task API', () => {
@@ -36,7 +38,7 @@ test('evidence scope renders only Chinese displayQuery and keeps internal search
   assert.equal(component.includes('item.searchQuery'), false);
   assert.equal(component.includes('item.query'), false);
   assert.match(component, /简体中文资料/);
-  assert.match(component, /外文原始资料/);
+  assert.match(component, /外文资料（摘要已中文化）/);
   assert.match(component, /search\.languageNotice/);
   assert.match(prepSource, /visiblePrematchMessageContent\(message\)/);
   assert.match(prepSource, /search\?\.status === 'pending_confirmation'/);

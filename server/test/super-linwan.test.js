@@ -473,6 +473,8 @@ test('personal response parser keeps bounded Chinese evidence presentation field
     usedEvidenceIds: ['E1'],
     evidenceItems: [{
       sourceId: 'E1',
+      evidenceTitle: '教师情感支持影响学习投入',
+      displaySummary: '该研究说明教师情感支持与学习投入相关，可用于支持教师角色不只是知识传递；但相关性不能单独证明因果。',
       coreConclusion: '教师情感支持影响学习投入',
       evidenceContent: '研究观察到情感支持与学习投入相关。',
       chineseExplanation: '这是外文原文的中文说明。',
@@ -484,6 +486,7 @@ test('personal response parser keeps bounded Chinese evidence presentation field
   }));
   assert.equal(parsed.evidenceItems.length, 1);
   assert.equal(parsed.evidenceItems[0].sourceId, 'E1');
+  assert.match(parsed.evidenceItems[0].displaySummary, /支持教师角色/);
   assert.match(parsed.evidenceItems[0].applicationAnalysis, /相关性不等于因果/);
 });
 

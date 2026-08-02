@@ -511,10 +511,8 @@ ${formatPersonalIntentInstruction(normalizedIntent)}
   "evidenceItems": [
     {
       "sourceId": "仅填写本轮真实来源的 E 编号",
-      "coreConclusion": "论据标题或核心结论，默认中文",
-      "evidenceContent": "该来源能够支持的论据内容，默认中文",
-      "chineseExplanation": "外文原文的中文翻译或中文说明；中文来源也给出简要中文说明",
-      "applicationAnalysis": "这条论据在当前辩题中的适用方式、限制和可能反驳，默认中文"
+      "evidenceTitle": "适合论据卡片展示的中文标题",
+      "displaySummary": "中文辩论摘要：该材料说明什么、支持哪个观点、适用于什么场景，并明确材料限制；不是原文摘抄"
     }
   ]
 }`
@@ -1144,6 +1142,9 @@ function normalizeEvidenceItems(value) {
   const seen = new Set();
   return value.map((item) => ({
     sourceId: cleanInline(item?.sourceId, 20),
+    evidenceTitle: cleanText(item?.evidenceTitle, 500),
+    displaySummary: cleanText(item?.displaySummary, 600),
+    // Legacy response fields remain accepted while deployed model responses transition.
     coreConclusion: cleanText(item?.coreConclusion, 500),
     evidenceContent: cleanText(item?.evidenceContent, 1200),
     chineseExplanation: cleanText(item?.chineseExplanation, 1200),
@@ -1184,7 +1185,7 @@ function formatPersonalIntentInstruction(intent) {
     chat: '正常围绕当前任务交流，优先回答用户当前问题，并更新必要的任务记忆。',
     deconstruct: '拆解核心概念、争议对象、比较标准、双方举证责任和核心战场；信息不足时只追问最关键的一到两个问题。',
     expand: '生成有明显区别的候选论点，说明逻辑链、优势、风险以及主论或辅助论定位；不得恢复已否定路线。',
-    evidence: '本轮可使用后端提供的真实联网来源。请说明搜到了什么、可支持什么、如何使用、限制与待核实点；区分直接支持、线索、有限制和可能支持反方的材料。若标记为联网失败，只能给检索方案，并明确不是已核实事实。',
+    evidence: '本轮可使用后端提供的真实联网来源。每条材料生成简洁的中文辩论摘要，必须说明材料说明什么、支持哪个观点、适用场景和限制；摘要不是原文截取。外文材料也只给中文摘要，不在 answer 中复制长篇中外文原文。区分直接支持、线索、有限制和可能支持反方的材料。若标记为联网失败，只能给检索方案，并明确不是已核实事实。',
     report: '忠实整理当前任务资料、摘要、结构化记忆、已保存来源与当前任务聊天；不得触发或要求新搜索，不得新增未经讨论的重要结论。报告必须明确区分“已确认、候选、已否定、已修改、尚未解决”，并说明它只是当前阶段快照，不是最终定稿。'
   };
   return instructions[intent] || instructions.chat;

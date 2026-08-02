@@ -2690,10 +2690,22 @@ function buildEvidenceDisplaySources(sources, evidenceItems) {
   );
   return (Array.isArray(sources) ? sources : []).map((source) => {
     const item = itemById.get(source.id) || {};
+    const legacySummary = [item.evidenceContent, item.applicationAnalysis]
+      .map(normalizeText)
+      .filter(Boolean)
+      .join(' ');
+    const fallbackSummary = source.sourceLanguage === 'zh-CN'
+      ? '该材料可作为当前辩题的参考来源；具体支持方向、适用边界和限制请结合原始资料核验。'
+      : '该外文材料可作为当前辩题的参考来源；具体支持方向、适用边界和限制请结合原始资料核验。';
     return {
       ...source,
       sourceName: source.title || source.domain,
-      coreConclusion: item.coreConclusion || source.title,
+      sourceTitle: source.title || source.domain,
+      sourceUrl: source.url,
+      sourceExcerpt: source.contentExcerpt || source.snippet,
+      evidenceTitle: item.evidenceTitle || item.coreConclusion || source.title,
+      displaySummary: item.displaySummary || legacySummary || fallbackSummary,
+      coreConclusion: item.evidenceTitle || item.coreConclusion || source.title,
       evidenceContent: item.evidenceContent || source.snippet,
       originalExcerpt: source.contentExcerpt || source.snippet,
       chineseExplanation: item.chineseExplanation || '暂未生成中文说明，请结合来源原文谨慎使用。',

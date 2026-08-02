@@ -977,7 +977,7 @@ function taskToForm(task) {
 function MessageEvidenceSources({ search, canConfirm, isSending, onConfirm, onAdjust }) {
   if (!search) return null;
   const sources = Array.isArray(search.sources)
-    ? search.sources.filter((source) => safeHttpUrl(source?.url))
+    ? search.sources.filter((source) => safeHttpUrl(source?.sourceUrl || source?.url))
     : [];
   const statusText = {
     pending_confirmation: '请先确认本轮检索范围；确认前不会发起联网请求。',
@@ -1014,42 +1014,65 @@ function MessageEvidenceSources({ search, canConfirm, isSending, onConfirm, onAd
       {sources.length > 0 && (
         <div className="prematch-evidence-list">
           {sources.map((source) => (
-            <article className="prematch-evidence-source" key={`${source.id}:${source.url}`}>
+            <article className="prematch-evidence-source" key={`${source.id}:${source.sourceUrl || source.url}`}>
               <div className="prematch-evidence-heading">
                 <b>{source.id}</b>
-                <span>{source.sourceName || source.domain}</span>
-                <em>{source.sourceLanguageLabel || (source.sourceLanguage === 'zh-CN' ? '简体中文资料' : '外文原始资料')}</em>
+                <span>{source.sourceTitle || source.sourceName || source.domain}</span>
+                <em>{evidenceSourceTypeLabel(source.sourceType)}</em>
               </div>
-              <h3>{source.coreConclusion || source.title}</h3>
-              <dl className="prematch-evidence-details">
-                <div>
-                  <dt>论据内容</dt>
-                  <dd>{source.evidenceContent || source.snippet || '该来源暂未提供可用摘要。'}</dd>
-                </div>
-                <div>
-                  <dt>来源名称</dt>
-                  <dd>{source.sourceName || source.title || source.domain}</dd>
-                </div>
-                <div>
-                  <dt>相关原文</dt>
-                  <dd>{source.contentExcerpt || source.snippet || '来源未返回可展示的原文节选。'}</dd>
-                </div>
-                <div>
-                  <dt>中文翻译或说明</dt>
-                  <dd>{source.chineseExplanation || '暂未生成中文说明，请结合来源原文谨慎使用。'}</dd>
-                </div>
-                <div>
-                  <dt>适用分析</dt>
-                  <dd>{source.applicationAnalysis || '请结合当前辩题和来源限制审慎使用。'}</dd>
-                </div>
-              </dl>
-              <a href={source.url} target="_blank" rel="noopener noreferrer">查看原始来源</a>
+              <h3>{source.evidenceTitle || source.coreConclusion || source.title}</h3>
+              <div className="prematch-evidence-summary">
+                <b>核心摘要</b>
+                <p>{evidenceDisplaySummary(source)}</p>
+              </div>
+              <p className="prematch-evidence-meta">
+                <span>来源：{source.sourceTitle || source.sourceName || source.title || source.domain}</span>
+                {source.publisher && <span>发布机构：{source.publisher}</span>}
+                {source.publishedAt && <span>时间：{formatEvidenceDate(source.publishedAt)}</span>}
+                <span>{source.sourceLanguageLabel || (source.sourceLanguage === 'zh-CN' ? '简体中文资料' : '外文资料（摘要已中文化）')}</span>
+              </p>
+              <div className="prematch-evidence-links">
+                <a href={source.sourceUrl || source.url} target="_blank" rel="noopener noreferrer">查看原始来源</a>
+              </div>
+              {(source.sourceExcerpt || source.contentExcerpt || source.snippet) && (
+                <details className="prematch-evidence-original">
+                  <summary>展开原文与资料信息</summary>
+                  <p>{source.sourceExcerpt || source.contentExcerpt || source.snippet}</p>
+                  <a href={source.sourceUrl || source.url} target="_blank" rel="noopener noreferrer">打开原始网页或 PDF</a>
+                </details>
+              )}
             </article>
           ))}
         </div>
       )}
     </section>
   );
+}
+
+function evidenceSourceTypeLabel(sourceType) {
+  return ({
+    academic: '论文 / 研究',
+    official: '政策 / 官方资料',
+    media: '新闻',
+    organization: '报告 / 机构资料',
+    other: '案例 / 其他'
+  })[sourceType] || '其他资料';
+}
+
+function evidenceDisplaySummary(source) {
+  if (source?.displaySummary) return source.displaySummary;
+  const legacyChineseSummary = [source?.evidenceContent, source?.applicationAnalysis]
+    .filter(Boolean)
+    .join(' ');
+  if (legacyChineseSummary) return legacyChineseSummary;
+  if (source?.chineseExplanation) return source.chineseExplanation;
+  return '该来源暂未生成中文辩论摘要，请通过原始资料入口核验后使用。';
+}
+
+function formatEvidenceDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
 }
 
 function visiblePrematchMessageContent(message) {
