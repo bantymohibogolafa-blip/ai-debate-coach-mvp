@@ -538,7 +538,6 @@ export function finalizeReviewScore({
 } = {}) {
   const { rubric } = getScoringRubric(trainingMode);
   const weighted = calculateWeightedScore(dimensionScores, rubric);
-  const generalCaps = applyMandatoryScoreCaps(weighted.rawScore, capTriggers, rubric);
   const isDefense = rubric.appMode === 'defense';
   const reconciliation = isDefense
     ? reconcileDefenseRoundStates(defenseRoundStates, {
@@ -547,6 +546,10 @@ export function finalizeReviewScore({
       })
     : null;
   const states = reconciliation?.states || [];
+  const validatedCapTriggers = isDefense
+    ? validateDefenseCapTriggers(capTriggers, states)
+    : capTriggers;
+  const generalCaps = applyMandatoryScoreCaps(weighted.rawScore, validatedCapTriggers, rubric);
   const defenseResult = isDefense
     ? calculateDefenseFinalScore(weighted.rawScore, states, reconciliation.completedRounds || reconciliation.plannedRounds)
     : null;
@@ -597,6 +600,22 @@ export function finalizeReviewScore({
       dataIntegrityWarning: reconciliation.dataIntegrityWarning || null
     } : null
   };
+}
+
+function validateDefenseCapTriggers(capTriggers, states) {
+  const triggers = Array.isArray(capTriggers) ? capTriggers : [];
+  if (!states.length) return triggers;
+  const statusCount = (statuses) => states.filter((state) => statuses.includes(state.answerStatus)).length;
+  const repeatedCoreEvasionSupported = statusCount(['evaded', 'unanswered']) >= 2;
+  const repeatedOffTopicSupported = statusCount(['off_topic']) >= 2;
+  const majorityProblemSupported = statusCount(['evaded', 'unanswered', 'off_topic']) >= Math.ceil(states.length / 2);
+
+  return triggers.filter((trigger) => {
+    if (trigger === 'repeated_core_evasion') return repeatedCoreEvasionSupported;
+    if (trigger === 'repeated_off_topic_answers') return repeatedOffTopicSupported;
+    if (trigger === 'off_task') return majorityProblemSupported;
+    return true;
+  });
 }
 
 function scoringDimensionsError(message) {

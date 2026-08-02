@@ -155,14 +155,11 @@ export function calculateDefenseFinalScore(modelScore, roundStates, totalRounds)
     + roundAverage * DEFENSE_SCORING_CONFIG.roundScoreWeight;
   const problemStates = states.filter((state) => ['unanswered', 'evaded', 'off_topic'].includes(state.answerStatus));
   const delayedWithoutCurrent = states.filter((state) => state.isDelayedAnswer && !state.isCurrentQuestionAnswered);
-  const incompleteStates = states.filter((state) => !state.isCurrentQuestionAnswered);
   let cap = 100;
   if (problemStates.length === 1) cap = 79;
   if (problemStates.length >= 2) cap = 64;
-  if (problemStates.length >= Math.ceil(states.length / 2)) cap = Math.min(cap, 49);
-  if (delayedWithoutCurrent.length) cap = Math.min(cap, 69);
-  if (incompleteStates.length === states.length) cap = Math.min(cap, 79);
-  else if (incompleteStates.length >= Math.ceil(states.length / 2)) cap = Math.min(cap, 84);
+  if (problemStates.length === states.length) cap = Math.min(cap, 49);
+  if (delayedWithoutCurrent.length >= Math.ceil(states.length / 2)) cap = Math.min(cap, 69);
   return {
     score: roundToOne(Math.max(0, Math.min(blended, cap, 100))),
     blendedScore: roundToOne(Math.max(0, Math.min(blended, 100))),
