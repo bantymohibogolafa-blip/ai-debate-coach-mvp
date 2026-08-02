@@ -64,6 +64,8 @@ import {
   buildEvidenceIntentClassificationMessages,
   buildEvidenceSearchPlanMessages,
   buildEvidenceSupplementalSearchMessages,
+  buildInstantChallengeFeedbackMessages,
+  buildInstantChallengeQuestionMessages,
   buildPersonalTaskLinWanMessages,
   createPersonalTaskContextManifest,
   filterUsedEvidenceIds,
@@ -76,6 +78,8 @@ import {
   parseEvidenceSearchPlan,
   parseEvidenceSupplementalQuery,
   parseEvidenceIntentClassification,
+  parseInstantChallengeFeedback,
+  parseInstantChallengeQuestion,
   parsePersonalTaskLinWanResponse,
   PERSONAL_TASK_INTENTS
 } from './superLinwan.js';
@@ -614,6 +618,16 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
     const recentMessages = await fetchPrematchRecentMessages(task.id, 24);
     const mappedRecentMessages = recentMessages.map(mapPrematchMessageFromDb);
     const currentMemory = normalizePersonalTaskMemory(task.strategy_state);
+    if (chatPayload.challengeAction) {
+      const challengeResult = await handleInstantChallenge({
+        task,
+        userId: req.user.id,
+        chatPayload,
+        recentMessages: mappedRecentMessages,
+        currentMemory
+      });
+      return res.json(challengeResult);
+    }
     const effectiveIntent = await resolvePrematchChatIntent(chatPayload, task);
     const evidenceAction = effectiveIntent === 'evidence'
       ? chatPayload.evidenceAction || 'plan'
@@ -2535,6 +2549,8 @@ function validatePrematchChatPayload(body = {}) {
   const suppliedRequestId = normalizeText(body.clientRequestId || body.client_request_id);
   const intent = normalizeText(body.intent) || 'chat';
   const requestedEvidenceAction = normalizeText(body.evidenceAction || body.evidence_action);
+  const challengeAction = normalizeText(body.challengeAction || body.challenge_action);
+  const challengeSessionId = normalizeText(body.challengeSessionId || body.challenge_session_id);
   if (!isMeaningfulUserInput(question)) throw badRequest('请先输入想和 Super 林婉讨论的内容。');
   if (!PERSONAL_TASK_INTENTS.includes(intent)) {
     throw badRequest('聊天 intent 无效，请使用 chat、deconstruct、expand、evidence 或 report。');
@@ -2545,10 +2561,18 @@ function validatePrematchChatPayload(body = {}) {
   if (requestedEvidenceAction && !['plan', 'adjust', 'search'].includes(requestedEvidenceAction)) {
     throw badRequest('搜集论据操作无效，请重试。');
   }
+  if (challengeAction && !['start', 'answer', 'repeat'].includes(challengeAction)) {
+    throw badRequest('即时检验操作无效，请重试。');
+  }
+  if (challengeAction && !isUuid(challengeSessionId)) {
+    throw badRequest('即时检验会话标识无效，请重新开始检验。');
+  }
   return {
     question,
     intent,
     evidenceAction: intent === 'evidence' ? requestedEvidenceAction || 'plan' : '',
+    challengeAction,
+    challengeSessionId: challengeAction ? challengeSessionId : '',
     clientRequestId: suppliedRequestId || crypto.randomUUID()
   };
 }
@@ -3599,6 +3623,179 @@ async function savePrematchTaskNote(task, payload) {
   return rows[0];
 }
 
+async function handleInstantChallenge({ task, userId, chatPayload, recentMessages, currentMemory }) {
+  const action = chatPayload.challengeAction;
+  const sessionId = chatPayload.challengeSessionId;
+  const sessionMessages = recentMessages.filter((message) => (
+    message.contextManifest?.challenge?.sessionId === sessionId
+  ));
+  const questions = sessionMessages.filter((message) => (
+    message.role === 'assistant'
+    && message.contextManifest?.challenge?.messageType === 'challenge_question'
+  ));
+  const feedbackMessages = sessionMessages.filter((message) => (
+    message.role === 'assistant'
+    && message.contextManifest?.challenge?.messageType === 'challenge_feedback'
+  ));
+
+  let assistantContent = '';
+  let userChallenge;
+  let assistantChallenge;
+
+  if (action === 'answer') {
+    const activeQuestion = [...questions].reverse().find((candidate) => {
+      const challenge = candidate.contextManifest.challenge;
+      return !sessionMessages.some((message) => (
+        message.role === 'user'
+        && message.contextManifest?.challenge?.messageType === 'challenge_answer'
+        && message.contextManifest.challenge.round === challenge.round
+      ));
+    });
+    if (!activeQuestion) throw httpError(409, '当前没有等待回答的检验问题，请重新开始检验。');
+    const challenge = activeQuestion.contextManifest.challenge;
+    const rawFeedback = await callDeepSeek(buildInstantChallengeFeedbackMessages({
+      task: mapPrematchTaskFromDb(task),
+      question: challenge.question || activeQuestion.content,
+      targetClaim: challenge.targetClaim,
+      attackPoint: challenge.attackPoint,
+      answer: chatPayload.question
+    }), { maxTokens: 650, temperature: 0.2 });
+    const feedback = parseInstantChallengeFeedback(rawFeedback);
+    if (!feedback) throw httpError(502, 'Super 林婉暂时没有形成有效的检验反馈，请重试。');
+    assistantContent = [
+      `【回应判断】\n${feedback.judgment}`,
+      `【有效之处】\n${feedback.effectivePoint}`,
+      `【仍需补强】\n${feedback.remainingGap}`,
+      `【提示】\n${feedback.hint}`
+    ].join('\n\n');
+    userChallenge = {
+      messageType: 'challenge_answer',
+      sessionId,
+      round: challenge.round
+    };
+    assistantChallenge = {
+      ...challenge,
+      ...feedback,
+      messageType: 'challenge_feedback',
+      sessionId,
+      round: challenge.round
+    };
+  } else {
+    if (action === 'start' && sessionMessages.length) {
+      throw httpError(409, '该即时检验已经开始，请直接回答当前问题。');
+    }
+    const lastFeedback = feedbackMessages.at(-1);
+    if (action === 'start' && !hasChallengeableContext(task, currentMemory, recentMessages)) {
+      throw httpError(422, '当前讨论内容还比较少，可以先形成一个明确论点，再进行检验。');
+    }
+    if (action === 'repeat' && !lastFeedback) {
+      throw httpError(409, '请先回答当前问题并获得反馈，再检验一次。');
+    }
+    const round = action === 'repeat'
+      ? Number(lastFeedback.contextManifest.challenge.round) + 1
+      : 1;
+    if (round > 3) throw httpError(422, '本次即时检验已完成 3 轮，可以先回到正常讨论。');
+    let challengeQuestion = null;
+    let rejectedCandidate = '';
+    for (let attempt = 0; attempt < 2 && !challengeQuestion; attempt += 1) {
+      const promptMessages = rejectedCandidate
+        ? [...recentMessages, { role: 'assistant', content: `不得重复这个候选问题：${rejectedCandidate}` }]
+        : recentMessages;
+      const rawQuestion = await callDeepSeek(buildInstantChallengeQuestionMessages({
+        task: mapPrematchTaskFromDb(task),
+        memory: currentMemory,
+        taskSummary: task.context_summary,
+        recentMessages: promptMessages,
+        round
+      }), { maxTokens: 650, temperature: attempt ? 0.45 : 0.35 });
+      const candidate = parseInstantChallengeQuestion(rawQuestion);
+      if (!candidate) continue;
+      if (questions.some((message) => sameChallengeQuestion(message.content, candidate.question))) {
+        rejectedCandidate = candidate.question;
+        continue;
+      }
+      challengeQuestion = candidate;
+    }
+    if (!challengeQuestion) {
+      throw httpError(502, 'Super 林婉暂时没有形成新的有效检验问题，请稍后重试。');
+    }
+    assistantContent = challengeQuestion.question;
+    userChallenge = {
+      messageType: 'challenge_trigger',
+      sessionId,
+      round
+    };
+    assistantChallenge = {
+      ...challengeQuestion,
+      messageType: 'challenge_question',
+      sessionId,
+      round
+    };
+  }
+
+  const userContextManifest = createPersonalTaskContextManifest(
+    'chat', recentMessages, null, userChallenge
+  );
+  const contextManifest = createPersonalTaskContextManifest(
+    'chat', recentMessages, null, assistantChallenge
+  );
+  const structuredUpdate = {};
+  const exchange = await persistPrematchExchange(task, userId, {
+    question: action === 'answer' ? chatPayload.question : action === 'repeat' ? '再检验一次' : '开始即时检验',
+    answer: assistantContent,
+    structuredUpdate,
+    taskSummary: task.context_summary,
+    userContextManifest,
+    contextManifest,
+    clientRequestId: chatPayload.clientRequestId
+  });
+  const updatedTask = await applyPrematchChatUpdate(task, {
+    structuredUpdate,
+    taskSummary: task.context_summary,
+    clientRequestId: chatPayload.clientRequestId
+  });
+  return {
+    task: mapPrematchTaskFromDb(updatedTask),
+    userMessage: exchange.userMessage,
+    assistantMessage: exchange.assistantMessage,
+    contextManifest,
+    trainingLinks: [],
+    duplicated: false
+  };
+}
+
+function hasChallengeableContext(task, memory, messages) {
+  const normalized = normalizePersonalTaskMemory(memory);
+  if (
+    normalized.currentPosition.claims.length
+    || normalized.currentPosition.activePlan
+    || normalized.confirmedDecisions.length
+    || normalizeText(task?.initial_ideas).length >= 20
+  ) return true;
+  const normalMessages = (Array.isArray(messages) ? messages : []).filter((message) => (
+    !message.contextManifest?.challenge
+    && !message.contextManifest?.search
+    && message.contextManifest?.intent !== 'report'
+  ));
+  const hasUserContribution = normalMessages.some((message) => (
+    message.role === 'user' && normalizeText(message.content).length >= 20
+  ));
+  const hasDevelopedReply = normalMessages.some((message) => (
+    message.role === 'assistant' && normalizeText(message.content).length >= 40
+  ));
+  return hasUserContribution && hasDevelopedReply;
+}
+
+function sameChallengeQuestion(left, right) {
+  const normalize = (value) => normalizeText(value)
+    .toLocaleLowerCase('zh-CN')
+    .replace(/[\s，。！？；：,.!?;:、“”‘’（）()]/g, '');
+  const a = normalize(left);
+  const b = normalize(right);
+  if (!a || !b) return false;
+  return a === b || (Math.min(a.length, b.length) >= 18 && (a.includes(b) || b.includes(a)));
+}
+
 async function revokeLatestPrematchExchange(task, userId) {
   const messages = await fetchPrematchRecentMessages(task.id, 1000);
   const mapped = messages.map(mapPrematchMessageFromDb);
@@ -3714,6 +3911,7 @@ async function persistPrematchExchange(task, userId, {
   answer,
   structuredUpdate,
   taskSummary,
+  userContextManifest = null,
   contextManifest,
   clientRequestId
 }) {
@@ -3725,7 +3923,7 @@ async function persistPrematchExchange(task, userId, {
       role: 'user',
       content: limitLength(redactSensitiveText(question), 1200),
       structured_update: null,
-      context_manifest: null,
+      context_manifest: userContextManifest,
       client_request_id: clientRequestId,
       created_at: new Date(createdAt).toISOString()
     },
@@ -3928,9 +4126,7 @@ function mapPrematchMessageFromDb(message = {}) {
     structuredUpdate: message.role === 'assistant' && message.structured_update
       ? message.structured_update
       : null,
-    contextManifest: message.role === 'assistant'
-      ? normalizePrematchContextManifest(message.context_manifest)
-      : null,
+    contextManifest: normalizePrematchContextManifest(message.context_manifest),
     clientRequestId: normalizeText(message.client_request_id),
     createdAt: normalizeText(message.created_at)
   };

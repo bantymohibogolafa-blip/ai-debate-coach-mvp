@@ -32,6 +32,15 @@ export const PERSONAL_TASK_INTENTS = Object.freeze([
   'report'
 ]);
 
+const CHALLENGE_MESSAGE_TYPES = new Set([
+  'challenge_trigger',
+  'challenge_question',
+  'challenge_answer',
+  'challenge_feedback'
+]);
+
+const CHALLENGE_JUDGMENTS = new Set(['基本回应', '部分回应', '尚未回应']);
+
 const PERSONAL_TASK_INTENT_SET = new Set(PERSONAL_TASK_INTENTS);
 
 const PERSONAL_MEMORY_LIST_FIELDS = [
@@ -329,6 +338,98 @@ export function markPersonalTaskMemoryForReassessment(memory, reason, unresolved
     ),
     updatedAt: new Date().toISOString()
   });
+}
+
+export function buildInstantChallengeQuestionMessages({
+  task,
+  memory,
+  taskSummary,
+  recentMessages = [],
+  round = 1
+}) {
+  const normalizedMemory = normalizePersonalTaskMemory(memory);
+  const safeRecent = normalizeRecentMessages(recentMessages).slice(-16);
+  return [{
+    role: 'system',
+    content: `你是 Super 林婉的“即时检验”出题器。你要像有赛场经验的对方辩手一样，检验用户是否真正理解当前形成的思路。
+
+硬性要求：
+1. 只使用当前任务资料、当前结构化记忆、当前任务摘要和当前任务内仍有效的聊天消息，不得虚构用户观点。
+2. 先识别用户已经提出、认可或正在使用的关键主张，再从定义、判准、逻辑跳跃、因果、论据支持、案例外推、隐藏前提、反例、比较范围或论点冲突中，选择一个最关键的攻击点。
+3. 每次只提出一个简短、明确、有针对性的问题；不得列漏洞清单。
+4. 提问阶段不得给出答案、诊断标签或改进方法，不得替用户完成论证。
+5. 问题必须能检验理解，而不是考记忆；不要为了尖锐而偏离当前思路。
+6. 不得重复最近检验已经问过的问题。本次是第 ${Math.max(1, Math.min(3, Number(round) || 1))} 次检验。
+7. 默认使用简体中文，语气清醒、克制、有赛场感。
+
+输出严格 JSON，不使用 Markdown：
+{"question":"对方辩手提出的一个问题","targetClaim":"问题针对的用户当前主张","attackPoint":"供后续反馈使用、但不直接展示给用户的核心攻击点"}`
+  }, {
+    role: 'user',
+    content: `【当前任务】
+${formatPersonalTaskContext(task)}
+
+【当前结构化记忆】
+${formatPersonalMemoryContext(normalizedMemory)}
+
+【当前思路摘要】
+${cleanText(taskSummary, 4000) || '尚未形成思路报告或稳定摘要。'}
+
+【最近有效聊天（其中可能包含上一轮即时检验，用于避免重复）】
+${safeRecent.length ? safeRecent.map((item) => `${item.role}: ${item.content}`).join('\n') : '暂无聊天内容。'}`
+  }];
+}
+
+export function parseInstantChallengeQuestion(content) {
+  const clean = cleanText(content, 5000);
+  const parsed = parseJsonObject(clean);
+  const question = cleanText(parsed?.question, 700);
+  const targetClaim = cleanText(parsed?.targetClaim, 700);
+  const attackPoint = cleanText(parsed?.attackPoint, 700);
+  if (!question || !targetClaim || !attackPoint) return null;
+  return { question, targetClaim, attackPoint };
+}
+
+export function buildInstantChallengeFeedbackMessages({
+  task,
+  question,
+  targetClaim,
+  attackPoint,
+  answer
+}) {
+  return [{
+    role: 'system',
+    content: `你是 Super 林婉的“即时检验”反馈器。判断用户的现场回答是否真正回应了对方的核心攻击点。
+
+硬性要求：
+1. 只评估本次问题和用户本次回答，不评价长期能力，不更新能力画像，不进行百分制评分。
+2. 不能因为回答较长就给正面评价；如果回避核心因果、前提、比较或反例，必须明确判为“尚未回应”或“部分回应”。
+3. 反馈必须简短，分别指出是否正面回应、最有效的一点、仍未解决的关键缺口和一条改进提示。
+4. 默认使用简体中文，语气清醒、克制、有赛场经验感。
+
+输出严格 JSON，不使用 Markdown：
+{"judgment":"基本回应|部分回应|尚未回应","effectivePoint":"回答中最有效的一点；没有则明确说明","remainingGap":"仍未解决的关键缺口","hint":"一条不超过两句话的改进提示"}`
+  }, {
+    role: 'user',
+    content: `【当前辩题】${cleanText(task?.debateTopic, 500)}
+【用户持方】${cleanInline(task?.stance, 30)}
+【被检验的当前主张】${cleanText(targetClaim, 700)}
+【对方问题】${cleanText(question, 700)}
+【核心攻击点】${cleanText(attackPoint, 700)}
+【用户现场回答】${cleanText(answer, 1200)}`
+  }];
+}
+
+export function parseInstantChallengeFeedback(content) {
+  const clean = cleanText(content, 5000);
+  const parsed = parseJsonObject(clean);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const judgment = CHALLENGE_JUDGMENTS.has(parsed.judgment) ? parsed.judgment : '';
+  const effectivePoint = cleanText(parsed.effectivePoint, 700);
+  const remainingGap = cleanText(parsed.remainingGap, 700);
+  const hint = cleanText(parsed.hint, 500);
+  if (!judgment || !effectivePoint || !remainingGap || !hint) return null;
+  return { judgment, effectivePoint, remainingGap, hint };
 }
 
 export function buildPersonalTaskLinWanMessages({
@@ -662,7 +763,7 @@ export function parsePersonalTaskLinWanResponse(content) {
   };
 }
 
-export function createPersonalTaskContextManifest(intent, recentMessages, search = null) {
+export function createPersonalTaskContextManifest(intent, recentMessages, search = null, challenge = null) {
   const manifest = {
     version: 4,
     source: 'personal_task',
@@ -676,6 +777,8 @@ export function createPersonalTaskContextManifest(intent, recentMessages, search
   };
   const normalizedSearch = normalizeSearchManifest(search);
   if (normalizedSearch) manifest.search = normalizedSearch;
+  const normalizedChallenge = normalizeChallengeManifest(challenge);
+  if (normalizedChallenge) manifest.challenge = normalizedChallenge;
   return manifest;
 }
 
@@ -882,8 +985,34 @@ export function normalizePrematchContextManifest(value) {
       recentMessages: clampInteger(value.taskContext?.recentMessages, 0, 24),
       linkedTrainingResults: clampInteger(value.taskContext?.linkedTrainingResults, 0, 1000)
     },
-    ...(normalizeSearchManifest(value.search) ? { search: normalizeSearchManifest(value.search) } : {})
+    ...(normalizeSearchManifest(value.search) ? { search: normalizeSearchManifest(value.search) } : {}),
+    ...(normalizeChallengeManifest(value.challenge) ? { challenge: normalizeChallengeManifest(value.challenge) } : {})
   };
+}
+
+function normalizeChallengeManifest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const messageType = CHALLENGE_MESSAGE_TYPES.has(value.messageType) ? value.messageType : '';
+  const sessionId = cleanInline(value.sessionId, 80);
+  const round = clampInteger(value.round, 1, 3);
+  if (!messageType || !/^[0-9a-f-]{36}$/i.test(sessionId)) return null;
+  const result = {
+    messageType,
+    sessionId,
+    round
+  };
+  if (messageType === 'challenge_question' || messageType === 'challenge_feedback') {
+    result.question = cleanText(value.question, 700);
+    result.targetClaim = cleanText(value.targetClaim, 700);
+    result.attackPoint = cleanText(value.attackPoint, 700);
+  }
+  if (messageType === 'challenge_feedback') {
+    result.judgment = CHALLENGE_JUDGMENTS.has(value.judgment) ? value.judgment : '';
+    result.effectivePoint = cleanText(value.effectivePoint, 700);
+    result.remainingGap = cleanText(value.remainingGap, 700);
+    result.hint = cleanText(value.hint, 500);
+  }
+  return result;
 }
 
 export function normalizePrematchResultSummary(value) {

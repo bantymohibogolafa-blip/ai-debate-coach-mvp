@@ -42,3 +42,18 @@ test('evidence scope renders only Chinese displayQuery and keeps internal search
   assert.match(prepSource, /search\?\.status === 'pending_confirmation'/);
   assert.match(prepSource, /已按你的需求整理本轮中文检索范围/);
 });
+
+test('instant challenge stays in the existing chat flow with lightweight controls and message types', () => {
+  assert.match(prepSource, /检验一下/);
+  assert.match(prepSource, /让林婉从对方角度追问当前思路/);
+  assert.match(prepSource, /challengeAction: 'start'/);
+  assert.match(prepSource, /challengeAction: 'answer'/);
+  assert.match(prepSource, /challengeAction: 'repeat'/);
+  assert.match(prepSource, /challenge_question/);
+  assert.match(prepSource, /challenge_answer/);
+  assert.match(prepSource, /challenge_feedback/);
+  assert.match(prepSource, /再检验一次/);
+  assert.match(prepSource, /结束检验/);
+  assert.match(prepSource, /challengeState\.round < 3/);
+  assert.match(prepSource, /latestStoredUserMessage\?\.contextManifest\?\.challenge/);
+});

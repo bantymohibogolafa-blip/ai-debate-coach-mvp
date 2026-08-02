@@ -188,6 +188,104 @@ test('chat intent defaults to chat, rejects invalid values, and persists report 
   );
 });
 
+test('instant challenge reuses task chat storage, survives reload, and revokes an answer with its feedback', async (t) => {
+  const sessionId = '93000000-0000-4000-8000-000000000001';
+  const harness = createHarness({
+    challengeQuestionSequence: [{
+      question: '制度可预期为什么必然比结果正当更重要？',
+      targetClaim: '制度可预期性能够降低不可逆风险',
+      attackPoint: '判准优先级缺少论证'
+    }, {
+      question: '如果不可逆风险很小，但制度造成的日常伤害很大，你仍坚持原判准吗？',
+      targetClaim: '应优先降低不可逆风险',
+      attackPoint: '判准缺少伤害规模与时间维度'
+    }]
+  });
+  const port = await listen(t, harness.fetch);
+
+  const started = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '请开始即时检验。',
+    clientRequestId: '93000000-0000-4000-8000-000000000011',
+    challengeAction: 'start',
+    challengeSessionId: sessionId
+  });
+  assert.equal(started.status, 200);
+  assert.equal(started.body.userMessage.contextManifest.challenge.messageType, 'challenge_trigger');
+  assert.equal(started.body.assistantMessage.contextManifest.challenge.messageType, 'challenge_question');
+  assert.equal(started.body.assistantMessage.contextManifest.challenge.round, 1);
+  assert.match(started.body.assistantMessage.content, /制度可预期/);
+
+  const reloaded = await requestJson(port, `/api/prematch/tasks/${TASK_A}`, auth(signToken(USER_A)));
+  const restoredTypes = reloaded.body.messages
+    .map((message) => message.contextManifest?.challenge?.messageType)
+    .filter(Boolean);
+  assert.deepEqual(restoredTypes.slice(-2), ['challenge_trigger', 'challenge_question']);
+
+  const answered = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '可预期性不是最终价值，但它能让受损者提前规避并降低纠错成本。',
+    clientRequestId: '93000000-0000-4000-8000-000000000012',
+    challengeAction: 'answer',
+    challengeSessionId: sessionId
+  });
+  assert.equal(answered.status, 200);
+  assert.equal(answered.body.userMessage.contextManifest.challenge.messageType, 'challenge_answer');
+  assert.equal(answered.body.assistantMessage.contextManifest.challenge.messageType, 'challenge_feedback');
+  assert.equal(answered.body.assistantMessage.contextManifest.challenge.judgment, '部分回应');
+  assert.match(answered.body.assistantMessage.content, /【仍需补强】/);
+
+  const revoked = await requestJson(port, `/api/prematch/tasks/${TASK_A}/revoke-latest`, auth(signToken(USER_A)), 'POST', {
+    expectedVersion: answered.body.task.version
+  });
+  assert.equal(revoked.status, 200);
+  assert.equal(revoked.body.messages.some((message) => (
+    message.contextManifest?.challenge?.messageType === 'challenge_answer'
+  )), false);
+  assert.equal(revoked.body.messages.some((message) => (
+    message.contextManifest?.challenge?.messageType === 'challenge_feedback'
+  )), false);
+  assert.equal(revoked.body.messages.some((message) => (
+    message.contextManifest?.challenge?.messageType === 'challenge_question'
+  )), true);
+
+  const reanswered = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '我重新回答：可预期性通过降低纠错成本服务于结果正当。',
+    clientRequestId: '93000000-0000-4000-8000-000000000013',
+    challengeAction: 'answer',
+    challengeSessionId: sessionId
+  });
+  assert.equal(reanswered.status, 200);
+
+  const repeated = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '再检验一次。',
+    clientRequestId: '93000000-0000-4000-8000-000000000014',
+    challengeAction: 'repeat',
+    challengeSessionId: sessionId
+  });
+  assert.equal(repeated.status, 200);
+  assert.equal(repeated.body.assistantMessage.contextManifest.challenge.round, 2);
+  assert.match(repeated.body.assistantMessage.content, /日常伤害/);
+  assert.equal(harness.calls.some((call) => call.table === 'training_records'), false);
+  assert.equal(harness.calls.some((call) => call.table === 'linwan_messages'), false);
+});
+
+test('instant challenge refuses to invent a claim when the current task has no developed discussion', async (t) => {
+  const harness = createHarness();
+  const task = harness.tasks.find((item) => item.id === TASK_A);
+  task.initial_ideas = '';
+  task.strategy_state = {};
+  harness.messages.splice(0, harness.messages.length);
+  const port = await listen(t, harness.fetch);
+  const response = await requestJson(port, `/api/prematch/tasks/${TASK_A}/chat`, auth(signToken(USER_A)), 'POST', {
+    question: '请开始即时检验。',
+    clientRequestId: '93000000-0000-4000-8000-000000000021',
+    challengeAction: 'start',
+    challengeSessionId: '93000000-0000-4000-8000-000000000002'
+  });
+  assert.equal(response.status, 422);
+  assert.match(response.body.message, /当前讨论内容还比较少/);
+  assert.equal(harness.modelRequests.length, 0);
+});
+
 test('evidence intent confirms scope before searching and degrades explicitly without AnySearch', async (t) => {
   const harness = createHarness();
   const port = await listen(t, harness.fetch);
@@ -896,6 +994,7 @@ function createHarness(options = {}) {
   const anysearchRequests = [];
   let sequence = 0;
   let searchPlanSequence = 0;
+  let challengeQuestionSequence = 0;
   const tasks = [
     taskRow(TASK_A, USER_A, '任务 A', '测试辩题 A'),
     taskRow(TASK_B, USER_B, '任务 B', '测试辩题 B'),
@@ -948,6 +1047,26 @@ function createHarness(options = {}) {
           zone: 'intl',
           language: 'en',
           phase: 'supplemental'
+        }) } }] });
+      }
+      if (body.messages[0]?.content?.includes('“即时检验”出题器')) {
+        const challengeQuestions = Array.isArray(options.challengeQuestionSequence)
+          ? options.challengeQuestionSequence
+          : [];
+        const challengeQuestion = challengeQuestions[challengeQuestionSequence] || options.challengeQuestion || {
+          question: '你说制度可预期性能够降低风险，但如果可预期的制度本身持续制造伤害，你的比较标准还成立吗？',
+          targetClaim: '制度可预期性能够降低不可逆风险',
+          attackPoint: '可预期性与结果正当性之间缺少必然联系'
+        };
+        challengeQuestionSequence += 1;
+        return Response.json({ choices: [{ message: { content: JSON.stringify(challengeQuestion) } }] });
+      }
+      if (body.messages[0]?.content?.includes('“即时检验”反馈器')) {
+        return Response.json({ choices: [{ message: { content: JSON.stringify(options.challengeFeedback || {
+          judgment: '部分回应',
+          effectivePoint: '区分了制度稳定与制度结果。',
+          remainingGap: '仍未给出伤害持续时为何应优先可预期性的比较理由。',
+          hint: '补充可预期性如何降低纠错成本或不可逆损失。'
         }) } }] });
       }
       return Response.json({

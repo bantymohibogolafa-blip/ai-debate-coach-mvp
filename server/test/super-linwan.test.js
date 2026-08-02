@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   buildEvidenceIntentClassificationMessages,
   buildEvidenceSearchPlanMessages,
+  buildInstantChallengeFeedbackMessages,
+  buildInstantChallengeQuestionMessages,
   buildPersonalTaskLinWanMessages,
   buildSuperLinWanMessages,
   createPersonalTaskContextManifest,
@@ -18,6 +20,8 @@ import {
   normalizePrematchStrategy,
   parsePersonalTaskLinWanResponse,
   parseEvidenceIntentClassification,
+  parseInstantChallengeFeedback,
+  parseInstantChallengeQuestion,
   parseSuperLinWanResponse
 } from '../src/superLinwan.js';
 import { buildReviewMessages, buildStartMessages } from '../src/prompts.js';
@@ -496,4 +500,66 @@ test('task note remains task-local state and is not inserted into the model prom
   }).map((message) => message.content).join('\n');
   assert.equal(prompt.includes('只给用户看的私人备战笔记'), false);
   assert.match(prompt, /默认使用中文/);
+});
+
+test('instant challenge prompts ask one grounded question and return concise non-scored feedback', () => {
+  const shared = {
+    task: { debateTopic: '人工智能是否会降低社会创造力', stance: 'affirmative' },
+    memory: {
+      currentPosition: {
+        stance: 'affirmative',
+        claims: ['人工智能降低创作门槛，因此提升社会创造力'],
+        definitions: [], criteria: [], activePlan: ''
+      }
+    },
+    taskSummary: '用户主张降低创作门槛会提升社会创造力。',
+    recentMessages: [{ role: 'user', content: '门槛降低会让更多人参与创作。' }],
+    round: 2
+  };
+  const questionPrompt = buildInstantChallengeQuestionMessages(shared)
+    .map((message) => message.content).join('\n');
+  assert.match(questionPrompt, /每次只提出一个/);
+  assert.match(questionPrompt, /不得重复最近检验/);
+  assert.match(questionPrompt, /人工智能降低创作门槛/);
+  const question = parseInstantChallengeQuestion(JSON.stringify({
+    question: '参与人数增加为什么必然意味着整体创造力提升？',
+    targetClaim: '降低门槛提升社会创造力',
+    attackPoint: '参与数量与创造质量之间存在因果跳跃'
+  }));
+  assert.equal(question.question, '参与人数增加为什么必然意味着整体创造力提升？');
+
+  const feedbackPrompt = buildInstantChallengeFeedbackMessages({
+    task: shared.task,
+    ...question,
+    answer: '因为更多人参与后会产生更多作品。'
+  }).map((message) => message.content).join('\n');
+  assert.match(feedbackPrompt, /不能因为回答较长就给正面评价/);
+  assert.match(feedbackPrompt, /不进行百分制评分/);
+  const feedback = parseInstantChallengeFeedback(JSON.stringify({
+    judgment: '部分回应',
+    effectivePoint: '说明了参与规模变化。',
+    remainingGap: '仍未说明数量为何转化为原创质量。',
+    hint: '补出从参与多样性到高质量创新的机制。'
+  }));
+  assert.equal(feedback.judgment, '部分回应');
+});
+
+test('challenge message metadata survives normalization without changing database schema', () => {
+  const manifest = normalizePrematchContextManifest(createPersonalTaskContextManifest(
+    'chat', [], null, {
+      messageType: 'challenge_feedback',
+      sessionId: '93000000-0000-4000-8000-000000000001',
+      round: 1,
+      question: '为什么成立？',
+      targetClaim: '当前主张',
+      attackPoint: '因果跳跃',
+      judgment: '尚未回应',
+      effectivePoint: '指出了背景。',
+      remainingGap: '没有回应因果。',
+      hint: '补充机制。'
+    }
+  ));
+  assert.equal(manifest.challenge.messageType, 'challenge_feedback');
+  assert.equal(manifest.challenge.judgment, '尚未回应');
+  assert.equal(manifest.challenge.round, 1);
 });

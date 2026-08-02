@@ -65,12 +65,17 @@ export default function SuperLinWanPrep({
   const [noteStatus, setNoteStatus] = useState('');
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [isRevoking, setIsRevoking] = useState(false);
+  const [endedChallengeSessionId, setEndedChallengeSessionId] = useState('');
   const chatEndRef = useRef(null);
   const openingTaskRef = useRef('');
   const draftRef = useRef('');
   const scope = { spaceType: 'personal', teamCode: '' };
   const scopeKey = `${scope.spaceType}:${scope.teamCode}:${currentUser?.id || ''}`;
   const canCreateInScope = true;
+  const challengeState = useMemo(
+    () => deriveChallengeState(detail?.messages, endedChallengeSessionId),
+    [detail?.messages, endedChallengeSessionId]
+  );
 
   const visibleTasks = useMemo(
     () => tasks.filter((task) => task.status === listFilter),
@@ -140,6 +145,7 @@ export default function SuperLinWanPrep({
     setChatError('');
     setIsEditing(false);
     setIsAdjustingEvidenceScope(false);
+    setEndedChallengeSessionId('');
     try {
       const data = await api.getJson(`/api/prematch/tasks/${encodeURIComponent(taskId)}`);
       applyDetail(data);
@@ -169,6 +175,9 @@ export default function SuperLinWanPrep({
       setEditForm(taskToForm(nextDetail.task));
       setNoteDraft(nextDetail.task.strategyState?.note || '');
       setNoteStatus('');
+      setEndedChallengeSessionId(
+        window.sessionStorage?.getItem(challengeEndStorageKey(nextDetail.task.id)) || ''
+      );
     }
   }
 
@@ -254,7 +263,9 @@ export default function SuperLinWanPrep({
     text,
     intent = 'chat',
     preserveDraft = false,
-    evidenceAction = ''
+    evidenceAction = '',
+    challengeAction = '',
+    challengeSessionId = ''
   }) {
     const cleanQuestion = text.trim();
     if (!cleanQuestion || !detail?.task || isSending) return;
@@ -263,7 +274,7 @@ export default function SuperLinWanPrep({
       ? evidenceAction || (isAdjustingEvidenceScope ? 'adjust' : 'plan')
       : '';
     setIsSending(true);
-    setSendingIntent(intent);
+    setSendingIntent(challengeAction ? 'challenge' : intent);
     setSendingEvidenceAction(resolvedEvidenceAction);
     setChatError('');
     setActionStatus('');
@@ -278,7 +289,8 @@ export default function SuperLinWanPrep({
           question: cleanQuestion,
           clientRequestId,
           intent,
-          ...(intent === 'evidence' ? { evidenceAction: resolvedEvidenceAction } : {})
+          ...(intent === 'evidence' ? { evidenceAction: resolvedEvidenceAction } : {}),
+          ...(challengeAction ? { challengeAction, challengeSessionId } : {})
         }
       );
       setDetail((current) => {
@@ -309,7 +321,54 @@ export default function SuperLinWanPrep({
 
   function sendMessage(event) {
     event?.preventDefault();
+    if (challengeState.phase === 'awaiting_answer') {
+      void submitChatRequest({
+        text: question,
+        intent: 'chat',
+        challengeAction: 'answer',
+        challengeSessionId: challengeState.sessionId
+      });
+      return;
+    }
     void submitChatRequest({ text: question, intent: questionIntent });
+  }
+
+  function startChallenge() {
+    if (isSending || !detail?.permissions?.canChat) return;
+    window.sessionStorage?.removeItem(challengeEndStorageKey(detail.task.id));
+    setEndedChallengeSessionId('');
+    setQuestion('');
+    setQuestionIntent('chat');
+    void submitChatRequest({
+      text: '请基于当前有效讨论开始一次即时检验。',
+      intent: 'chat',
+      preserveDraft: true,
+      challengeAction: 'start',
+      challengeSessionId: createUuid()
+    });
+  }
+
+  function repeatChallenge() {
+    if (isSending || challengeState.phase !== 'feedback' || challengeState.round >= 3) return;
+    void submitChatRequest({
+      text: '请基于当前有效讨论再检验一次。',
+      intent: 'chat',
+      preserveDraft: true,
+      challengeAction: 'repeat',
+      challengeSessionId: challengeState.sessionId
+    });
+  }
+
+  function endChallenge() {
+    if (!challengeState.sessionId) return;
+    window.sessionStorage?.setItem(
+      challengeEndStorageKey(detail.task.id),
+      challengeState.sessionId
+    );
+    setEndedChallengeSessionId(challengeState.sessionId);
+    setQuestion('');
+    setQuestionIntent('chat');
+    setActionStatus('即时检验已结束，可以继续正常讨论。');
   }
 
   function useQuickPrompt(prompt) {
@@ -476,6 +535,7 @@ export default function SuperLinWanPrep({
         actionStatus={actionStatus}
         noteDraft={noteDraft}
         noteStatus={noteStatus}
+        challengeState={challengeState}
         chatEndRef={chatEndRef}
         onBack={() => {
           setDetail(null);
@@ -498,6 +558,9 @@ export default function SuperLinWanPrep({
         onConfirmEvidenceSearch={confirmEvidenceSearch}
         onAdjustEvidenceScope={adjustEvidenceScope}
         onCreateReport={createCurrentReport}
+        onStartChallenge={startChallenge}
+        onRepeatChallenge={repeatChallenge}
+        onEndChallenge={endChallenge}
         onEdit={() => {
           setEditForm(taskToForm(detail.task));
           setFormError('');
@@ -612,6 +675,7 @@ function PrematchTaskWorkspace({
   actionStatus,
   noteDraft,
   noteStatus,
+  challengeState,
   chatEndRef,
   onBack,
   onQuestionChange,
@@ -623,6 +687,9 @@ function PrematchTaskWorkspace({
   onConfirmEvidenceSearch,
   onAdjustEvidenceScope,
   onCreateReport,
+  onStartChallenge,
+  onRepeatChallenge,
+  onEndChallenge,
   onEdit,
   onEditCancel,
   onEditChange,
@@ -638,9 +705,17 @@ function PrematchTaskWorkspace({
   const confirmableSearchMessageId = latestSearchMessage?.contextManifest?.search?.status === 'pending_confirmation'
     ? latestSearchMessage.id
     : '';
-  const latestRevocableUserMessageId = [...messages].reverse().find((message) => (
+  const latestStoredUserMessage = [...messages].reverse().find((message) => (
     message.role === 'user' && message.clientRequestId
-  ))?.id || '';
+  ));
+  const latestRevocableUserMessageId = (
+    latestStoredUserMessage?.contextManifest?.challenge?.messageType === 'challenge_trigger'
+      ? ''
+      : latestStoredUserMessage?.id
+  ) || '';
+  const visibleMessages = messages.filter((message) => (
+    message.contextManifest?.challenge?.messageType !== 'challenge_trigger'
+  ));
 
   return (
     <section className="prematch-workspace">
@@ -724,16 +799,16 @@ function PrematchTaskWorkspace({
           </div>
           <p className="prematch-boundary-note">这里仅使用当前任务资料、当前任务内记忆和当前任务消息，不读取训练记录、能力画像、日常聊天或其他任务。</p>
           <div className="prematch-chat-list">
-            {messages.map((message) => (
+            {visibleMessages.map((message) => {
+              const challenge = message.contextManifest?.challenge;
+              return (
               <article
-                className={`prematch-message ${message.role} ${message.contextManifest?.intent === 'report' ? 'report' : ''}`}
+                className={`prematch-message ${message.role} ${message.contextManifest?.intent === 'report' ? 'report' : ''} ${challenge?.messageType || ''}`}
                 key={message.id}
               >
                 <div>
                   <span>
-                    {message.role === 'assistant'
-                      ? message.contextManifest?.intent === 'report' ? 'Super 林婉 · 当前思路报告' : 'Super 林婉'
-                      : '我'}
+                    {challengeMessageLabel(message)}
                   </span>
                   <time>{formatMessageTime(message.createdAt)}</time>
                   {message.id === latestRevocableUserMessageId && (
@@ -747,7 +822,9 @@ function PrematchTaskWorkspace({
                     </button>
                   )}
                 </div>
-                <p>{visiblePrematchMessageContent(message)}</p>
+                {challenge?.messageType === 'challenge_feedback'
+                  ? <ChallengeFeedbackCard challenge={challenge} />
+                  : <p>{visiblePrematchMessageContent(message)}</p>}
                 <MessageEvidenceSources
                   search={message.contextManifest?.search}
                   canConfirm={message.id === confirmableSearchMessageId}
@@ -756,10 +833,15 @@ function PrematchTaskWorkspace({
                   onAdjust={onAdjustEvidenceScope}
                 />
               </article>
-            ))}
+              );
+            })}
             {isSending && (
               <div className="assistant-loading">
-                {sendingIntent === 'evidence'
+                {sendingIntent === 'challenge'
+                  ? challengeState.phase === 'awaiting_answer'
+                    ? 'Super 林婉正在判断你的回应…'
+                    : 'Super 林婉正在从对方角度寻找最关键的攻击点…'
+                  : sendingIntent === 'evidence'
                   ? sendingEvidenceAction === 'search'
                     ? 'Super 林婉正在联网搜集并梳理论据…'
                     : 'Super 林婉正在梳理本轮检索范围…'
@@ -775,7 +857,7 @@ function PrematchTaskWorkspace({
                 <button
                   type="button"
                   key={prompt.intent}
-                  disabled={isSending || !permissions.canChat}
+                  disabled={isSending || !permissions.canChat || challengeState.active}
                   onClick={() => onQuickPrompt(prompt)}
                 >
                   {prompt.label}
@@ -785,24 +867,53 @@ function PrematchTaskWorkspace({
             <button
               type="button"
               className="prematch-report-button"
-              disabled={isSending || !permissions.canChat}
+              disabled={isSending || !permissions.canChat || challengeState.active}
               onClick={onCreateReport}
             >
               形成当前思路报告
             </button>
+            {!challengeState.active && (
+              <button
+                type="button"
+                className="prematch-challenge-button"
+                disabled={isSending || !permissions.canChat}
+                onClick={onStartChallenge}
+                title="让林婉从对方角度追问当前思路"
+              >
+                检验一下
+              </button>
+            )}
           </div>
+          {challengeState.phase === 'feedback' && (
+            <div className="prematch-challenge-actions">
+              {challengeState.round < 3 && (
+                <button type="button" onClick={onRepeatChallenge} disabled={isSending}>再检验一次</button>
+              )}
+              <button type="button" onClick={onEndChallenge} disabled={isSending}>结束检验</button>
+            </div>
+          )}
+          {challengeState.phase === 'awaiting_answer' && (
+            <div className="prematch-challenge-actions">
+              <span>请直接在下方回答这个问题。</span>
+              <button type="button" onClick={onEndChallenge} disabled={isSending}>结束检验</button>
+            </div>
+          )}
           <form className="prematch-chat-input" onSubmit={onSend}>
             <textarea
               value={question}
               onChange={(event) => onQuestionChange(event.target.value)}
-              disabled={isSending || !permissions.canChat}
+              disabled={isSending || !permissions.canChat || challengeState.phase === 'feedback'}
               rows={4}
               placeholder={permissions.canChat
-                ? '继续说你的判断、疑问或想修改的思路…'
+                ? challengeState.phase === 'awaiting_answer'
+                  ? '现场回答对方的追问…'
+                  : challengeState.phase === 'feedback'
+                    ? '请选择“再检验一次”或“结束检验”。'
+                    : '继续说你的判断、疑问或想修改的思路…'
                 : '任务已归档，恢复后可以继续讨论。'}
             />
-            <button type="submit" disabled={isSending || !permissions.canChat || !question.trim()}>
-              {isSending ? '整理中…' : '发送'}
+            <button type="submit" disabled={isSending || !permissions.canChat || challengeState.phase === 'feedback' || !question.trim()}>
+              {isSending ? '整理中…' : challengeState.phase === 'awaiting_answer' ? '提交回答' : '发送'}
             </button>
           </form>
         </section>
@@ -952,6 +1063,62 @@ function visiblePrematchMessageContent(message) {
   return message?.content || '';
 }
 
+function challengeMessageLabel(message) {
+  const type = message?.contextManifest?.challenge?.messageType;
+  if (type === 'challenge_question') return '对方可能会这样追问';
+  if (type === 'challenge_answer') return '我的现场回答';
+  if (type === 'challenge_feedback') return 'Super 林婉 · 检验结果';
+  if (message?.role === 'assistant') {
+    return message.contextManifest?.intent === 'report' ? 'Super 林婉 · 当前思路报告' : 'Super 林婉';
+  }
+  return '我';
+}
+
+function ChallengeFeedbackCard({ challenge }) {
+  return (
+    <div className="prematch-challenge-feedback">
+      <strong>{challenge.judgment || '反馈已生成'}</strong>
+      <dl>
+        <div><dt>有效之处</dt><dd>{challenge.effectivePoint}</dd></div>
+        <div><dt>仍需补强</dt><dd>{challenge.remainingGap}</dd></div>
+        <div><dt>提示</dt><dd>{challenge.hint}</dd></div>
+      </dl>
+    </div>
+  );
+}
+
+function deriveChallengeState(messages, endedSessionId) {
+  const source = Array.isArray(messages) ? messages : [];
+  const latestStoredMessage = source.at(-1);
+  if (latestStoredMessage && !latestStoredMessage.contextManifest?.challenge) {
+    return { active: false, phase: 'inactive', sessionId: '', round: 0 };
+  }
+  const challengeMessages = source
+    .filter((message) => message.contextManifest?.challenge?.sessionId);
+  const latest = challengeMessages.at(-1);
+  const challenge = latest?.contextManifest?.challenge;
+  if (!challenge || challenge.sessionId === endedSessionId) {
+    return { active: false, phase: 'inactive', sessionId: '', round: 0 };
+  }
+  if (challenge.messageType === 'challenge_question') {
+    return {
+      active: true,
+      phase: 'awaiting_answer',
+      sessionId: challenge.sessionId,
+      round: challenge.round
+    };
+  }
+  if (challenge.messageType === 'challenge_feedback') {
+    return {
+      active: true,
+      phase: 'feedback',
+      sessionId: challenge.sessionId,
+      round: challenge.round
+    };
+  }
+  return { active: false, phase: 'inactive', sessionId: '', round: 0 };
+}
+
 function safeHttpUrl(value) {
   try {
     return ['http:', 'https:'].includes(new URL(String(value || '')).protocol);
@@ -1027,6 +1194,10 @@ function createUuid() {
     const value = character === 'x' ? random : (random & 0x3) | 0x8;
     return value.toString(16);
   });
+}
+
+function challengeEndStorageKey(taskId) {
+  return `super-linwan-ended-challenge:${String(taskId || '')}`;
 }
 
 function friendlyError(error) {

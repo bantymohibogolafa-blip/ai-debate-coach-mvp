@@ -6737,6 +6737,89 @@ textarea:focus {
   font-weight: 900;
 }
 
+.prematch-challenge-button {
+  border-color: #b9d2d0 !important;
+  color: #315f62 !important;
+  background: #edf7f5 !important;
+}
+
+.prematch-message.challenge_question,
+.prematch-message.challenge_feedback {
+  border-color: #b9d8d4;
+  background: #f3faf8;
+}
+
+.prematch-message.challenge_answer {
+  border-color: #d7dce5;
+}
+
+.prematch-challenge-feedback > strong {
+  display: inline-block;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: #315f62;
+  background: #dfeeed;
+  font-size: 13px;
+}
+
+.prematch-challenge-feedback dl,
+.prematch-challenge-feedback dl div {
+  margin: 0;
+}
+
+.prematch-challenge-feedback dl div + div {
+  margin-top: 9px;
+}
+
+.prematch-challenge-feedback dt {
+  color: #47676a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.prematch-challenge-feedback dd {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+}
+
+.prematch-challenge-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.prematch-challenge-actions span {
+  margin-right: auto;
+  color: #587276;
+  font-size: 12px;
+}
+
+.prematch-challenge-actions button {
+  border: 1px solid #b9d2d0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #315f62;
+  background: #f5faf9;
+}
+
+@media (max-width: 640px) {
+  .prematch-challenge-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .prematch-challenge-actions span {
+    margin-right: 0;
+  }
+
+  .prematch-challenge-actions button {
+    width: 100%;
+  }
+}
+
 .prematch-quick-prompts button:hover:not(:disabled) {
   border-color: #79aaa7;
   background: #e4f2f0;
