@@ -74,6 +74,58 @@ test('stance reversal is explicitly configured and enforced as a 30 point cap', 
   }
 });
 
+test('defense review caps require matching repeated round-state evidence', () => {
+  const unsupported = finalizeReviewScore({
+    trainingMode: 'defense',
+    dimensionScores: dimensions('defense', 90),
+    capTriggers: ['off_task', 'repeated_core_evasion', 'repeated_off_topic_answers'],
+    defenseRoundStates: [
+      state(1, 'partially_answered', 75),
+      state(2, 'fully_answered', 90),
+      state(3, 'partially_answered', 75)
+    ],
+    plannedRounds: 3,
+    completedRounds: 3
+  });
+  assert.deepEqual(unsupported.acceptedCapTriggers, []);
+  assert.equal(unsupported.appliedCap, null);
+
+  const repeatedEvasion = finalizeReviewScore({
+    trainingMode: 'defense',
+    dimensionScores: dimensions('defense', 90),
+    capTriggers: ['repeated_core_evasion'],
+    defenseRoundStates: [state(1, 'evaded', 40), state(2, 'evaded', 40), state(3)],
+    plannedRounds: 3,
+    completedRounds: 3
+  });
+  assert.deepEqual(repeatedEvasion.acceptedCapTriggers, ['repeated_core_evasion']);
+  assert.equal(repeatedEvasion.appliedCap, 59);
+
+  const repeatedOffTopic = finalizeReviewScore({
+    trainingMode: 'defense',
+    dimensionScores: dimensions('defense', 90),
+    capTriggers: ['repeated_off_topic_answers'],
+    defenseRoundStates: [state(1, 'off_topic', 40), state(2, 'off_topic', 40), state(3)],
+    plannedRounds: 3,
+    completedRounds: 3
+  });
+  assert.deepEqual(repeatedOffTopic.acceptedCapTriggers, ['repeated_off_topic_answers']);
+  assert.equal(repeatedOffTopic.appliedCap, 49);
+});
+
+test('fatal-premise cap remains enforceable without repeated round-state evidence', () => {
+  const result = finalizeReviewScore({
+    trainingMode: 'defense',
+    dimensionScores: dimensions('defense', 90),
+    capTriggers: ['accepts_fatal_premise'],
+    defenseRoundStates: [state(1), state(2), state(3)],
+    plannedRounds: 3,
+    completedRounds: 3
+  });
+  assert.deepEqual(result.acceptedCapTriggers, ['accepts_fatal_premise']);
+  assert.equal(result.finalScore, 49);
+});
+
 test('interactive and text modes use their own seven score bands', () => {
   const realtimeExpected = new Map([[49, '严重失效'], [50, '明显不足'], [65, '基本完成'], [75, '校赛可用'], [85, '明显优秀'], [90, '高水平校队'], [95, '接近理想']]);
   for (const mode of ['free_debate', 'attack', 'defense']) {
@@ -169,20 +221,22 @@ test('delayed recovery accepts only one valid unresolved historical question', (
   assert.deepEqual(repeated.state.delayedAnswerQuestionIds, []);
 });
 
-test('cross-round partial caps and the formal 30 point floor are applied', () => {
+test('partial answers are handled by round scoring without a duplicate aggregate hard cap', () => {
   for (const count of [2, 3]) {
     const result = finalizeReviewScore({
       trainingMode: 'defense', dimensionScores: dimensions('defense', 95),
       defenseRoundStates: Array.from({ length: count }, (_, index) => state(index + 1, 'partially_answered', 79)),
       plannedRounds: count, completedRounds: count
     });
-    assert.ok(result.finalScore <= 79);
+    assert.equal(result.defenseRoundSummary.scoreCap, null);
+    assert.ok(result.finalScore < 95);
   }
 
   const majorityIncomplete = calculateDefenseFinalScore(95, [
     state(1), state(2), state(3, 'partially_answered', 79), state(4, 'partially_answered', 79), state(5, 'partially_answered', 79)
   ], 5);
-  assert.ok(majorityIncomplete.score <= 84);
+  assert.equal(majorityIncomplete.cap, null);
+  assert.ok(majorityIncomplete.score < 95);
 
   const floor = finalizeReviewScore({
     trainingMode: 'defense', dimensionScores: dimensions('defense', 30),
@@ -210,7 +264,7 @@ test('text training prompts have no difficulty semantics while realtime modes re
 });
 
 test('the scoring policy version is advanced without changing text rubric version', () => {
-  assert.equal(CURRENT_SCORING_VERSION, 'scoring_v4');
+  assert.equal(CURRENT_SCORING_VERSION, 'scoring_v5');
   assert.equal(getScoringRubric('defense').rubric.rubricVersion, 'realtime_v2');
   assert.equal(getScoringRubric('constructive').rubric.rubricVersion, 'text_v2');
 });

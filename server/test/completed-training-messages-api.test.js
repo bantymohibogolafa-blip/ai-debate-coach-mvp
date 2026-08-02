@@ -242,8 +242,8 @@ test('defense review, persisted record, and reloaded history share the server fi
   });
   assert.equal(reviewed.status, 200);
   assert.equal(reviewed.body.structuredReview.rawScore, 90);
-  assert.equal(reviewed.body.structuredReview.score, 49);
-  assert.equal(reviewed.body.structuredReview.totalScore, 49);
+  assert.equal(reviewed.body.structuredReview.score, 63);
+  assert.equal(reviewed.body.structuredReview.totalScore, 63);
   assert.equal(reviewed.body.structuredReview.defenseRoundSummary.plannedRounds, 3);
   assert.equal(reviewed.body.structuredReview.defenseRoundSummary.completedRounds, 3);
   assert.equal(reviewed.body.structuredReview.defenseRoundSummary.analyzedRounds, 3);
@@ -268,9 +268,9 @@ test('defense review, persisted record, and reloaded history share the server fi
     capTriggers: reviewed.body.structuredReview.capTriggers
   });
   assert.equal(saved.status, 201);
-  assert.equal(saved.body.record.score, 49);
+  assert.equal(saved.body.record.score, 63);
   assert.equal(saved.body.record.scoreLevel, reviewed.body.structuredReview.scoreLevel);
-  assert.equal(harness.trainingRows[0].score, 49);
+  assert.equal(harness.trainingRows[0].score, 63);
 
   const loaded = await requestJson(
     port,
@@ -278,7 +278,7 @@ test('defense review, persisted record, and reloaded history share the server fi
     auth(token)
   );
   assert.equal(loaded.status, 200);
-  assert.equal(loaded.body.records[0].score, 49);
+  assert.equal(loaded.body.records[0].score, 63);
   assert.equal(loaded.body.records[0].scoreLevel, reviewed.body.structuredReview.scoreLevel);
 });
 

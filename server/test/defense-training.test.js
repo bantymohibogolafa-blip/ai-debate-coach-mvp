@@ -140,7 +140,7 @@ test('historical and current questions can be recognized separately in one answe
   assert.deepEqual(result.state.delayedAnswerQuestionIds, ['defense_round_1_question_1']);
 });
 
-test('multiple missed rounds and last-round recovery cannot return to the high-score band', () => {
+test('two missed rounds use the graduated 64 cap instead of the severe all-round 49 cap', () => {
   const states = normalizeDefenseRoundStates([
     { ...question(1), answerStatus: 'fully_answered', currentQuestionCompletion: 88, isCurrentQuestionAnswered: true, roundScore: {} },
     { ...question(2), answerStatus: 'unanswered', currentQuestionCompletion: 0, isCurrentQuestionAnswered: false, roundScore: {} },
@@ -148,7 +148,8 @@ test('multiple missed rounds and last-round recovery cannot return to the high-s
   ], 3);
   const result = calculateDefenseFinalScore(92, states, 3);
 
-  assert.ok(result.score <= 49);
+  assert.equal(result.cap, 64);
+  assert.ok(result.score <= 64);
   assert.ok(result.roundAverage < 70);
 });
 

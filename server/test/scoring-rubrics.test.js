@@ -228,18 +228,19 @@ test('defense final score is the lowest result across round and mandatory caps',
     ]
   });
   assert.equal(roundCapped.rawScore, 90);
-  assert.equal(roundCapped.finalScore, 49);
-  assert.equal(roundCapped.scoreLevel, getScoreLevel(49, 'defense'));
+  assert.equal(roundCapped.appliedCap, 64);
+  assert.equal(roundCapped.finalScore, 63);
+  assert.equal(roundCapped.scoreLevel, getScoreLevel(63, 'defense'));
 
   const taskCapped = finalizeReviewScore({
     trainingMode: 'defense',
     dimensionScores: dimensions,
-    capTriggers: ['off_task'],
+    capTriggers: ['accepts_fatal_premise'],
     rounds: 3,
     defenseRoundStates: [defenseRoundState(1), defenseRoundState(2), defenseRoundState(3)]
   });
   assert.equal(taskCapped.blendedScore, 90);
-  assert.equal(taskCapped.finalScore, 40, 'a later defense blend cannot lift an off_task cap');
+  assert.equal(taskCapped.finalScore, 49, 'a later defense blend cannot lift a supported fatal-premise cap');
 
   const multipleCaps = finalizeReviewScore({
     trainingMode: 'defense',
