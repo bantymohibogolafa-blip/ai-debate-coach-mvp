@@ -143,8 +143,8 @@ test('four calibration levels remain separated across all three difficulties', (
 });
 
 test('score level is always regenerated from the deterministic final score', () => {
-  assert.equal(getScoreLevel(83.5), '优势压制区');
-  assert.equal(getScoreLevel(92.6), '大师致胜区');
+  assert.equal(getScoreLevel(83.5), '校赛可用');
+  assert.equal(getScoreLevel(92.6), '高水平校队');
 });
 
 test('interactive review prompt keeps difficulty calibration and backend authority explicit', () => {
@@ -184,16 +184,16 @@ test('difficulty is isolated from text V2 but retained for interactive modes', (
 });
 
 test('mandatory score caps are applied after weighted scoring', () => {
-  assert.deepEqual(applyMandatoryScoreCaps(91.3, ['off_task']), {
-    score: 40,
-    reasons: ['多数关键回合未回应当前模式核心任务'],
-    triggeredCaps: []
-  });
-  assert.deepEqual(applyMandatoryScoreCaps(91.3, ['off_task', 'stance_reversal']), {
-    score: 30,
-    reasons: ['多数关键回合未回应当前模式核心任务', '明确转而为对方核心立场作证，或否定己方原定核心立场'],
-    triggeredCaps: []
-  });
+  const offTask = applyMandatoryScoreCaps(91.3, ['off_task']);
+  assert.equal(offTask.score, 40);
+  assert.equal(offTask.appliedCap, 40);
+  assert.deepEqual(offTask.acceptedTriggers, ['off_task']);
+  assert.deepEqual(offTask.reasons, ['多数关键回合未回应当前模式核心任务']);
+
+  const multiple = applyMandatoryScoreCaps(91.3, ['off_task', 'stance_reversal']);
+  assert.equal(multiple.score, 30);
+  assert.equal(multiple.appliedCap, 30);
+  assert.deepEqual(multiple.acceptedTriggers, ['off_task', 'stance_reversal']);
 });
 
 function defenseRoundState(roundNumber, status = 'fully_answered', componentScore = 90) {
@@ -261,14 +261,14 @@ test('uncapped defense preserves the 55/45 blend as the final score', () => {
     dimensionScores: scoresFor('defense', [88, 88, 88, 88, 88]),
     rounds: 3,
     defenseRoundStates: [
-      defenseRoundState(1, 'fully_answered', 79.1),
-      defenseRoundState(2, 'fully_answered', 79.1),
-      defenseRoundState(3, 'fully_answered', 79.1)
+      defenseRoundState(1, 'fully_answered', 80),
+      defenseRoundState(2, 'fully_answered', 80),
+      defenseRoundState(3, 'fully_answered', 80)
     ]
   });
   assert.equal(result.rawScore, 88);
-  assert.equal(result.blendedScore, 84);
-  assert.equal(result.finalScore, 84);
+  assert.equal(result.blendedScore, 84.4);
+  assert.equal(result.finalScore, 84.4);
 });
 
 test('text V2 has seven levels, mode-specific anchors and lowest-cap semantics', () => {
@@ -291,7 +291,8 @@ test('text V2 has seven levels, mode-specific anchors and lowest-cap semantics',
   const rubric = getScoringRubric('constructive').rubric;
   const capped = applyMandatoryScoreCaps(92, ['core_logic_invalid', 'wrong_or_missing_stance'], rubric);
   assert.equal(capped.score, 49);
-  assert.equal(capped.triggeredCaps.length, 2);
-  assert.equal(applyMandatoryScoreCaps(45, ['core_logic_invalid'], rubric).score, 45);
+  assert.equal(capped.hardCapCandidates.length, 1);
+  assert.equal(capped.advisoryTriggers.length, 1);
+  assert.equal(applyMandatoryScoreCaps(92, ['core_logic_invalid'], rubric).score, 92);
   assert.equal(applyMandatoryScoreCaps(82, [], rubric).score, 82);
 });

@@ -49,6 +49,11 @@ function makeRubric(config) {
     rubricVersion: TEXT_RUBRIC_VERSION,
     effectiveDate: TEXT_RUBRIC_EFFECTIVE_DATE,
     usesDifficulty: false,
+    scoreLevels: textScoreLevels,
+    capRules: (config.capRules || []).map((rule) => ({
+      ...rule,
+      enforcement: rule.enforcement || (/原则上/.test(rule.description) ? 'advisory' : 'hard')
+    })),
     dimensions,
     dimensionAnchors: dimensionAnchors(config.dimensions),
     ranges: Object.fromEntries(Object.entries(commonRanges).map(([range, value]) => [

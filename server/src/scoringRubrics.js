@@ -1,12 +1,19 @@
 import { isTextRubricMode, textRubricsV2, textScoreLevels } from './textRubricsV2.js';
-import { calculateDefenseFinalScore, normalizeDefenseRoundStates } from './defenseTraining.js';
+import { calculateDefenseFinalScore, reconcileDefenseRoundStates } from './defenseTraining.js';
 
-const scoreLevels = [
-  { min: 90, max: 100, label: '大师致胜区' },
-  { min: 80, max: 89, label: '优势压制区' },
-  { min: 70, max: 79, label: '标准竞技区' },
-  { min: 50, max: 69, label: '基础及格区' },
-  { min: 30, max: 49, label: '逻辑崩塌区' }
+export const realtimeScoreLevels = [
+  { min: 95, max: 100, label: '接近理想' },
+  { min: 90, max: 94.999, label: '高水平校队' },
+  { min: 85, max: 89.999, label: '明显优秀' },
+  { min: 75, max: 84.999, label: '校赛可用' },
+  { min: 65, max: 74.999, label: '基本完成' },
+  { min: 50, max: 64.999, label: '明显不足' },
+  { min: 30, max: 49.999, label: '严重失效' }
+];
+
+const commonRealtimeCapRules = [
+  { code: 'off_task', maxScore: 40, enforcement: 'hard', description: '多数关键回合未回应当前模式核心任务：最高40分。' },
+  { code: 'stance_reversal', maxScore: 30, enforcement: 'hard', description: '明确转而为对方核心立场作证，或否定己方原定核心立场：最高30分。' }
 ];
 
 const rubricAliases = {
@@ -119,6 +126,9 @@ const rubricCatalog = {
     id: 'free_debate',
     appMode: 'free_debate',
     displayName: '自由辩论',
+    rubricVersion: 'realtime_v2',
+    usesDifficulty: true,
+    scoreLevels: realtimeScoreLevels,
     coreGoal: '评价用户在快速、多轮、开放式交锋中的战场控制、临场反应、战术选择和攻守转换能力。',
     focus: [
       '连续交锋中的战场识别',
@@ -150,6 +160,14 @@ const rubricCatalog = {
       '发言很长但没有有效推进，最高不超过72分。',
       '只攻击不防守或只防守不反击，原则上不超过78分。'
     ],
+    capRules: [
+      ...commonRealtimeCapRules,
+      { code: 'misses_latest_attacks', maxScore: 59, enforcement: 'hard', description: '多次不回应对方最新攻击：最高59分。' },
+      { code: 'repeats_own_case_only', maxScore: 64, enforcement: 'hard', description: '只会重复己方立论：最高64分。' },
+      { code: 'loses_core_battlefield', maxScore: 69, enforcement: 'hard', description: '被对方带偏核心战场：最高69分。' },
+      { code: 'long_without_progress', maxScore: 72, enforcement: 'hard', description: '发言很长但没有有效推进：最高72分。' },
+      { code: 'one_sided_attack_or_defense', maxScore: 78, enforcement: 'advisory', description: '只攻击不防守或只防守不反击：原则上不超过78分。' }
+    ],
     highScoreConditions: [
       '能快速判断当前战场。',
       '能短句回应、快速反击。',
@@ -164,6 +182,9 @@ const rubricCatalog = {
     id: 'offensive_cx',
     appMode: 'attack',
     displayName: '攻辩训练',
+    rubricVersion: 'realtime_v2',
+    usesDifficulty: true,
+    scoreLevels: realtimeScoreLevels,
     coreGoal: '评价用户作为质询方时，能否通过问题设计、连续追问和逻辑压迫，打穿对方定义、判准、前提、数据或因果链。',
     focus: [
       '问题是否精准',
@@ -195,6 +216,14 @@ const rubricCatalog = {
       '一次问多个问题导致焦点混乱，最高不超过72分。',
       '攻击有气势但没有逻辑，原则上不超过65分。'
     ],
+    capRules: [
+      ...commonRealtimeCapRules,
+      { code: 'irrelevant_questions', maxScore: 39, enforcement: 'hard', description: '问题与辩题无关：最高39分。' },
+      { code: 'no_follow_up', maxScore: 59, enforcement: 'hard', description: '只会问单个问题，不会追问：最高59分。' },
+      { code: 'attacks_only_details', maxScore: 69, enforcement: 'hard', description: '只打枝节不打核心：最高69分。' },
+      { code: 'multi_question_confusion', maxScore: 72, enforcement: 'hard', description: '一次问多个问题导致焦点混乱：最高72分。' },
+      { code: 'force_without_logic', maxScore: 65, enforcement: 'advisory', description: '攻击有气势但没有逻辑：原则上不超过65分。' }
+    ],
     highScoreConditions: [
       '每个问题都有明确攻击目标。',
       '能根据对方回答连续追问。',
@@ -209,6 +238,9 @@ const rubricCatalog = {
     id: 'defensive_cx',
     appMode: 'defense',
     displayName: '防守训练',
+    rubricVersion: 'realtime_v2',
+    usesDifficulty: true,
+    scoreLevels: realtimeScoreLevels,
     coreGoal: '评价用户作为被质询方时，能否正面回应、识别陷阱、守住核心立场、完成概念切割，并在必要时反压。',
     focus: [
       '是否正面回应',
@@ -239,6 +271,14 @@ const rubricCatalog = {
       '承认致命前提，最高不超过49分。',
       '不懂概念切割，原则上不超过69分。',
       '回答很长但没有回应问题，原则上不超过64分。'
+    ],
+    capRules: [
+      ...commonRealtimeCapRules,
+      { code: 'repeated_off_topic_answers', maxScore: 49, enforcement: 'hard', description: '多次答非所问：最高49分。' },
+      { code: 'repeated_core_evasion', maxScore: 59, enforcement: 'hard', description: '多次回避核心问题：最高59分。' },
+      { code: 'accepts_fatal_premise', maxScore: 49, enforcement: 'hard', description: '承认致命前提：最高49分。' },
+      { code: 'weak_concept_distinction', maxScore: 69, enforcement: 'advisory', description: '不懂概念切割：原则上不超过69分。' },
+      { code: 'long_without_answering', maxScore: 64, enforcement: 'advisory', description: '回答很长但没有回应问题：原则上不超过64分。' }
     ],
     highScoreConditions: [
       '先正面回应，再切割。',
@@ -360,7 +400,8 @@ export function getScoreLevel(score, mode = '') {
   const numericScore = Number(score);
   if (!Number.isFinite(numericScore)) return '';
   const boundedScore = Math.max(30, Math.min(100, numericScore));
-  const levels = isTextRubricMode(mode) ? textScoreLevels : scoreLevels;
+  const rubric = getScoringRubric(mode).rubric;
+  const levels = rubric.scoreLevels || (isTextRubricMode(mode) ? textScoreLevels : realtimeScoreLevels);
   return levels.find((level) => boundedScore >= level.min && boundedScore <= level.max)?.label || '';
 }
 
@@ -436,6 +477,9 @@ export function applyMandatoryScoreCaps(score, capTriggers = [], rubricOrMode = 
   let cappedScore = score;
   const reasons = [];
   const triggeredCaps = [];
+  const hardCapCandidates = [];
+  const advisoryTriggers = [];
+  const acceptedTriggers = [];
   const rubric = typeof rubricOrMode === 'object'
     ? rubricOrMode
     : getScoringRubric(rubricOrMode).rubric;
@@ -443,16 +487,27 @@ export function applyMandatoryScoreCaps(score, capTriggers = [], rubricOrMode = 
   if (Array.isArray(rubric?.capRules)) {
     for (const rule of rubric.capRules) {
       if (!triggers.has(rule.code)) continue;
-      cappedScore = Math.min(cappedScore, Number(rule.maxScore));
+      acceptedTriggers.push(rule.code);
+      if (rule.enforcement === 'advisory') {
+        advisoryTriggers.push({ code: rule.code, maxScore: Number(rule.maxScore), description: rule.description });
+        continue;
+      }
+      const candidate = { code: rule.code, maxScore: Number(rule.maxScore), description: rule.description };
+      hardCapCandidates.push(candidate);
+      cappedScore = Math.min(cappedScore, candidate.maxScore);
       triggeredCaps.push(rule.description);
     }
   } else {
     if (triggers.has('off_task')) {
       cappedScore = Math.min(cappedScore, 40);
+      acceptedTriggers.push('off_task');
+      hardCapCandidates.push({ code: 'off_task', maxScore: 40, description: '多数关键回合未回应当前模式核心任务：最高40分。' });
       reasons.push('多数关键回合未回应当前模式核心任务');
     }
     if (triggers.has('stance_reversal')) {
-      cappedScore = Math.min(cappedScore, 20);
+      cappedScore = Math.min(cappedScore, 30);
+      acceptedTriggers.push('stance_reversal');
+      hardCapCandidates.push({ code: 'stance_reversal', maxScore: 30, description: '明确转而为对方核心立场作证：最高30分。' });
       reasons.push('明确转而为对方核心立场作证，或否定己方原定核心立场');
     }
   }
@@ -462,7 +517,11 @@ export function applyMandatoryScoreCaps(score, capTriggers = [], rubricOrMode = 
   return {
     score: roundToOne(clamp(cappedScore, 30, 100)),
     reasons,
-    triggeredCaps
+    triggeredCaps,
+    hardCapCandidates,
+    advisoryTriggers,
+    acceptedTriggers,
+    appliedCap: hardCapCandidates.length ? Math.min(...hardCapCandidates.map((item) => item.maxScore)) : null
   };
 }
 
@@ -473,15 +532,23 @@ export function finalizeReviewScore({
   dimensionScores,
   capTriggers = [],
   defenseRoundStates = [],
-  rounds
+  rounds,
+  plannedRounds = rounds,
+  completedRounds
 } = {}) {
   const { rubric } = getScoringRubric(trainingMode);
   const weighted = calculateWeightedScore(dimensionScores, rubric);
   const generalCaps = applyMandatoryScoreCaps(weighted.rawScore, capTriggers, rubric);
   const isDefense = rubric.appMode === 'defense';
-  const states = isDefense ? normalizeDefenseRoundStates(defenseRoundStates, rounds) : [];
+  const reconciliation = isDefense
+    ? reconcileDefenseRoundStates(defenseRoundStates, {
+        plannedRounds,
+        completedRounds: Number.isFinite(Number(completedRounds)) ? completedRounds : defenseRoundStates.length
+      })
+    : null;
+  const states = reconciliation?.states || [];
   const defenseResult = isDefense
-    ? calculateDefenseFinalScore(weighted.rawScore, states, rounds)
+    ? calculateDefenseFinalScore(weighted.rawScore, states, reconciliation.completedRounds || reconciliation.plannedRounds)
     : null;
   const blendedScore = defenseResult ? defenseResult.blendedScore : weighted.rawScore;
   const defenseCapReason = defenseResult?.cap
@@ -490,7 +557,7 @@ export function finalizeReviewScore({
   const finalScore = roundToOne(clamp(Math.min(
     generalCaps.score,
     defenseResult ? defenseResult.score : weighted.rawScore
-  ), 0, 100));
+  ), 30, 100));
   const triggeredCaps = [
     ...generalCaps.triggeredCaps,
     ...(defenseCapReason ? [defenseCapReason] : [])
@@ -507,14 +574,27 @@ export function finalizeReviewScore({
     scoreLevel: getScoreLevel(finalScore, rubric.appMode),
     capReasons,
     triggeredCaps,
+    hardCapCandidates: [
+      ...generalCaps.hardCapCandidates,
+      ...(defenseResult?.cap ? [{ code: 'defense_round_cap', maxScore: defenseResult.cap, description: defenseCapReason }] : [])
+    ],
+    advisoryTriggers: generalCaps.advisoryTriggers,
+    acceptedCapTriggers: generalCaps.acceptedTriggers,
+    appliedCap: [generalCaps.appliedCap, defenseResult?.cap]
+      .filter(Number.isFinite)
+      .reduce((lowest, value) => lowest === null ? value : Math.min(lowest, value), null),
     dimensionScores: weighted.dimensionScores,
+    defenseRoundStates: states,
     defenseRoundSummary: defenseResult ? {
-      totalRounds: rounds === 5 ? 5 : 3,
+      totalRounds: reconciliation.plannedRounds,
+      plannedRounds: reconciliation.plannedRounds,
+      completedRounds: reconciliation.completedRounds,
       analyzedRounds: states.length,
       roundAverage: defenseResult.roundAverage,
       scoreCap: defenseResult.cap,
       delayedAnswerCount: states.filter((item) => item.isDelayedAnswer).length,
-      missedCurrentQuestionCount: states.filter((item) => !item.isCurrentQuestionAnswered).length
+      missedCurrentQuestionCount: states.filter((item) => !item.isCurrentQuestionAnswered).length,
+      dataIntegrityWarning: reconciliation.dataIntegrityWarning || null
     } : null
   };
 }
@@ -547,7 +627,7 @@ export function buildReviewRubricInstruction(mode, difficulty = '') {
     .map(([title, lines]) => `${title}\n${lines.map((line) => `- ${line}`).join('\n')}`)
     .join('\n\n');
   const penalties = Array.isArray(rubric.capRules)
-    ? rubric.capRules.map((item) => `- ${item.code}: ${item.description}`).join('\n')
+    ? rubric.capRules.map((item) => `- ${item.code} [${item.enforcement === 'advisory' ? '软规则' : '硬封顶'}]: ${item.description}`).join('\n')
     : (rubric.penalties || []).map((item) => `- ${item}`).join('\n');
   const anchors = Object.entries(rubric.dimensionAnchors || {})
     .map(([name, items]) => `${name}\n${items.map((item) => `- ${item.ratio}：${item.description}`).join('\n')}`)
@@ -622,6 +702,7 @@ AI评分总规则：
 13. 对明显优秀的表现要敢给高分；不得因为表达仍可精炼，就把逻辑完整、交锋有效的表现压到低分。
 14. 不得因为语言强势、信息量大，就忽略其没有回应或没有真实战果。
 15. 维度得分由后端加权得到 rawScore；后端再检查所有封顶条件，totalScore 取 rawScore 与最低封顶上限中的较低值。
+15.1 标记为硬封顶的规则会由后端确定性执行；标记为软规则的规则只要求在相关维度明显扣分并记录，不直接截断最终总分。
 16. 不得先凭整体印象给总分再倒推维度分；同一能力不得在多个维度重复计分。
 17. 表达风格不得掩盖事实、逻辑、战场和裁决任务；不因语言华丽自动进入高分区，也不因表达克制自动扣分。
 18. ${rubric.templateHint}
@@ -651,9 +732,7 @@ JSON填写要求：
 3. battlefield 要概括本轮核心战场归属或胜负焦点。
 4. reviewText 用自然语言说明本轮表现，必须先肯定一个具体亮点，再指出主要问题。
 5. template 给出该环节可直接复用的表达模板。
-6. capTriggers ${isTextV2
-    ? `只能使用以下代码：${rubric.capRules.map((rule) => `"${rule.code}"`).join('、')}；必须逐条核对，未触发时输出 []。`
-    : '只能使用 "off_task"（多数关键回合未回应核心任务）和 "stance_reversal"（转而为对方核心立场作证）；未触发时输出 []。'}
+6. capTriggers 只能使用以下当前 rubric 白名单代码：${(rubric.capRules || []).map((rule) => `"${rule.code}"`).join('、')}；必须逐条核对，未触发时输出 []，不得创造新代码。
 `;
 }
 

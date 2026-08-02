@@ -51,7 +51,8 @@ test('three-round and five-round modes share the same normalized state implement
 
   assert.equal(normalizeDefenseRoundStates(input, 3).length, 3);
   assert.equal(normalizeDefenseRoundStates(input, 5).length, 5);
-  assert.equal(DEFENSE_SCORING_CONFIG.delayedAnswerCoefficient, 0.45);
+  assert.equal(DEFENSE_SCORING_CONFIG.delayedRecoveryCoefficient, 0.45);
+  assert.equal(DEFENSE_SCORING_CONFIG.delayedRecoveryContributionWeight, 0.05);
 });
 
 test('a delayed answer does not complete the current question or overwrite the missed round', () => {
@@ -113,6 +114,14 @@ test('partial answers preserve unresolved points and repeated questions are rewr
 });
 
 test('historical and current questions can be recognized separately in one answer', () => {
+  const previousRounds = normalizeDefenseRoundStates([{
+    ...question(1),
+    answerStatus: 'partially_answered',
+    currentQuestionCompletion: 50,
+    isCurrentQuestionAnswered: false,
+    unresolvedPoints: ['第一轮问题尚未完整回答'],
+    roundScore: {}
+  }], 5);
   const result = parseDefenseTurn(modelTurn({
     answeredQuestionIds: ['defense_round_1_question_1', 'defense_round_2_question_1'],
     delayedAnswerQuestionIds: ['defense_round_1_question_1'],
@@ -122,7 +131,7 @@ test('historical and current questions can be recognized separately in one answe
     currentRound: 2,
     totalRounds: 5,
     currentQuestion: question(2),
-    previousRounds: [],
+    previousRounds,
     userAnswer: '先补充第一轮，再回应第二轮'
   });
 

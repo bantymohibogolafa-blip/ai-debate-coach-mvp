@@ -48,6 +48,8 @@ const difficultyProfiles = {
   }
 };
 
+const absoluteTextTrainingModes = new Set(['constructive', 'summary', 'closing']);
+
 const realtimeDifficultyProfiles = {
   attack: {
     novice: '攻辩训练·新手：只防守用户问题，回答直接、结构简单，围绕一个明确论点；保留一个明显且真实的前提、因果或例证漏洞。被准确指出后可承认并修正局部问题，但不得替用户定位漏洞或设计追问。',
@@ -666,6 +668,7 @@ export function buildStartMessages({
   });
 
   if (trainingMode === 'defense') {
+    const plannedDefenseRounds = Math.min(5, Math.max(1, Math.floor(Number(rounds) || 3)));
     return [
       {
         role: 'system',
@@ -681,7 +684,7 @@ export function buildStartMessages({
           '你必须根据用户提前输入的己方分论点和论据进行质询，问题要具体打到分论点、事实依据、因果链、边界条件或现实可行性。',
           '不要泛泛要求用户“说明你的观点”，不要替用户总结，不要给用户建议，不要输出防守示范。',
           '可以在同一轮提出一个或多个问题，但必须围绕同一个压力点；问题长度按当前难度控制。',
-          '本次防守训练统一使用结构化轮次状态机，总轮数只能是3或5；当前是第1轮。每轮问题必须具有唯一questionId。',
+          '本次防守训练统一使用结构化轮次状态机；当前是第1轮。每轮问题必须具有唯一questionId。用户可以在完成任意1至5轮后结束，只评价实际完成轮次。',
           '只输出严格JSON，不要输出JSON之外的文字：{"questionText":"完整质询文本","targetPoint":"本轮唯一核心攻击点","requiredResponse":"用户需要完成的具体回应"}。',
           '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。'
         ].join('\n')
@@ -693,7 +696,7 @@ export function buildStartMessages({
           `用户立场：${userSideLabel}`,
           `AI 立场：${opponentSideLabel}`,
           `用户己方分论点和论据：\n${defensePrep}`,
-          `总轮数：${rounds === 5 ? 5 : 3}`,
+          `计划最多轮数：${plannedDefenseRounds}`,
           prematchContext,
           `请站在${opponentSideLabel}，围绕上述分论点发起第一轮具体质询。`
         ].filter(Boolean).join('\n\n')
@@ -713,7 +716,9 @@ export function buildStartMessages({
           sideJudgementInstruction,
           completeOutputInstruction,
           modeInstruction,
-          '难度要求会决定材料的直接程度、复杂度、刁钻程度和论证引用密度；除非模式格式冲突，必须体现当前难度。',
+          absoluteTextTrainingModes.has(trainingMode)
+            ? '本模式采用统一文本训练标准。'
+            : '难度要求会决定材料的直接程度、复杂度、刁钻程度和论证引用密度；除非模式格式冲突，必须体现当前难度。',
           '正方永远先进行，反方随后进行。',
           '开局要先模拟“用户对立面”已经完成的一辩、交锋或前半场论证，但只能展示提取后的材料。',
           '绝对不要展示你的思考过程、推理步骤、完整模拟稿或隐藏分析。',
@@ -806,9 +811,10 @@ export function buildRespondMessages({
   });
 
   if (trainingMode === 'defense') {
+    const plannedDefenseRounds = Math.min(5, Math.max(1, Math.floor(Number(rounds) || 3)));
     const completedDefenseRounds = Array.isArray(defenseRoundStates) ? defenseRoundStates.length : 0;
-    const currentDefenseRound = Math.min(completedDefenseRounds + 1, rounds === 5 ? 5 : 3);
-    const remainingDefenseRounds = Math.max(0, (rounds === 5 ? 5 : 3) - currentDefenseRound);
+    const currentDefenseRound = Math.min(completedDefenseRounds + 1, plannedDefenseRounds);
+    const remainingDefenseRounds = Math.max(0, plannedDefenseRounds - currentDefenseRound);
     const defenseRoundContext = buildDefenseRoundContext(defenseRoundStates, rounds);
     return [
       {
@@ -830,7 +836,7 @@ export function buildRespondMessages({
           '质询要具体打到分论点、事实依据、因果链、边界条件或现实可行性，问题长度按当前难度控制。',
           '只输出严格JSON，不要输出JSON之外的文字。字段必须包括：answerStatus、currentQuestionCompletion、isCurrentQuestionAnswered、answeredQuestionIds、delayedAnswerQuestionIds、unresolvedPoints、reason、followUpStrategy、roundScore。',
           'answerStatus只能是fully_answered、partially_answered、off_topic、evaded、unanswered；followUpStrategy只能是new_attack、clarify、narrow_question、press_unresolved_point、escalate、final_pressure。',
-          'roundScore必须包含contentQuality、currentQuestionRelevance、responseCompleteness、timeliness、defensiveEffectiveness、delayedRecovery，均为0-100。',
+          'roundScore必须包含contentQuality、currentQuestionRelevance、responseCompleteness、timeliness、defensiveEffectiveness、delayedRecoveryQuality，均为0-100；逐轮层只判断当前问题归属、完成度、即时性与有限延迟补答，不得决定最终总分。',
           '如果还有下一轮，额外输出nextQuestion：{"questionText":"不得机械重复的下一轮质询","targetPoint":"攻击点","requiredResponse":"明确回应要求"}；如果本轮已是最后一轮，nextQuestion必须为null。',
           '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。'
         ].join('\n')
@@ -840,7 +846,7 @@ export function buildRespondMessages({
         content: [
           `辩题：${topic}`,
           `用户己方分论点和论据：\n${defensePrep || '未提供'}`,
-          `总轮数：${rounds === 5 ? 5 : 3}`,
+          `计划最多轮数：${plannedDefenseRounds}`,
           `当前轮次：${currentDefenseRound}`,
           `剩余轮数：${remainingDefenseRounds}`,
           `当前问题：\n${JSON.stringify(currentDefenseQuestion || {}, null, 2)}`,
@@ -866,7 +872,9 @@ export function buildRespondMessages({
           sideJudgementInstruction,
           completeOutputInstruction,
           modeInstruction,
-          '难度要求会决定问题的直接程度、复杂度、长度、刁钻程度和论证引用密度；除非模式规则冲突，必须优先执行当前难度要求。',
+          absoluteTextTrainingModes.has(trainingMode)
+            ? '本模式采用统一文本训练标准。'
+            : '难度要求会决定问题的直接程度、复杂度、长度、刁钻程度和论证引用密度；除非模式规则冲突，必须优先执行当前难度要求。',
           '正方永远先进行，反方随后进行。',
           modeProfile.userTask,
           '如果轮到 AI 发言，只输出 AI 方本轮内容；如果是攻辩训练，AI 只能防守，不能反问、不能质询。'
@@ -1073,6 +1081,12 @@ export function buildPolishMessages({
 }
 
 function getModeInstruction(difficulty, celebrityDebater, trainingMode) {
+  if (absoluteTextTrainingModes.has(trainingMode)) {
+    const debater = celebrityDebaters[celebrityDebater];
+    return debater
+      ? ['本模式采用统一文本训练标准；以下仅为表达风格模拟。', formatCelebrityInstruction(debater)].join('\n')
+      : '本模式采用统一文本训练标准。';
+  }
   const realtimeInstruction = buildRealtimeDifficultyInstruction(trainingMode, difficulty);
   if (realtimeInstruction) return realtimeInstruction;
   const debater = celebrityDebaters[celebrityDebater];
@@ -1088,6 +1102,12 @@ function getModeInstruction(difficulty, celebrityDebater, trainingMode) {
 }
 
 function getOpeningModeInstruction(difficulty, celebrityDebater, trainingMode) {
+  if (absoluteTextTrainingModes.has(trainingMode)) {
+    const debater = celebrityDebaters[celebrityDebater];
+    return debater
+      ? ['本模式采用统一文本训练标准；以下仅为表达风格模拟。', debater.disclaimer, debater.openingInstruction].join('\n')
+      : '本模式采用统一文本训练标准。';
+  }
   const realtimeInstruction = buildRealtimeDifficultyInstruction(trainingMode, difficulty);
   if (realtimeInstruction) return realtimeInstruction;
   const debater = celebrityDebaters[celebrityDebater];

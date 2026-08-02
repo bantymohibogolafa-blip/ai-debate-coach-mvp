@@ -1620,7 +1620,12 @@ function App() {
         scoreLevel: reviewData?.scoreLevel || '',
         dimensionScores: Array.isArray(reviewData?.dimensionScores) ? reviewData.dimensionScores : [],
         capTriggers: Array.isArray(reviewData?.capTriggers) ? reviewData.capTriggers : [],
-        ...(config.trainingMode === 'defense' ? { defenseRoundStates, rounds: config.rounds } : {}),
+        ...(config.trainingMode === 'defense' ? {
+          defenseRoundStates,
+          rounds: config.rounds,
+          plannedRounds: config.rounds,
+          completedRounds: completedMessages.filter((item) => item.role === 'user' && isMeaningfulUserInput(item.content)).length
+        } : {}),
         ...buildPrematchTrainingPayload(activePrepTrainingContext),
         prepResultSummary: activePrepTrainingContext ? {
           score: recordScore,
@@ -1706,7 +1711,7 @@ function App() {
     updateConfig({
       ...config,
       celebrityDebater: value,
-      difficulty: value === 'none' ? config.difficulty : 'city'
+      difficulty: value === 'none' || !usesDifficulty ? config.difficulty : 'city'
     });
   }
 
@@ -2930,13 +2935,15 @@ function App() {
                   disabled={isTaskActionLoading}
                   onChange={(value) => setTaskForm({ ...taskForm, mode: value })}
                 />
-                <OptionGroup
-                  label="难度"
-                  options={difficulties}
-                  value={taskForm.difficulty}
-                  disabled={isTaskActionLoading}
-                  onChange={(value) => setTaskForm({ ...taskForm, difficulty: value })}
-                />
+                {trainingModes.find((mode) => mode.value === taskForm.mode)?.usesDifficulty !== false && (
+                  <OptionGroup
+                    label="难度"
+                    options={difficulties}
+                    value={taskForm.difficulty}
+                    disabled={isTaskActionLoading}
+                    onChange={(value) => setTaskForm({ ...taskForm, difficulty: value })}
+                  />
+                )}
                 <OptionGroup
                   label="AI 风格"
                   options={celebrityDebaters}
@@ -3165,7 +3172,7 @@ function App() {
           <span>团队任务</span>
           <strong>{activeTaskSession.title}</strong>
           <small>
-            参数已锁定：{getOptionLabel(trainingModes, activeTaskSession.mode)} · {getOptionLabel(difficulties, activeTaskSession.difficulty)} · {getOptionLabel(celebrityDebaters, activeTaskSession.styleId) || '普通 AI'}
+            参数已锁定：{getOptionLabel(trainingModes, activeTaskSession.mode)} · {trainingModes.find((mode) => mode.value === activeTaskSession.mode)?.usesDifficulty === false ? '统一标准' : getOptionLabel(difficulties, activeTaskSession.difficulty)} · {getOptionLabel(celebrityDebaters, activeTaskSession.styleId) || '普通 AI'}
           </small>
           <small>本次复盘保存后会自动计入该任务完成次数。</small>
         </section>
@@ -3723,7 +3730,7 @@ function App() {
                     <span>{formatRecordDate(record.createdAt)}</span>
                     <strong>{record.topic}</strong>
                     <small>
-                      {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'} / {getOptionLabel(sides, record.userSide)} / {getOptionLabel(difficulties, record.difficulty)}
+                      {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'} / {getOptionLabel(sides, record.userSide)} / {record.difficultyApplicable === false ? '统一标准' : getOptionLabel(difficulties, record.difficulty)}
                       {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
                       {record.result ? ` / ${record.result}` : ''}
                     </small>
@@ -3744,7 +3751,9 @@ function App() {
                       <div className="history-meta">
                         <span>我的立场：{getOptionLabel(sides, record.userSide)}</span>
                         <span>AI 立场：{getOptionLabel(sides, record.aiSide)}</span>
-                        <span>难度：{getOptionLabel(difficulties, record.difficulty)}</span>
+                        {record.difficultyApplicable === false
+                          ? <span>训练标准：统一标准</span>
+                          : <span>难度：{getOptionLabel(difficulties, record.difficulty)}</span>}
                         <span>风格：{getOptionLabel(celebrityDebaters, record.styleId) || '普通 AI'}</span>
                       </div>
 
@@ -4121,7 +4130,7 @@ function TeamDataPanel({
                     <span>{formatRecordDate(record.createdAt)} · {record.nickname || '未命名成员'}</span>
                     <strong>{record.topic}</strong>
                     <small>
-                      {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'} / {getOptionLabel(difficulties, record.difficulty)}
+                      {getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'} / {record.difficultyApplicable === false ? '统一标准' : getOptionLabel(difficulties, record.difficulty)}
                       {record.score !== null && record.score !== undefined ? ` / ${record.score}分` : ''}
                       {record.result ? ` / ${record.result}` : ''}
                     </small>
@@ -4670,7 +4679,7 @@ function TeamTasksPanel({
               </div>
               <div className="task-meta-grid">
                 <span>模式：{getOptionLabel(trainingModes, task.mode) || '自由辩论'}</span>
-                <span>难度：{getOptionLabel(difficulties, task.difficulty) || '--'}</span>
+                <span>{task.difficultyApplicable === false ? '训练标准：统一标准' : `难度：${getOptionLabel(difficulties, task.difficulty) || '--'}`}</span>
                 <span>风格：{getOptionLabel(celebrityDebaters, task.styleId) || '普通 AI'}</span>
                 <span>任务对象：{getTaskAssignmentLabel(task)}</span>
                 <span>状态：{getTaskStatusLabel(task.status)}</span>
@@ -4786,7 +4795,7 @@ function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, o
           <span>用户立场：{getOptionLabel(sides, task.userSide) || '--'}</span>
           <span>AI 立场：{getOptionLabel(sides, task.aiSide) || '--'}</span>
           <span>训练模式：{getOptionLabel(trainingModes, task.mode) || '--'}</span>
-          <span>难度：{getOptionLabel(difficulties, task.difficulty) || '--'}</span>
+          <span>{task.difficultyApplicable === false ? '训练标准：统一标准' : `难度：${getOptionLabel(difficulties, task.difficulty) || '--'}`}</span>
           <span>AI 风格：{getOptionLabel(celebrityDebaters, task.styleId) || '普通 AI'}</span>
           <span>要求次数：{task.requiredCount || 1}</span>
         </div>
@@ -6422,7 +6431,9 @@ function MobileTrainingSetup({
               onChange={onSelectCelebrity}
               className="celebrity-options"
             />
-            {config.celebrityDebater !== 'none' && <p className="mode-note">已启用市赛难度。{selectedCelebrity?.description}</p>}
+            {config.celebrityDebater !== 'none' && (
+              <p className="mode-note">{selectedMode?.usesDifficulty !== false ? '已启用市赛难度。' : '本模式采用统一标准，风格不会改变评分难度。'}{selectedCelebrity?.description}</p>
+            )}
           </div>
           {config.trainingMode === 'defense' && (
             <label className="field" data-mobile-field="defensePrep">
@@ -7018,8 +7029,8 @@ function RecordDetail({ record, onClose }) {
         <span>我的立场：{getOptionLabel(sides, record.userSide)}</span>
         <span>AI 立场：{getOptionLabel(sides, record.aiSide)}</span>
         <span>模式：{getOptionLabel(trainingModes, record.trainingMode) || '自由辩论'}</span>
-        {trainingModes.find((mode) => mode.value === record.trainingMode)?.usesDifficulty !== false && <span>难度：{getOptionLabel(difficulties, record.difficulty)}</span>}
-        {trainingModes.find((mode) => mode.value === record.trainingMode)?.usesDifficulty === false && (
+        {record.difficultyApplicable !== false && trainingModes.find((mode) => mode.value === record.trainingMode)?.usesDifficulty !== false && <span>难度：{getOptionLabel(difficulties, record.difficulty)}</span>}
+        {(record.difficultyApplicable === false || trainingModes.find((mode) => mode.value === record.trainingMode)?.usesDifficulty === false) && (
           <span>评分标准：{record.rubricVersion === 'text_v2' ? '文本评分 V2' : '旧版评分标准'}</span>
         )}
         <span>风格：{getOptionLabel(celebrityDebaters, record.styleId) || '普通 AI'}</span>
@@ -7378,6 +7389,8 @@ function normalizeStructuredReview(value) {
     triggeredCaps: Array.isArray(value.triggeredCaps) ? value.triggeredCaps : [],
     rubricId: value.rubricId || value.rubric_id || '',
     rubricVersion: value.rubricVersion || value.rubric_version || '',
+    difficultyApplicable: value.difficultyApplicable ?? value.difficulty_applicable ?? true,
+    difficultyDisplayName: value.difficultyDisplayName || value.difficulty_display_name || '',
     mode: value.mode || value.trainingMode || value.training_mode || '',
     modeDisplayName: value.modeDisplayName || value.mode_display_name || '',
     dimensionScores: dimensionScores

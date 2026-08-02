@@ -21,7 +21,9 @@ test('history explains the text V2 comparison boundary', () => {
 });
 
 test('defense record submission carries the data required for server-side finalization', () => {
-  assert.match(appSource, /config\.trainingMode === 'defense' \? \{ defenseRoundStates, rounds: config\.rounds \} : \{\}/);
+  assert.match(appSource, /config\.trainingMode === 'defense' \? \{/);
+  assert.match(appSource, /defenseRoundStates,[\s\S]{0,100}rounds: config\.rounds,[\s\S]{0,100}plannedRounds: config\.rounds/);
+  assert.match(appSource, /completedRounds: completedMessages\.filter/);
   assert.match(appSource, /reviewData\?\.finalScore \?\? reviewData\?\.totalScore \?\? reviewData\?\.score/);
   assert.match(appSource, /reviewData\.finalScore \?\? reviewData\.totalScore \?\? reviewData\.score/);
 });

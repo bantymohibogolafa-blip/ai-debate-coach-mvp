@@ -1,5 +1,6 @@
 export const DEFENSE_SCORING_CONFIG = Object.freeze({
-  delayedAnswerCoefficient: 0.45,
+  delayedRecoveryCoefficient: 0.45,
+  delayedRecoveryContributionWeight: 0.05,
   modelScoreWeight: 0.55,
   roundScoreWeight: 0.45,
   componentWeights: Object.freeze({
@@ -39,14 +40,51 @@ const SCORE_COMPONENTS = Object.keys(DEFENSE_SCORING_CONFIG.componentWeights);
 
 export function normalizeDefenseRoundStates(value, totalRounds) {
   if (!Array.isArray(value)) return [];
-  const maxRounds = totalRounds === 5 ? 5 : 3;
-  return value
-    .slice(0, maxRounds)
-    .map((item, index) => normalizeDefenseRoundState(item, index + 1))
-    .filter((item, index, items) => (
-      item.roundNumber <= maxRounds
-      && items.findIndex((candidate) => candidate.roundNumber === item.roundNumber) === index
-    ));
+  const maxRounds = normalizeRoundLimit(totalRounds, 5);
+  const normalized = [];
+  for (const [index, item] of value.entries()) {
+    if (normalized.length >= maxRounds) break;
+    const state = normalizeDefenseRoundState(item, index + 1, { previousStates: normalized });
+    if (state.roundNumber > maxRounds || normalized.some((candidate) => candidate.roundNumber === state.roundNumber)) continue;
+    normalized.push(state);
+  }
+  return normalized.sort((left, right) => left.roundNumber - right.roundNumber);
+}
+
+export function reconcileDefenseRoundStates(value, { plannedRounds, completedRounds } = {}) {
+  const safeCompletedRounds = clampInteger(completedRounds, 0, 5);
+  const safePlannedRounds = Math.max(safeCompletedRounds, normalizeRoundLimit(plannedRounds, safeCompletedRounds || 1));
+  const provided = normalizeDefenseRoundStates(value, safeCompletedRounds || 1);
+  const states = [];
+  const warnings = [];
+
+  for (let roundNumber = 1; roundNumber <= safeCompletedRounds; roundNumber += 1) {
+    const existing = provided.find((item) => item.roundNumber === roundNumber);
+    if (existing) {
+      states.push(normalizeDefenseRoundState(existing, roundNumber, { previousStates: states }));
+      continue;
+    }
+    states.push(normalizeDefenseRoundState({
+      roundNumber,
+      totalRounds: safePlannedRounds,
+      answerStatus: 'partially_answered',
+      currentQuestionCompletion: 50,
+      isCurrentQuestionAnswered: false,
+      unresolvedPoints: ['该已完成轮次缺少结构化分析，按保守状态处理'],
+      reason: '该已完成轮次缺少结构化分析，已按保守状态补齐。'
+    }, roundNumber, { previousStates: states }));
+    warnings.push(`第${roundNumber}轮缺少结构化状态，已保守补齐。`);
+  }
+  if (Array.isArray(value) && value.length > safeCompletedRounds) {
+    warnings.push('收到多于实际完成轮次的状态，已截断未来状态。');
+  }
+
+  return {
+    plannedRounds: safePlannedRounds,
+    completedRounds: safeCompletedRounds,
+    states,
+    dataIntegrityWarning: warnings.join(' ')
+  };
 }
 
 export function normalizeDefenseQuestion(value, roundNumber) {
@@ -54,7 +92,7 @@ export function normalizeDefenseQuestion(value, roundNumber) {
   const safeRound = clampInteger(roundNumber, 1, 5);
   return {
     roundNumber: safeRound,
-    totalRounds: source.totalRounds === 5 ? 5 : source.totalRounds === 3 ? 3 : undefined,
+    totalRounds: Number.isFinite(Number(source.totalRounds)) ? normalizeRoundLimit(source.totalRounds, safeRound) : undefined,
     questionId: cleanText(source.questionId) || `defense_round_${safeRound}_question_1`,
     questionText: cleanText(source.questionText),
     targetPoint: cleanText(source.targetPoint) || '当前核心防守点',
@@ -66,7 +104,7 @@ export function parseDefenseOpening(content, totalRounds) {
   const parsed = parseJsonObject(content);
   const question = normalizeDefenseQuestion({
     ...parsed,
-    totalRounds: totalRounds === 5 ? 5 : 3,
+    totalRounds: normalizeRoundLimit(totalRounds, 3),
     questionText: parsed?.questionText || cleanText(content)
   }, 1);
   return {
@@ -80,56 +118,22 @@ export function parseDefenseTurn(content, context = {}) {
   const roundNumber = clampInteger(context.currentRound, 1, 5);
   const currentQuestion = normalizeDefenseQuestion(context.currentQuestion, roundNumber);
   const previousStates = normalizeDefenseRoundStates(context.previousRounds, context.totalRounds);
-  const fallbackStatus = 'partially_answered';
-  const status = ANSWER_STATUSES.has(parsed?.answerStatus) ? parsed.answerStatus : fallbackStatus;
-  const completion = clampNumber(parsed?.currentQuestionCompletion, 0, 100, 50);
-  const answeredQuestionIds = normalizeIds(parsed?.answeredQuestionIds);
-  const delayedAnswerQuestionIds = normalizeIds(parsed?.delayedAnswerQuestionIds)
-    .filter((id) => id !== currentQuestion.questionId);
-  const isCurrentQuestionAnswered = parsed?.isCurrentQuestionAnswered === true
-    || (status === 'fully_answered' && completion >= 80);
-  if (isCurrentQuestionAnswered && !answeredQuestionIds.includes(currentQuestion.questionId)) {
-    answeredQuestionIds.push(currentQuestion.questionId);
-  }
-  const isDelayedAnswer = delayedAnswerQuestionIds.length > 0;
-  const unresolvedPoints = normalizeStrings(parsed?.unresolvedPoints);
-  if (!isCurrentQuestionAnswered && !unresolvedPoints.length) {
-    unresolvedPoints.push(currentQuestion.requiredResponse || currentQuestion.targetPoint);
-  }
-  const followUpStrategy = FOLLOW_UP_STRATEGIES.has(parsed?.followUpStrategy)
-    ? parsed.followUpStrategy
-    : chooseFallbackStrategy({ status, roundNumber, totalRounds: context.totalRounds });
-  const components = normalizeRoundScore(parsed?.roundScore, {
-    completion,
-    status,
-    isCurrentQuestionAnswered,
-    isDelayedAnswer
-  });
-
   const state = normalizeDefenseRoundState({
+    ...parsed,
     roundNumber,
-    totalRounds: context.totalRounds === 5 ? 5 : 3,
+    totalRounds: normalizeRoundLimit(context.totalRounds, 3),
     questionId: currentQuestion.questionId,
     questionText: currentQuestion.questionText,
     targetPoint: currentQuestion.targetPoint,
     requiredResponse: currentQuestion.requiredResponse,
     userAnswer: context.userAnswer,
-    answerStatus: status,
-    currentQuestionCompletion: completion,
-    unresolvedPoints,
-    answeredQuestionIds,
-    delayedAnswerQuestionIds,
-    isDelayedAnswer,
-    isCurrentQuestionAnswered,
-    followUpStrategy,
-    roundScore: components,
     reason: cleanText(parsed?.reason) || '回答分析结果缺少完整说明，已采用保守校对。'
-  }, roundNumber);
+  }, roundNumber, { previousStates, currentQuestionId: currentQuestion.questionId });
 
   const nextRound = roundNumber + 1;
   const rawNextQuestion = normalizeDefenseQuestion({
     ...parsed?.nextQuestion,
-    totalRounds: context.totalRounds === 5 ? 5 : 3,
+    totalRounds: normalizeRoundLimit(context.totalRounds, 3),
     questionId: `defense_round_${nextRound}_question_1`
   }, nextRound);
   const nextQuestion = nextRound <= Number(context.totalRounds)
@@ -151,11 +155,14 @@ export function calculateDefenseFinalScore(modelScore, roundStates, totalRounds)
     + roundAverage * DEFENSE_SCORING_CONFIG.roundScoreWeight;
   const problemStates = states.filter((state) => ['unanswered', 'evaded', 'off_topic'].includes(state.answerStatus));
   const delayedWithoutCurrent = states.filter((state) => state.isDelayedAnswer && !state.isCurrentQuestionAnswered);
+  const incompleteStates = states.filter((state) => !state.isCurrentQuestionAnswered);
   let cap = 100;
   if (problemStates.length === 1) cap = 79;
   if (problemStates.length >= 2) cap = 64;
   if (problemStates.length >= Math.ceil(states.length / 2)) cap = Math.min(cap, 49);
   if (delayedWithoutCurrent.length) cap = Math.min(cap, 69);
+  if (incompleteStates.length === states.length) cap = Math.min(cap, 79);
+  else if (incompleteStates.length >= Math.ceil(states.length / 2)) cap = Math.min(cap, 84);
   return {
     score: roundToOne(Math.max(0, Math.min(blended, cap, 100))),
     blendedScore: roundToOne(Math.max(0, Math.min(blended, 100))),
@@ -168,7 +175,7 @@ export function buildDefenseRoundContext(states, totalRounds) {
   const normalized = normalizeDefenseRoundStates(states, totalRounds);
   const answeredQuestionIds = new Set(normalized.flatMap((item) => item.answeredQuestionIds));
   return JSON.stringify({
-    totalRounds: totalRounds === 5 ? 5 : 3,
+    totalRounds: normalizeRoundLimit(totalRounds, normalized.length || 3),
     previousRounds: normalized,
     unresolvedPoints: [...new Set(normalized.flatMap((item) => (
       answeredQuestionIds.has(item.questionId) ? [] : item.unresolvedPoints
@@ -178,16 +185,36 @@ export function buildDefenseRoundContext(states, totalRounds) {
   }, null, 2);
 }
 
-function normalizeDefenseRoundState(value, fallbackRound) {
+export function normalizeDefenseRoundState(value, fallbackRound, context = {}) {
   const source = value && typeof value === 'object' ? value : {};
   const roundNumber = clampInteger(source.roundNumber ?? fallbackRound, 1, 5);
-  const answerStatus = ANSWER_STATUSES.has(source.answerStatus)
+  const requestedStatus = ANSWER_STATUSES.has(source.answerStatus)
     ? source.answerStatus
     : 'partially_answered';
-  const currentQuestionCompletion = clampNumber(source.currentQuestionCompletion, 0, 100, 50);
-  const delayedAnswerQuestionIds = normalizeIds(source.delayedAnswerQuestionIds);
-  const isDelayedAnswer = source.isDelayedAnswer === true || delayedAnswerQuestionIds.length > 0;
-  const isCurrentQuestionAnswered = source.isCurrentQuestionAnswered === true;
+  let currentQuestionCompletion = clampNumber(source.currentQuestionCompletion, 0, 100, 50);
+  let answerStatus = requestedStatus;
+  let isCurrentQuestionAnswered = source.isCurrentQuestionAnswered === true;
+  if (requestedStatus === 'fully_answered' && (!isCurrentQuestionAnswered || currentQuestionCompletion < 80)) {
+    answerStatus = 'partially_answered';
+  }
+  if (answerStatus === 'fully_answered') {
+    isCurrentQuestionAnswered = true;
+    currentQuestionCompletion = Math.max(80, currentQuestionCompletion);
+  } else {
+    isCurrentQuestionAnswered = false;
+    currentQuestionCompletion = answerStatus === 'partially_answered'
+      ? Math.min(79, currentQuestionCompletion)
+      : answerStatus === 'unanswered' ? 0 : Math.min(49, currentQuestionCompletion);
+  }
+  const questionId = cleanText(source.questionId) || `defense_round_${roundNumber}_question_1`;
+  const previousStates = Array.isArray(context.previousStates) ? context.previousStates : [];
+  const delayedAnswerQuestionIds = validateDelayedAnswerQuestionIds(
+    source.delayedAnswerQuestionIds,
+    previousStates,
+    roundNumber,
+    context.currentQuestionId || questionId
+  );
+  const isDelayedAnswer = delayedAnswerQuestionIds.length > 0;
   const followUpStrategy = FOLLOW_UP_STRATEGIES.has(source.followUpStrategy)
     ? source.followUpStrategy
     : chooseFallbackStrategy({ status: answerStatus, roundNumber, totalRounds: 3 });
@@ -197,18 +224,24 @@ function normalizeDefenseRoundState(value, fallbackRound) {
     isCurrentQuestionAnswered,
     isDelayedAnswer
   });
+  const answeredQuestionIds = [...delayedAnswerQuestionIds];
+  if (answerStatus === 'fully_answered') answeredQuestionIds.push(questionId);
+  const unresolvedPoints = normalizeStrings(source.unresolvedPoints);
+  if (!isCurrentQuestionAnswered && !unresolvedPoints.length) {
+    unresolvedPoints.push(cleanText(source.requiredResponse || source.targetPoint) || '当前问题尚未完整回答');
+  }
   return {
     roundNumber,
-    totalRounds: source.totalRounds === 5 ? 5 : source.totalRounds === 3 ? 3 : undefined,
-    questionId: cleanText(source.questionId) || `defense_round_${roundNumber}_question_1`,
+    totalRounds: Number.isFinite(Number(source.totalRounds)) ? normalizeRoundLimit(source.totalRounds, roundNumber) : undefined,
+    questionId,
     questionText: cleanText(source.questionText),
     targetPoint: cleanText(source.targetPoint),
     requiredResponse: cleanText(source.requiredResponse),
     userAnswer: cleanText(source.userAnswer),
     answerStatus,
     currentQuestionCompletion,
-    unresolvedPoints: normalizeStrings(source.unresolvedPoints),
-    answeredQuestionIds: normalizeIds(source.answeredQuestionIds),
+    unresolvedPoints,
+    answeredQuestionIds,
     delayedAnswerQuestionIds,
     isDelayedAnswer,
     isCurrentQuestionAnswered,
@@ -232,19 +265,47 @@ function normalizeRoundScore(value, context) {
   for (const key of SCORE_COMPONENTS) {
     result[key] = clampNumber(source[key], 0, 100, defaults[key]);
   }
-  result.delayedRecovery = context.isDelayedAnswer
-    ? clampNumber(
-        source.delayedRecovery,
-        0,
-        result.contentQuality * DEFENSE_SCORING_CONFIG.delayedAnswerCoefficient,
-        result.contentQuality * DEFENSE_SCORING_CONFIG.delayedAnswerCoefficient
-      )
+  if (!context.isCurrentQuestionAnswered) {
+    result.currentQuestionRelevance = Math.min(result.currentQuestionRelevance, 35);
+    result.timeliness = Math.min(result.timeliness, 20);
+    result.defensiveEffectiveness = Math.min(result.defensiveEffectiveness, 35);
+  }
+  if (context.status === 'unanswered') {
+    result.contentQuality = Math.min(result.contentQuality, 20);
+    result.responseCompleteness = Math.min(result.responseCompleteness, 10);
+  }
+  result.delayedRecoveryQuality = context.isDelayedAnswer
+    ? clampNumber(source.delayedRecoveryQuality ?? source.delayedRecovery, 0, 100, result.contentQuality)
     : 0;
+  result.delayedRecoveryCredit = Math.min(2.25, roundToOne(
+    result.delayedRecoveryQuality
+      * DEFENSE_SCORING_CONFIG.delayedRecoveryCoefficient
+      * DEFENSE_SCORING_CONFIG.delayedRecoveryContributionWeight
+  ));
+  result.delayedRecovery = result.delayedRecoveryQuality * DEFENSE_SCORING_CONFIG.delayedRecoveryCoefficient;
   const base = SCORE_COMPONENTS.reduce((sum, key) => (
     sum + result[key] * DEFENSE_SCORING_CONFIG.componentWeights[key]
   ), 0);
-  result.total = roundToOne(Math.min(base + result.delayedRecovery * 0.05, statusCap));
+  result.total = roundToOne(Math.min(base + result.delayedRecoveryCredit, statusCap));
   return result;
+}
+
+function validateDelayedAnswerQuestionIds(value, previousStates, currentRound, currentQuestionId) {
+  const priorRecoveryIds = new Set(previousStates.flatMap((item) => item.delayedAnswerQuestionIds || []));
+  const previousById = new Map(previousStates.map((item) => [item.questionId, item]));
+  return normalizeIds(value).filter((id) => {
+    if (id === currentQuestionId || priorRecoveryIds.has(id)) return false;
+    const match = /^defense_round_([1-5])_question_([1-9]\d*)$/.exec(id);
+    if (!match) return false;
+    const historical = previousById.get(id);
+    return Boolean(
+      historical
+      && historical.roundNumber === Number(match[1])
+      && historical.roundNumber < currentRound
+      && historical.answerStatus !== 'fully_answered'
+      && historical.isCurrentQuestionAnswered !== true
+    );
+  });
 }
 
 function preventRepeatedQuestion(nextQuestion, currentQuestion, state, previousStates) {
@@ -329,6 +390,11 @@ function clampNumber(value, min, max, fallback) {
 
 function clampInteger(value, min, max) {
   return Math.floor(clampNumber(value, min, max, min));
+}
+
+function normalizeRoundLimit(value, fallback = 5) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? clampInteger(numeric, 1, 5) : clampInteger(fallback, 1, 5);
 }
 
 function roundToOne(value) {

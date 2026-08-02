@@ -398,7 +398,9 @@ app.post('/api/debate/review', async (req, res, next) => {
         dimensionScores: structuredReview.dimensionScores,
         capTriggers: structuredReview.capTriggers,
         defenseRoundStates: payload.defenseRoundStates,
-        rounds: payload.rounds
+        rounds: payload.rounds,
+        plannedRounds: payload.rounds,
+        completedRounds: countMeaningfulUserMessages(reviewableHistory)
       });
       Object.assign(structuredReview, {
         rawScore: finalized.rawScore,
@@ -408,6 +410,9 @@ app.post('/api/debate/review', async (req, res, next) => {
         totalScore: finalized.finalScore,
         scoreLevel: finalized.scoreLevel,
         triggeredCaps: finalized.triggeredCaps,
+        hardCapCandidates: finalized.hardCapCandidates,
+        advisoryTriggers: finalized.advisoryTriggers,
+        appliedCap: finalized.appliedCap,
         scoreCapReasons: finalized.capReasons,
         dimensionScores: finalized.dimensionScores,
         defenseRoundSummary: finalized.defenseRoundSummary
@@ -1561,6 +1566,7 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
     500
   );
   const history = Array.isArray(body.history) ? body.history : [];
+  const completedRounds = Math.min(5, countMeaningfulUserMessages(buildReviewableMessages(history)));
   const defenseRoundStates = normalizeDefenseRoundStates(
     body.defenseRoundStates || body.defense_round_states,
     rounds
@@ -1626,6 +1632,8 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
     celebrityDebater,
     trainingMode,
     rounds,
+    plannedRounds: rounds,
+    completedRounds,
     defensePrep,
     freeDebatePrep,
     sourcePrepTaskId,
@@ -1675,6 +1683,7 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   const capTriggers = Array.isArray(body.capTriggers) ? body.capTriggers : [];
   const submittedRounds = Number(body.rounds);
   const submittedDefenseRoundStates = body.defenseRoundStates || body.defense_round_states;
+  const completedRounds = Math.min(5, countMeaningfulUserMessages(reviewableMessages));
 
   if (!isValidLocalUserId(localUserId)) {
     throw badRequest('用户身份无效，请刷新页面后重试。');
@@ -1767,19 +1776,18 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   // Current clients always submit dimensions plus round states; only that
   // authoritative path is finalized here.
   if (trainingMode === 'defense' && dimensionScores.length) {
-    if (![3, 5].includes(submittedRounds)) {
-      throw badRequest('防守训练记录缺少有效轮数。');
-    }
-    if (!Array.isArray(submittedDefenseRoundStates)) {
-      throw badRequest('防守训练记录缺少逐轮状态，无法结算最终分数。');
-    }
-    rounds = submittedRounds;
-    defenseRoundStates = normalizeDefenseRoundStates(submittedDefenseRoundStates, rounds);
-    if (!defenseRoundStates.length) {
-      throw badRequest('防守训练记录缺少有效逐轮状态，无法结算最终分数。');
-    }
+    const statesFromMessages = reviewableMessages
+      .filter((item) => item?.role === 'user' && item.defenseRoundState)
+      .map((item) => item.defenseRoundState);
+    rounds = Number.isInteger(submittedRounds) && submittedRounds >= 1 && submittedRounds <= 5
+      ? submittedRounds
+      : Math.max(completedRounds, 1);
+    defenseRoundStates = Array.isArray(submittedDefenseRoundStates)
+      ? submittedDefenseRoundStates
+      : statesFromMessages;
   }
 
+  let finalizedScore = null;
   if (dimensionScores.length) {
     try {
       const finalized = finalizeReviewScore({
@@ -1787,8 +1795,11 @@ async function validateTrainingRecordPayload(body, authUser = null) {
         dimensionScores,
         capTriggers,
         defenseRoundStates,
-        rounds
+        rounds,
+        plannedRounds: rounds,
+        completedRounds: trainingMode === 'defense' ? completedRounds : undefined
       });
+      finalizedScore = finalized;
       score = finalized.finalScore;
       scoreLevel = finalized.scoreLevel;
       dimensionScores = finalized.dimensionScores.map((dimension) => ({
@@ -1826,6 +1837,9 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   }
 
   let defenseAnswerIndex = 0;
+  if (trainingMode === 'defense' && finalizedScore) {
+    defenseRoundStates = finalizedScore.defenseRoundStates;
+  }
   const persistedMessages = reviewableMessages
     .filter((item) => ['ai', 'assistant', 'user'].includes(item.role) && normalizeText(item.content))
     .map((item) => {
@@ -2073,7 +2087,7 @@ function validateTeamTaskPayload(body, authUser) {
   const userSide = normalizeOptionalSide(body.userSide || body.user_side);
   const aiSide = userSide ? getOpponentSide(userSide) : '';
   const mode = normalizeTrainingMode(normalizeText(body.mode || body.trainingMode || body.training_mode));
-  const difficulty = normalizeDifficulty(normalizeText(body.difficulty));
+  let difficulty = normalizeDifficulty(normalizeText(body.difficulty));
   const styleId = normalizeCelebrityDebater(normalizeText(body.styleId || body.style_id || 'none'));
   const requiredCount = clampNumber(Number(body.requiredCount || body.required_count || 1), 1, 20);
   const deadline = normalizeOptionalDate(body.deadline);
@@ -2110,7 +2124,10 @@ function validateTeamTaskPayload(body, authUser) {
     throw badRequest('请选择有效的训练模式。');
   }
 
-  if (!isValidDifficulty(difficulty)) {
+  if (getScoringRubric(mode).rubric.usesDifficulty === false) {
+    // Text tasks retain novice only as a legacy non-null database placeholder.
+    difficulty = 'novice';
+  } else if (!isValidDifficulty(difficulty)) {
     throw badRequest('请选择有效难度。');
   }
 
@@ -6559,6 +6576,8 @@ async function supabaseRequest(pathname, options = {}) {
 function mapTrainingRecordFromDb(record = {}) {
   const completedRecord = withCompletedTrainingMessages(record);
   const versionMetadata = getTrainingRecordVersionMetadata(completedRecord);
+  const trainingMode = completedRecord.training_mode || 'free_debate';
+  const difficultyMetadata = getDifficultyMetadata(trainingMode, completedRecord.difficulty);
   return {
     id: completedRecord.id,
     spaceType: completedRecord.space_type || (completedRecord.team_code ? 'team' : 'personal'),
@@ -6570,8 +6589,9 @@ function mapTrainingRecordFromDb(record = {}) {
     userSide: completedRecord.user_side,
     aiSide: completedRecord.ai_side,
     difficulty: completedRecord.difficulty,
+    ...difficultyMetadata,
     styleId: completedRecord.style_id,
-    trainingMode: completedRecord.training_mode || 'free_debate',
+    trainingMode,
     taskId: completedRecord.task_id || null,
     messages: completedRecord.messages,
     review: completedRecord.review || '',
@@ -6597,6 +6617,8 @@ function mapTeamFromDb(team = {}) {
 }
 
 function mapTeamTaskFromDb(task = {}) {
+  const mode = task.mode || 'free_debate';
+  const difficultyMetadata = getDifficultyMetadata(mode, task.difficulty || 'novice');
   return {
     id: task.id,
     teamCode: task.team_code,
@@ -6604,8 +6626,9 @@ function mapTeamTaskFromDb(task = {}) {
     topic: task.topic,
     userSide: task.user_side,
     aiSide: task.ai_side || (task.user_side ? getOpponentSide(task.user_side) : ''),
-    mode: task.mode || 'free_debate',
+    mode,
     difficulty: task.difficulty || 'novice',
+    ...difficultyMetadata,
     styleId: task.style_id || 'none',
     requiredCount: task.required_count || 1,
     deadline: task.deadline,
@@ -6620,6 +6643,14 @@ function mapTeamTaskFromDb(task = {}) {
     status: task.status || 'active',
     createdAt: task.created_at,
     updatedAt: task.updated_at
+  };
+}
+
+function getDifficultyMetadata(trainingMode, difficulty) {
+  const applicable = getScoringRubric(trainingMode).rubric.usesDifficulty !== false;
+  return {
+    difficultyApplicable: applicable,
+    difficultyDisplayName: applicable ? getDifficultyLabel(difficulty) : '统一标准'
   };
 }
 
@@ -6784,9 +6815,13 @@ function normalizeStructuredReview(parsed, trainingMode, difficulty = '') {
         ))
       : [],
     triggeredCaps: scoreCap.triggeredCaps,
+    hardCapCandidates: scoreCap.hardCapCandidates,
+    advisoryTriggers: scoreCap.advisoryTriggers,
+    appliedCap: scoreCap.appliedCap,
     scoreCapReasons: scoreCap.reasons,
     mode: rubric.appMode,
     modeDisplayName: rubric.displayName,
+    ...getDifficultyMetadata(rubric.appMode, difficulty),
     dimensionScores,
     battlefield: limitLength(normalizeText(parsed?.battlefield), 1000),
     mainWeakness: limitLength(normalizeText(parsed?.mainWeakness), 1000),
