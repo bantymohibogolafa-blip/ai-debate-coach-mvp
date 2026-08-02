@@ -38,6 +38,89 @@ const FOLLOW_UP_STRATEGIES = new Set([
 
 const SCORE_COMPONENTS = Object.keys(DEFENSE_SCORING_CONFIG.componentWeights);
 
+const REQUIRED_ROUND_SCORE_COMPONENTS = Object.freeze([
+  ...SCORE_COMPONENTS,
+  'delayedRecoveryQuality'
+]);
+
+export function validateDefenseTurnAnalysis(content, { hasNextRound = true, difficulty = 'campus' } = {}) {
+  const parsed = parseStrictJsonObject(content);
+  const errors = [];
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { valid: false, parsed: null, errors: ['root_must_be_json_object'] };
+  }
+
+  if (!ANSWER_STATUSES.has(parsed.answerStatus)) errors.push('answerStatus_invalid');
+  validateScoreNumber(parsed.currentQuestionCompletion, 'currentQuestionCompletion', errors);
+  if (typeof parsed.isCurrentQuestionAnswered !== 'boolean') errors.push('isCurrentQuestionAnswered_must_be_boolean');
+  for (const field of ['answeredQuestionIds', 'delayedAnswerQuestionIds', 'unresolvedPoints']) {
+    if (!Array.isArray(parsed[field]) || parsed[field].some((item) => typeof item !== 'string')) {
+      errors.push(`${field}_must_be_string_array`);
+    }
+  }
+  if (typeof parsed.reason !== 'string' || !parsed.reason.trim()) errors.push('reason_must_be_nonempty_string');
+  if (!FOLLOW_UP_STRATEGIES.has(parsed.followUpStrategy)) errors.push('followUpStrategy_invalid');
+  if (!parsed.roundScore || typeof parsed.roundScore !== 'object' || Array.isArray(parsed.roundScore)) {
+    errors.push('roundScore_must_be_object');
+  } else {
+    for (const field of REQUIRED_ROUND_SCORE_COMPONENTS) {
+      validateScoreNumber(parsed.roundScore[field], `roundScore.${field}`, errors);
+    }
+  }
+
+  if (hasNextRound) {
+    const next = parsed.nextQuestion;
+    if (!next || typeof next !== 'object' || Array.isArray(next)) {
+      errors.push('nextQuestion_must_be_object');
+    } else {
+      for (const field of ['questionText', 'targetPoint', 'requiredResponse']) {
+        if (typeof next[field] !== 'string' || !next[field].trim()) errors.push(`nextQuestion.${field}_must_be_nonempty_string`);
+      }
+      collectDefenseQuestionScopeErrors(next, difficulty, errors, 'nextQuestion.');
+    }
+  } else if (parsed.nextQuestion !== null) {
+    errors.push('nextQuestion_must_be_null_on_final_round');
+  }
+
+  return { valid: errors.length === 0, parsed, errors };
+}
+
+export function validateDefenseOpeningAnalysis(content, { difficulty = 'campus' } = {}) {
+  const parsed = parseStrictJsonObject(content);
+  const errors = [];
+  if (!parsed) return { valid: false, parsed: null, errors: ['root_must_be_json_object'] };
+  for (const field of ['questionText', 'targetPoint', 'requiredResponse']) {
+    if (typeof parsed[field] !== 'string' || !parsed[field].trim()) errors.push(`${field}_must_be_nonempty_string`);
+  }
+  collectDefenseQuestionScopeErrors(parsed, difficulty, errors);
+  return { valid: errors.length === 0, parsed, errors };
+}
+
+export function buildDefenseAnalysisRepairInstruction({ hasNextRound = true, difficulty = 'campus' } = {}) {
+  const nextQuestionExample = hasNextRound
+    ? '{"questionText":"沿用上一条下一轮质询","targetPoint":"沿用上一条攻击点","requiredResponse":"沿用上一条回应要求"}'
+    : 'null';
+  return [
+    '你上一条防守分析的JSON字段类型或结构不符合接口要求。只修复格式，不得重新评价用户回答，不得改变原有判断、分数或追问内容。',
+    '只输出一个JSON对象，不要Markdown或解释。所有分数字段必须是0到100之间的数字（不能是字符串或说明文字），isCurrentQuestionAnswered必须是布尔值。',
+    'answeredQuestionIds、delayedAnswerQuestionIds、unresolvedPoints必须是字符串数组；reason必须是非空字符串。',
+    'roundScore必须完整包含contentQuality、currentQuestionRelevance、responseCompleteness、timeliness、defensiveEffectiveness、delayedRecoveryQuality六个数字字段。',
+    hasNextRound
+      ? 'nextQuestion必须是对象，并完整包含非空字符串questionText、targetPoint、requiredResponse。'
+      : '本轮是最后一轮，nextQuestion必须严格为null。',
+    hasNextRound ? getDefenseQuestionScopeRepairRule(difficulty, 'nextQuestion') : '',
+    `严格结构示例：{"answerStatus":"partially_answered","currentQuestionCompletion":65,"isCurrentQuestionAnswered":false,"answeredQuestionIds":[],"delayedAnswerQuestionIds":[],"unresolvedPoints":["尚未回应的明确义务"],"reason":"沿用上一条判断说明","followUpStrategy":"press_unresolved_point","roundScore":{"contentQuality":70,"currentQuestionRelevance":75,"responseCompleteness":65,"timeliness":80,"defensiveEffectiveness":60,"delayedRecoveryQuality":0},"nextQuestion":${nextQuestionExample}}`
+  ].filter(Boolean).join('\n');
+}
+
+export function buildDefenseQuestionRepairInstruction({ difficulty = 'campus' } = {}) {
+  return [
+    '上一条质询的回应义务过多或问题结构不符合防守训练要求。请保持同一个核心攻击点，只缩短并重写问题，不得新增攻击点。',
+    getDefenseQuestionScopeRepairRule(difficulty, '本轮问题'),
+    '只输出严格JSON对象：{"questionText":"重写后的单一核心质询","targetPoint":"同一个核心攻击点","requiredResponse":"单一、可完成、不会移动的回应义务"}。不要解释修改过程。'
+  ].join('\n');
+}
+
 export function normalizeDefenseRoundStates(value, totalRounds) {
   if (!Array.isArray(value)) return [];
   const maxRounds = normalizeRoundLimit(totalRounds, 5);
@@ -212,6 +295,7 @@ export function normalizeDefenseRoundState(value, fallbackRound, context = {}) {
     context.currentQuestionId || questionId
   );
   const isDelayedAnswer = delayedAnswerQuestionIds.length > 0;
+  const isCurrentQuestionAddressed = answerStatus === 'fully_answered' || answerStatus === 'partially_answered';
   const followUpStrategy = FOLLOW_UP_STRATEGIES.has(source.followUpStrategy)
     ? source.followUpStrategy
     : chooseFallbackStrategy({ status: answerStatus, roundNumber, totalRounds: 3 });
@@ -219,6 +303,7 @@ export function normalizeDefenseRoundState(value, fallbackRound, context = {}) {
     completion: currentQuestionCompletion,
     status: answerStatus,
     isCurrentQuestionAnswered,
+    isCurrentQuestionAddressed,
     isDelayedAnswer
   });
   const answeredQuestionIds = [...delayedAnswerQuestionIds];
@@ -241,6 +326,7 @@ export function normalizeDefenseRoundState(value, fallbackRound, context = {}) {
     answeredQuestionIds,
     delayedAnswerQuestionIds,
     isDelayedAnswer,
+    isCurrentQuestionAddressed,
     isCurrentQuestionAnswered,
     followUpStrategy,
     roundScore,
@@ -253,16 +339,16 @@ function normalizeRoundScore(value, context) {
   const statusCap = DEFENSE_SCORING_CONFIG.statusCaps[context.status] ?? 79;
   const defaults = {
     contentQuality: context.completion,
-    currentQuestionRelevance: context.isCurrentQuestionAnswered ? context.completion : Math.min(context.completion, 35),
+    currentQuestionRelevance: context.isCurrentQuestionAddressed ? context.completion : Math.min(context.completion, 35),
     responseCompleteness: context.completion,
-    timeliness: context.isCurrentQuestionAnswered ? context.completion : 20,
-    defensiveEffectiveness: context.isCurrentQuestionAnswered ? context.completion : Math.min(context.completion, 35)
+    timeliness: context.isCurrentQuestionAddressed ? context.completion : 20,
+    defensiveEffectiveness: context.isCurrentQuestionAddressed ? context.completion : Math.min(context.completion, 35)
   };
   const result = {};
   for (const key of SCORE_COMPONENTS) {
     result[key] = clampNumber(source[key], 0, 100, defaults[key]);
   }
-  if (!context.isCurrentQuestionAnswered) {
+  if (!context.isCurrentQuestionAddressed) {
     result.currentQuestionRelevance = Math.min(result.currentQuestionRelevance, 35);
     result.timeliness = Math.min(result.timeliness, 20);
     result.defensiveEffectiveness = Math.min(result.defensiveEffectiveness, 35);
@@ -338,6 +424,33 @@ function chooseFallbackStrategy({ status, roundNumber, totalRounds }) {
   return 'clarify';
 }
 
+function collectDefenseQuestionScopeErrors(question, difficulty, errors, prefix = '') {
+  if (!question || typeof question !== 'object') return;
+  const questionText = typeof question.questionText === 'string' ? question.questionText.trim() : '';
+  const requiredResponse = typeof question.requiredResponse === 'string' ? question.requiredResponse.trim() : '';
+  const isNovice = difficulty === 'novice';
+  const questionLengthLimit = isNovice ? 120 : 220;
+  const responseLengthLimit = isNovice ? 55 : 100;
+  const questionMarkLimit = isNovice ? 1 : 2;
+  const connectorLimit = isNovice ? 0 : 1;
+  const questionMarkCount = (questionText.match(/[？?]/g) || []).length;
+  const dutyConnectorCount = (requiredResponse.match(/以及|分别|同时|并(?:说明|解释|回应|明确|给出|比较|论证)/g) || []).length;
+  const impossibleStandard = /百分之百|零风险|完全消除|立即(?:彻底)?阻断|绝对(?:不会|准确)/.test(`${questionText}\n${requiredResponse}`)
+    || (isNovice && /(?:确保|保证).{0,20}(?:不会|准确|无误)/.test(requiredResponse));
+  if (questionText.length > questionLengthLimit) errors.push(`${prefix}questionText_too_long_for_difficulty`);
+  if (requiredResponse.length > responseLengthLimit) errors.push(`${prefix}requiredResponse_too_long_for_difficulty`);
+  if (questionMarkCount > questionMarkLimit) errors.push(`${prefix}questionText_has_too_many_questions`);
+  if (dutyConnectorCount > connectorLimit) errors.push(`${prefix}requiredResponse_has_too_many_duties`);
+  if (impossibleStandard) errors.push(`${prefix}requires_impossible_standard`);
+}
+
+function getDefenseQuestionScopeRepairRule(difficulty, subject) {
+  if (difficulty === 'novice') {
+    return `${subject}只能包含一个问号、一个核心问题和一个回应义务；questionText不超过120个汉字，requiredResponse不超过55个汉字，不得用“并说明/并解释/以及/分别/同时”叠加第二项任务。不得要求百分之百保证、立即彻底阻断或完全消除风险。`;
+  }
+  return `${subject}只能围绕一个核心问题，最多两个紧密相关的子要求；questionText不超过220个汉字，requiredResponse不超过100个汉字。不得把百分之百保证、立即彻底阻断或完全消除风险设为唯一合格答案。`;
+}
+
 function parseJsonObject(content) {
   const text = cleanText(content);
   const start = text.indexOf('{');
@@ -378,6 +491,22 @@ function diceSimilarity(left, right) {
 
 function cleanText(value) {
   return String(value || '').trim().slice(0, 2000);
+}
+
+function parseStrictJsonObject(content) {
+  const text = cleanText(content);
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function validateScoreNumber(value, field, errors) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) {
+    errors.push(`${field}_must_be_number_0_100`);
+  }
 }
 
 function clampNumber(value, min, max, fallback) {

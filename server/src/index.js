@@ -32,10 +32,14 @@ import {
   normalizeScoringMode
 } from './scoringRubrics.js';
 import {
+  buildDefenseAnalysisRepairInstruction,
+  buildDefenseQuestionRepairInstruction,
   normalizeDefenseQuestion,
   normalizeDefenseRoundStates,
   parseDefenseOpening,
-  parseDefenseTurn
+  parseDefenseTurn,
+  validateDefenseOpeningAnalysis,
+  validateDefenseTurnAnalysis
 } from './defenseTraining.js';
 import { buildAbilityEstimate, buildRecentBehaviorEvidence } from './abilityProfile.js';
 import {
@@ -241,8 +245,18 @@ app.post('/api/debate/start', async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body);
     const messages = buildStartMessages(payload);
-    const content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'start'), payload);
+    let content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'start'), payload);
     if (payload.trainingMode === 'defense') {
+      let validation = validateDefenseOpeningAnalysis(content, { difficulty: payload.difficulty });
+      if (!validation.valid) {
+        content = await callDeepSeek([
+          ...messages,
+          { role: 'assistant', content },
+          { role: 'user', content: buildDefenseQuestionRepairInstruction({ difficulty: payload.difficulty }) }
+        ], { maxTokens: 900, temperature: 0 });
+        validation = validateDefenseOpeningAnalysis(content, { difficulty: payload.difficulty });
+      }
+      if (!validation.valid) throw defenseQuestionInvalidError(validation.errors);
       const opening = parseDefenseOpening(content, payload.rounds);
       return res.json({ content: cleanOpeningQuestion(opening.questionText), defenseQuestion: opening.question });
     }
@@ -301,7 +315,7 @@ app.post('/api/debate/respond', async (req, res, next) => {
     }
 
     const messages = buildRespondMessages({ ...payload, answer });
-    const content = await callDeepSeekComplete(
+    let content = await callDeepSeekComplete(
       messages,
       payload.trainingMode === 'defense'
         ? { maxTokens: 1500, temperature: 0.25 }
@@ -310,19 +324,37 @@ app.post('/api/debate/respond', async (req, res, next) => {
     );
 
     if (payload.trainingMode === 'defense') {
+      const currentRound = payload.defenseRoundStates.length + 1;
+      const validationContext = { hasNextRound: currentRound < payload.rounds, difficulty: payload.difficulty };
+      let validation = validateDefenseTurnAnalysis(content, validationContext);
+      if (!validation.valid) {
+        console.warn('[defense-round-analysis] Invalid schema; requesting one format-only repair.', {
+          round: currentRound,
+          totalRounds: payload.rounds,
+          errors: validation.errors
+        });
+        content = await callDeepSeek([
+          ...messages,
+          { role: 'assistant', content },
+          { role: 'user', content: buildDefenseAnalysisRepairInstruction(validationContext) }
+        ], { maxTokens: 1600, temperature: 0 });
+        validation = validateDefenseTurnAnalysis(content, validationContext);
+      }
+      if (!validation.valid) {
+        console.error('[defense-round-analysis] Schema still invalid after format-only repair.', {
+          round: currentRound,
+          totalRounds: payload.rounds,
+          errors: validation.errors
+        });
+        throw defenseAnalysisInvalidError(validation.errors);
+      }
       const analysis = parseDefenseTurn(content, {
-        currentRound: payload.defenseRoundStates.length + 1,
+        currentRound,
         totalRounds: payload.rounds,
         currentQuestion: payload.currentDefenseQuestion,
         previousRounds: payload.defenseRoundStates,
         userAnswer: answer
       });
-      if (!analysis.parseSucceeded) {
-        console.warn('[defense-round-analysis] Invalid model JSON; conservative fallback applied.', {
-          round: analysis.state.roundNumber,
-          totalRounds: payload.rounds
-        });
-      }
       console.info('[defense-round-analysis]', {
         round: analysis.state.roundNumber,
         totalRounds: payload.rounds,
@@ -4777,6 +4809,20 @@ function noMeaningfulUserInputError() {
   return error;
 }
 
+function defenseAnalysisInvalidError(validationErrors = []) {
+  const error = httpError(502, '防守逐轮分析格式异常。');
+  error.code = 'DEFENSE_ANALYSIS_INVALID';
+  error.validationErrors = validationErrors.slice(0, 20);
+  return error;
+}
+
+function defenseQuestionInvalidError(validationErrors = []) {
+  const error = httpError(502, '防守质询结构异常。');
+  error.code = 'DEFENSE_QUESTION_INVALID';
+  error.validationErrors = validationErrors.slice(0, 20);
+  return error;
+}
+
 function getPublicStatus(error) {
   if ([400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 504].includes(error.status)) {
     return error.status;
@@ -4816,6 +4862,14 @@ function getPublicErrorMessage(error) {
 
   if (error.code === 'NO_MEANINGFUL_USER_INPUT') {
     return '请先完成至少一次有效作答，再结束训练。';
+  }
+
+  if (error.code === 'DEFENSE_ANALYSIS_INVALID') {
+    return '本轮防守分析格式异常，未计入本轮成绩，请重试当前回答。';
+  }
+
+  if (error.code === 'DEFENSE_QUESTION_INVALID') {
+    return '本轮防守质询结构异常，请重新开始当前训练。';
   }
 
   if (error.code === 'REVIEW_PARSE_FAILED') {

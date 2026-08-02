@@ -39,12 +39,12 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
       history
     });
     assert.equal(reviewed.status, 200, trainingMode);
-    assert.equal(reviewed.body.structuredReview.score, trainingMode === 'defense' ? 61.1 : 80, trainingMode);
+    assert.equal(reviewed.body.structuredReview.score, trainingMode === 'defense' ? 66.5 : 80, trainingMode);
     assert.equal(
       reviewed.body.structuredReview.scoreLevel,
       ['constructive', 'summary', 'closing'].includes(trainingMode)
         ? '良好'
-        : trainingMode === 'defense' ? '明显不足' : '校赛可用',
+        : trainingMode === 'defense' ? '基本完成' : '校赛可用',
       trainingMode
     );
     assert.equal(reviewed.body.structuredReview.difficultyApplicable, !['constructive', 'summary', 'closing'].includes(trainingMode));

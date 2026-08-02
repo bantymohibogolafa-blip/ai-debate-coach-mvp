@@ -669,6 +669,9 @@ export function buildStartMessages({
 
   if (trainingMode === 'defense') {
     const plannedDefenseRounds = Math.min(5, Math.max(1, Math.floor(Number(rounds) || 3)));
+    const defenseQuestionScopeInstruction = difficulty === 'novice'
+      ? '新手难度每轮只能设置一个核心问题和一个明确回应义务，不得叠加第二项子要求。'
+      : '每轮只能设置一个核心问题和一个明确回应义务；确有必要时最多拆成两项紧密相关的子要求，不得继续叠加。';
     return [
       {
         role: 'system',
@@ -683,7 +686,9 @@ export function buildStartMessages({
           '难度要求会决定问题的直接程度、复杂度、长度、刁钻程度和论证引用密度；必须优先执行当前难度要求。',
           '你必须根据用户提前输入的己方分论点和论据进行质询，问题要具体打到分论点、事实依据、因果链、边界条件或现实可行性。',
           '不要泛泛要求用户“说明你的观点”，不要替用户总结，不要给用户建议，不要输出防守示范。',
-          '可以在同一轮提出一个或多个问题，但必须围绕同一个压力点；问题长度按当前难度控制。',
+          defenseQuestionScopeInstruction,
+          '问题长度按当前难度控制；requiredResponse必须完整、明确地冻结本轮全部回应义务。',
+          '不得把“百分之百保证”“立即彻底阻断”“完全消除风险”或其他现实中不可达的绝对标准设成唯一合格答案；用户用合理机制、概率控制或风险比较正面回应时，应保留可完成的答题路径。',
           '本次防守训练统一使用结构化轮次状态机；当前是第1轮。每轮问题必须具有唯一questionId。用户可以在完成任意1至5轮后结束，只评价实际完成轮次。',
           '只输出严格JSON，不要输出JSON之外的文字：{"questionText":"完整质询文本","targetPoint":"本轮唯一核心攻击点","requiredResponse":"用户需要完成的具体回应"}。',
           '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。'
@@ -816,6 +821,12 @@ export function buildRespondMessages({
     const currentDefenseRound = Math.min(completedDefenseRounds + 1, plannedDefenseRounds);
     const remainingDefenseRounds = Math.max(0, plannedDefenseRounds - currentDefenseRound);
     const defenseRoundContext = buildDefenseRoundContext(defenseRoundStates, rounds);
+    const defenseQuestionScopeInstruction = difficulty === 'novice'
+      ? '新手难度的nextQuestion只能有一个核心问题和一个明确回应义务，不得叠加第二项子要求。'
+      : 'nextQuestion只能有一个核心问题和一个明确回应义务；确有必要时最多拆成两项紧密相关的子要求。';
+    const defenseNextQuestionExample = remainingDefenseRounds > 0
+      ? '{"questionText":"下一轮单一核心质询","targetPoint":"下一攻击点","requiredResponse":"下一轮明确回应义务"}'
+      : 'null';
     return [
       {
         role: 'system',
@@ -832,12 +843,18 @@ export function buildRespondMessages({
           '先校对用户回答归属，再决定下一问。回答历史问题不等于回答当前问题；延迟补答只能有限认可，不能覆盖原轮次失误，也不能替代当前问题。',
           '如果当前问题完整解决，切换新攻击点；部分解决时只追缺失部分；未回答、回避或答非所问时，必须改写、缩窄或加压，禁止原样重复上一问。',
           '三轮模式节奏更紧，最后一轮优先处理最关键遗留点；五轮模式应逐步使用澄清、缩窄、反例、比较或加压，不能连续重复同一问题。',
-          '每个已结束轮次的状态不可被后续答案改写。模型解析不确定时必须保守标记为partially_answered，不得默认完整回答。',
+          '每个已结束轮次的状态不可被后续答案改写。',
+          '本轮完成度只能对照当前问题中已经冻结的requiredResponse判断。回答后新暴露的漏洞只能用于下一轮攻击，不得倒推增加本轮义务，不得把新漏洞写入本轮unresolvedPoints，也不得因此把fully_answered降为partially_answered。',
+          '不得把本轮标准升级为百分之百保证、立即彻底阻断或完全消除风险。若用户指出绝对标准不合理，并给出风险控制机制、适用边界或双方方案比较，视为已经回应当前问题；论证强弱进入roundScore，不得仅因无法消灭全部风险判为回避。',
+          'fully_answered表示requiredResponse中全部明确义务均已正面回应；即使论证质量较弱，也应通过roundScore降分而不是改判未完成。partially_answered表示已正面回应当前问题，但仍缺少requiredResponse中的一项明确义务。evaded表示绕开核心义务，off_topic表示内容与当前问题无关，unanswered表示没有实质回答。',
           '质询要具体打到分论点、事实依据、因果链、边界条件或现实可行性，问题长度按当前难度控制。',
-          '只输出严格JSON，不要输出JSON之外的文字。字段必须包括：answerStatus、currentQuestionCompletion、isCurrentQuestionAnswered、answeredQuestionIds、delayedAnswerQuestionIds、unresolvedPoints、reason、followUpStrategy、roundScore。',
+          defenseQuestionScopeInstruction,
+          '只输出严格JSON，不要输出JSON之外的文字。字段必须包括：answerStatus、currentQuestionCompletion、isCurrentQuestionAnswered、answeredQuestionIds、delayedAnswerQuestionIds、unresolvedPoints、reason、followUpStrategy、roundScore、nextQuestion。',
           'answerStatus只能是fully_answered、partially_answered、off_topic、evaded、unanswered；followUpStrategy只能是new_attack、clarify、narrow_question、press_unresolved_point、escalate、final_pressure。',
-          'roundScore必须包含contentQuality、currentQuestionRelevance、responseCompleteness、timeliness、defensiveEffectiveness、delayedRecoveryQuality，均为0-100；逐轮层只判断当前问题归属、完成度、即时性与有限延迟补答，不得决定最终总分。',
+          'currentQuestionCompletion和roundScore各项必须是0-100之间的数字，不能写成字符串、百分号或说明文字；isCurrentQuestionAnswered必须是true或false布尔值；三个Ids/Points字段必须是字符串数组。partially_answered表示已经回应但未完全解决，因此isCurrentQuestionAnswered为false。',
+          'roundScore必须包含contentQuality、currentQuestionRelevance、responseCompleteness、timeliness、defensiveEffectiveness、delayedRecoveryQuality六项；逐轮层只判断当前问题归属、完成度、即时性与有限延迟补答，不得决定最终总分。',
           '如果还有下一轮，额外输出nextQuestion：{"questionText":"不得机械重复的下一轮质询","targetPoint":"攻击点","requiredResponse":"明确回应要求"}；如果本轮已是最后一轮，nextQuestion必须为null。',
+          `严格类型示例：{"answerStatus":"partially_answered","currentQuestionCompletion":65,"isCurrentQuestionAnswered":false,"answeredQuestionIds":[],"delayedAnswerQuestionIds":[],"unresolvedPoints":["尚未完成的原定回应义务"],"reason":"已回应核心问题但遗漏一项原定义务","followUpStrategy":"press_unresolved_point","roundScore":{"contentQuality":70,"currentQuestionRelevance":75,"responseCompleteness":65,"timeliness":80,"defensiveEffectiveness":60,"delayedRecoveryQuality":0},"nextQuestion":${defenseNextQuestionExample}}`,
           '如果辩题涉及未成年人、校园关系、情感关系等内容，只讨论规则、责任、影响与价值判断，不生成露骨或成人化内容。'
         ].join('\n')
       },

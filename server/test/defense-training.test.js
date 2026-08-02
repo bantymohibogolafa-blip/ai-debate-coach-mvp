@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DEFENSE_SCORING_CONFIG,
+  buildDefenseAnalysisRepairInstruction,
+  buildDefenseQuestionRepairInstruction,
   calculateDefenseFinalScore,
   normalizeDefenseRoundStates,
-  parseDefenseTurn
+  parseDefenseTurn,
+  validateDefenseOpeningAnalysis,
+  validateDefenseTurnAnalysis
 } from '../src/defenseTraining.js';
 
 function question(roundNumber, text = `第${roundNumber}轮问题`) {
@@ -33,7 +37,7 @@ function modelTurn(overrides = {}) {
       responseCompleteness: 90,
       timeliness: 90,
       defensiveEffectiveness: 90,
-      delayedRecovery: 0
+      delayedRecoveryQuality: 0
     },
     nextQuestion: question(2, '请比较双方方案的独特优势。'),
     ...overrides
@@ -109,8 +113,51 @@ test('partial answers preserve unresolved points and repeated questions are rewr
 
   assert.equal(result.state.answerStatus, 'partially_answered');
   assert.deepEqual(result.state.unresolvedPoints, ['判断标准的客观依据']);
+  assert.equal(result.state.isCurrentQuestionAddressed, true);
+  assert.equal(result.state.roundScore.currentQuestionRelevance, 90);
+  assert.equal(result.state.roundScore.timeliness, 90);
+  assert.equal(result.state.roundScore.defensiveEffectiveness, 90);
+  assert.equal(result.state.roundScore.total, 79);
   assert.notEqual(result.nextQuestion.questionText, repeatedText);
   assert.match(result.nextQuestion.questionText, /直接给出结论和依据/);
+});
+
+test('strict defense analysis validation rejects prose scores and accepts the exact schema', () => {
+  const malformed = modelTurn({ currentQuestionCompletion: '回答较完整，约90分' });
+  const invalid = validateDefenseTurnAnalysis(malformed, { hasNextRound: true });
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.errors.includes('currentQuestionCompletion_must_be_number_0_100'));
+
+  const valid = validateDefenseTurnAnalysis(modelTurn(), { hasNextRound: true });
+  assert.equal(valid.valid, true);
+  assert.deepEqual(valid.errors, []);
+});
+
+test('strict defense analysis validation enforces final-round null and repair keeps evaluation frozen', () => {
+  const invalidFinal = validateDefenseTurnAnalysis(modelTurn(), { hasNextRound: false });
+  assert.equal(invalidFinal.valid, false);
+  assert.ok(invalidFinal.errors.includes('nextQuestion_must_be_null_on_final_round'));
+
+  const repair = buildDefenseAnalysisRepairInstruction({ hasNextRound: false });
+  assert.match(repair, /只修复格式/);
+  assert.match(repair, /不得重新评价/);
+  assert.match(repair, /nextQuestion必须严格为null/);
+});
+
+test('novice defense questions enforce one bounded and realistically answerable duty', () => {
+  const overloaded = JSON.stringify({
+    questionText: '你如何保证内容绝对准确？并且如何确保学生永远不会形成错误认知？',
+    targetPoint: '错误风险',
+    requiredResponse: '请说明如何确保所有内容准确，并解释如何立即彻底阻断任何错误认知。'
+  });
+  const validation = validateDefenseOpeningAnalysis(overloaded, { difficulty: 'novice' });
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.includes('questionText_has_too_many_questions'));
+  assert.ok(validation.errors.includes('requiredResponse_has_too_many_duties'));
+  assert.ok(validation.errors.includes('requires_impossible_standard'));
+  const repair = buildDefenseQuestionRepairInstruction({ difficulty: 'novice' });
+  assert.match(repair, /一个问号、一个核心问题和一个回应义务/);
+  assert.match(repair, /不得要求百分之百保证/);
 });
 
 test('historical and current questions can be recognized separately in one answer', () => {

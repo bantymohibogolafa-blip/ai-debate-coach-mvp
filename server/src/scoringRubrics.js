@@ -238,7 +238,7 @@ const rubricCatalog = {
     id: 'defensive_cx',
     appMode: 'defense',
     displayName: '防守训练',
-    rubricVersion: 'realtime_v2',
+    rubricVersion: 'realtime_v3',
     usesDifficulty: true,
     scoreLevels: realtimeScoreLevels,
     coreGoal: '评价用户作为被质询方时，能否正面回应、识别陷阱、守住核心立场、完成概念切割，并在必要时反压。',
@@ -549,11 +549,11 @@ export function finalizeReviewScore({
   const validatedCapTriggers = isDefense
     ? validateDefenseCapTriggers(capTriggers, states)
     : capTriggers;
-  const generalCaps = applyMandatoryScoreCaps(weighted.rawScore, validatedCapTriggers, rubric);
   const defenseResult = isDefense
     ? calculateDefenseFinalScore(weighted.rawScore, states, reconciliation.completedRounds || reconciliation.plannedRounds)
     : null;
   const blendedScore = defenseResult ? defenseResult.blendedScore : weighted.rawScore;
+  const generalCaps = applyMandatoryScoreCaps(blendedScore, validatedCapTriggers, rubric);
   const defenseCapReason = defenseResult?.cap
     ? `防守逐轮状态触发封顶：最高 ${defenseResult.cap} 分。`
     : null;

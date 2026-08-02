@@ -272,6 +272,24 @@ test('uncapped defense preserves the 55/45 blend as the final score', () => {
   assert.equal(result.finalScore, 84.4);
 });
 
+test('uncapped defense 55/45 blend can raise a low review score when round evidence is stronger', () => {
+  const result = finalizeReviewScore({
+    trainingMode: 'defense',
+    dimensionScores: scoresFor('defense', [40, 40, 40, 40, 40]),
+    defenseRoundStates: [
+      defenseRoundState(1, 'fully_answered', 80),
+      defenseRoundState(2, 'fully_answered', 80),
+      defenseRoundState(3, 'fully_answered', 80)
+    ],
+    plannedRounds: 3,
+    completedRounds: 3
+  });
+  assert.equal(result.rawScore, 40);
+  assert.equal(result.blendedScore, 58);
+  assert.equal(result.finalScore, 58);
+  assert.equal(result.appliedCap, null);
+});
+
 test('text V2 has seven levels, mode-specific anchors and lowest-cap semantics', () => {
   for (const mode of ['constructive', 'summary', 'closing']) {
     const { rubric } = getScoringRubric(mode);

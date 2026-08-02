@@ -48,7 +48,7 @@ function state(roundNumber, answerStatus = 'fully_answered', componentScore = 90
 test('realtime policies distinguish hard caps, advisory rules, and unknown codes', () => {
   for (const mode of ['free_debate', 'attack', 'defense']) {
     const rubric = getScoringRubric(mode).rubric;
-    assert.equal(rubric.rubricVersion, 'realtime_v2');
+    assert.equal(rubric.rubricVersion, mode === 'defense' ? 'realtime_v3' : 'realtime_v2');
     assert.equal(rubric.usesDifficulty, true);
     assert.ok(rubric.capRules.some((rule) => rule.enforcement === 'hard'));
     assert.ok(rubric.capRules.some((rule) => rule.enforcement === 'advisory'));
@@ -164,17 +164,18 @@ test('missing completed states are conservatively filled and future states are t
   assert.match(extra.dataIntegrityWarning, /多于|多余/);
 });
 
-test('contradictory fully answered state is downgraded and component caps are deterministic', () => {
+test('contradictory fully answered state is downgraded without treating an addressed answer as absent', () => {
   const [normalized] = normalizeDefenseRoundStates([state(1, 'fully_answered', 100, {
     currentQuestionCompletion: 20,
     isCurrentQuestionAnswered: false
   })], 1);
   assert.equal(normalized.answerStatus, 'partially_answered');
   assert.equal(normalized.isCurrentQuestionAnswered, false);
-  assert.ok(normalized.roundScore.currentQuestionRelevance <= 35);
-  assert.ok(normalized.roundScore.timeliness <= 20);
-  assert.ok(normalized.roundScore.defensiveEffectiveness <= 35);
-  assert.ok(normalized.roundScore.total < 80);
+  assert.equal(normalized.isCurrentQuestionAddressed, true);
+  assert.equal(normalized.roundScore.currentQuestionRelevance, 100);
+  assert.equal(normalized.roundScore.timeliness, 100);
+  assert.equal(normalized.roundScore.defensiveEffectiveness, 100);
+  assert.equal(normalized.roundScore.total, 79);
 });
 
 test('delayed recovery accepts only one valid unresolved historical question', () => {
@@ -263,8 +264,26 @@ test('text training prompts have no difficulty semantics while realtime modes re
   }
 });
 
+test('defense prompts freeze response duties and prevent moving-goalpost downgrades', () => {
+  const base = {
+    topic: '测试辩题', userSide: 'affirmative', aiSide: 'negative', celebrityDebater: 'none',
+    trainingMode: 'defense', rounds: 3, history: [{ role: 'user', content: '测试回答' }],
+    answer: '测试回答', defenseRoundStates: [], currentDefenseQuestion: {
+      questionId: 'defense_round_1_question_1', questionText: '测试问题', targetPoint: '测试点', requiredResponse: '回应测试点'
+    }, defensePrep: '准备'
+  };
+  const noviceStart = JSON.stringify(buildStartMessages({ ...base, difficulty: 'novice' }));
+  const noviceResponse = JSON.stringify(buildRespondMessages({ ...base, difficulty: 'novice' }));
+  assert.match(noviceStart, /一个核心问题和一个明确回应义务/);
+  assert.match(noviceStart, /不得叠加第二项子要求/);
+  assert.match(noviceResponse, /只能对照当前问题中已经冻结的requiredResponse判断/);
+  assert.match(noviceResponse, /新暴露的漏洞只能用于下一轮攻击/);
+  assert.match(noviceResponse, /通过roundScore降分而不是改判未完成/);
+  assert.match(noviceResponse, /必须是0-100之间的数字/);
+});
+
 test('the scoring policy version is advanced without changing text rubric version', () => {
-  assert.equal(CURRENT_SCORING_VERSION, 'scoring_v5');
-  assert.equal(getScoringRubric('defense').rubric.rubricVersion, 'realtime_v2');
+  assert.equal(CURRENT_SCORING_VERSION, 'scoring_v6');
+  assert.equal(getScoringRubric('defense').rubric.rubricVersion, 'realtime_v3');
   assert.equal(getScoringRubric('constructive').rubric.rubricVersion, 'text_v2');
 });
