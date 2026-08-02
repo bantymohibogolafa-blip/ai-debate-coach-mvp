@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:ability": "node --test test/ability-policy.test.js test/ability-projection.test.js test/difficulty-calibration.test.js test/ability-profile-regression.test.js test/ability-profile.test.js test/ability-estimate-audit.test.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
