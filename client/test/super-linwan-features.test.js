@@ -35,6 +35,25 @@ test('scope adjustment, task note, and latest-round revocation use the existing 
   assert.match(prepSource, /\/revoke-latest`/);
   assert.match(prepSource, /撤回本轮/);
   assert.match(prepSource, /expectedVersion: detail\.task\.version/);
+  assert.match(prepSource, /prematch-note-fab/);
+  assert.match(prepSource, /prematch-note-backdrop/);
+  assert.match(prepSource, /aria-haspopup="dialog"/);
+  assert.match(styleSource, /\.prematch-note-card\.mobile-open/);
+  assert.match(styleSource, /position:\s*fixed/);
+});
+
+test('mobile task workspace prioritizes one scrolling chat surface and collapses secondary controls', () => {
+  assert.match(prepSource, /prematch-task-menu-trigger/);
+  assert.match(prepSource, /prematch-mobile-task-meta/);
+  assert.match(prepSource, /prematch-tools-trigger/);
+  assert.match(prepSource, /prematch-chat-tools \$\{isToolsOpen \? 'mobile-open'/);
+  assert.match(prepSource, /rows=\{2\}/);
+  assert.equal(prepSource.includes('prematch-boundary-note'), false);
+  assert.equal(prepSource.includes('prematch-scope-badge'), false);
+  assert.match(styleSource, /body\.prematch-workspace-open\s*\{\s*overflow:\s*hidden/);
+  assert.match(styleSource, /\.prematch-chat-list\s*\{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?max-height:\s*none/);
+  assert.match(styleSource, /\.prematch-chat-input\s*\{[\s\S]*?grid-template-columns:\s*44px minmax\(0, 1fr\) auto/);
+  assert.match(styleSource, /\.prematch-task-card\s*\{[\s\S]*?min-height:\s*0/);
 });
 
 test('evidence scope renders only Chinese displayQuery and keeps internal searchQuery hidden', () => {

@@ -119,6 +119,12 @@ export default function SuperLinWanPrep({
     });
   }, [detail?.messages?.length, isSending]);
 
+  useEffect(() => {
+    if (!detail?.task?.id) return undefined;
+    document.body.classList.add('prematch-workspace-open');
+    return () => document.body.classList.remove('prematch-workspace-open');
+  }, [detail?.task?.id]);
+
   async function loadTasks() {
     if (!isLoggedIn) return;
     setListStatus({ loading: true, error: '' });
@@ -521,6 +527,7 @@ export default function SuperLinWanPrep({
   if (detail) {
     return (
       <PrematchTaskWorkspace
+        key={detail.task.id}
         detail={detail}
         question={question}
         isSending={isSending}
@@ -586,8 +593,7 @@ export default function SuperLinWanPrep({
         <div>
           <p className="eyebrow">赛前备战｜Super 林婉</p>
           <h2>与 Super 林婉围绕一个任务持续讨论</h2>
-          <p>每个任务都有一段独立、连续的对话。这里不会读取训练记录、能力画像、日常聊天或其他任务。</p>
-          <div className="prematch-scope-badge">当前保存到：个人任务</div>
+          <p>每个任务独立保存，进入后可以持续推进同一场比赛的思路。</p>
         </div>
         <button type="button" className="primary-button" disabled={!canCreateInScope} onClick={beginCreate}>
           创建备战任务
@@ -699,7 +705,11 @@ function PrematchTaskWorkspace({
   onRestore,
   onDelete
 }) {
+  const [isNoteOpen, setIsNoteOpen] = useState(false);
+  const [isTaskMenuOpen, setIsTaskMenuOpen] = useState(false);
+  const [isToolsOpen, setIsToolsOpen] = useState(false);
   const { task, messages, permissions } = detail;
+  const hasUnsavedNote = noteDraft !== (task.strategyState?.note || '');
   const latestSearchMessage = [...messages].reverse().find((message) => (
     message.role === 'assistant' && message.contextManifest?.search
   ));
@@ -718,10 +728,36 @@ function PrematchTaskWorkspace({
     message.contextManifest?.challenge?.messageType !== 'challenge_trigger'
   ));
 
+  useEffect(() => {
+    if (!isNoteOpen && !isTaskMenuOpen && !isToolsOpen && !isEditing) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      if (isNoteOpen) setIsNoteOpen(false);
+      else if (isTaskMenuOpen) setIsTaskMenuOpen(false);
+      else if (isToolsOpen) setIsToolsOpen(false);
+      else if (isEditing) onEditCancel();
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [isEditing, isNoteOpen, isTaskMenuOpen, isToolsOpen, onEditCancel]);
+
+  function runTaskAction(action) {
+    setIsTaskMenuOpen(false);
+    action();
+  }
+
+  function runChatTool(action) {
+    setIsToolsOpen(false);
+    action();
+  }
+
   return (
     <section className="prematch-workspace">
       <section className="panel prematch-task-header">
-        <button type="button" className="prematch-back-button" onClick={onBack}>← 返回任务列表</button>
+        <button type="button" className="prematch-back-button" onClick={onBack} aria-label="返回任务列表">
+          <span aria-hidden="true">←</span>
+          <span className="prematch-back-label">返回任务列表</span>
+        </button>
         <div className="prematch-task-title-row">
           <div>
             <p className="eyebrow">Super 林婉任务空间</p>
@@ -730,20 +766,53 @@ function PrematchTaskWorkspace({
           </div>
           <span className={`prematch-status ${task.status}`}>{task.status === 'archived' ? '已归档' : '进行中'}</span>
         </div>
+        <div className="prematch-mobile-task-meta" aria-label="任务状态">
+          <span>{task.status === 'archived' ? '已归档' : '进行中'}</span>
+          <span>{getLabel(stanceOptions, task.stance)}</span>
+        </div>
         <div className="prematch-task-meta">
           <span>立场：{getLabel(stanceOptions, task.stance)}</span>
         </div>
         {permissions.canManage && (
-          <div className="prematch-manage-actions">
-            <button type="button" onClick={onEdit} disabled={isSaving}>修改任务</button>
+          <button
+            type="button"
+            className="prematch-task-menu-trigger"
+            onClick={() => setIsTaskMenuOpen((current) => !current)}
+            aria-label="打开任务管理菜单"
+            aria-haspopup="menu"
+            aria-expanded={isTaskMenuOpen}
+          >
+            ···
+          </button>
+        )}
+        {isTaskMenuOpen && (
+          <button
+            type="button"
+            className="prematch-task-menu-backdrop"
+            onClick={() => setIsTaskMenuOpen(false)}
+            aria-label="关闭任务管理菜单"
+          />
+        )}
+        {permissions.canManage && (
+          <div className={`prematch-manage-actions ${isTaskMenuOpen ? 'mobile-open' : ''}`} role={isTaskMenuOpen ? 'menu' : undefined}>
+            <button type="button" onClick={() => runTaskAction(onEdit)} disabled={isSaving}>修改任务</button>
             {task.status === 'active'
-              ? <button type="button" onClick={onArchive} disabled={isSaving}>归档任务</button>
-              : <button type="button" onClick={onRestore} disabled={isSaving}>恢复任务</button>}
-            <button type="button" className="danger" onClick={onDelete} disabled={isSaving}>删除任务</button>
+              ? <button type="button" onClick={() => runTaskAction(onArchive)} disabled={isSaving}>归档任务</button>
+              : <button type="button" onClick={() => runTaskAction(onRestore)} disabled={isSaving}>恢复任务</button>}
+            <button type="button" className="danger" onClick={() => runTaskAction(onDelete)} disabled={isSaving}>删除任务</button>
           </div>
         )}
         {actionStatus && <div className="history-status">{actionStatus}</div>}
       </section>
+
+      {isEditing && (
+        <button
+          type="button"
+          className="prematch-edit-backdrop"
+          onClick={onEditCancel}
+          aria-label="关闭任务编辑"
+        />
+      )}
 
       {isEditing && (
         <section className="panel prematch-edit-card">
@@ -765,13 +834,45 @@ function PrematchTaskWorkspace({
         </section>
       )}
 
-      <section className="panel prematch-note-card">
+      <button
+        type="button"
+        className={`prematch-note-fab ${hasUnsavedNote ? 'has-unsaved-note' : ''} ${isNoteOpen || isToolsOpen ? 'is-hidden' : ''}`}
+        onClick={() => setIsNoteOpen(true)}
+        aria-haspopup="dialog"
+        aria-expanded={isNoteOpen}
+      >
+        <span aria-hidden="true">✎</span>
+        任务笔记
+      </button>
+
+      {isNoteOpen && (
+        <button
+          type="button"
+          className="prematch-note-backdrop"
+          onClick={() => setIsNoteOpen(false)}
+          aria-label="关闭任务笔记"
+        />
+      )}
+
+      <section
+        className={`panel prematch-note-card ${isNoteOpen ? 'mobile-open' : ''}`}
+        role={isNoteOpen ? 'dialog' : undefined}
+        aria-modal={isNoteOpen ? 'true' : undefined}
+        aria-labelledby={isNoteOpen ? 'prematch-note-title' : undefined}
+      >
         <div className="panel-header">
           <div>
             <p className="eyebrow">当前任务笔记</p>
-            <h2>记录你的备战想法</h2>
+            <h2 id="prematch-note-title">记录你的备战想法</h2>
           </div>
-          <span className="badge">仅当前任务</span>
+          <button
+            type="button"
+            className="prematch-note-close"
+            onClick={() => setIsNoteOpen(false)}
+            aria-label="关闭任务笔记"
+          >
+            ×
+          </button>
         </div>
         <textarea
           value={noteDraft}
@@ -796,9 +897,7 @@ function PrematchTaskWorkspace({
               <p className="eyebrow">任务对话</p>
               <h2>和 Super 林婉共同推进</h2>
             </div>
-            <span className="badge">仅当前任务</span>
           </div>
-          <p className="prematch-boundary-note">这里仅使用当前任务资料、当前任务内记忆和当前任务消息，不读取训练记录、能力画像、日常聊天或其他任务。</p>
           <div className="prematch-chat-list">
             {visibleMessages.map((message) => {
               const challenge = message.contextManifest?.challenge;
@@ -852,14 +951,26 @@ function PrematchTaskWorkspace({
             <div ref={chatEndRef} />
           </div>
           {chatError && <div className="assistant-error">{chatError}</div>}
-          <div className="prematch-chat-tools" aria-label="任务快捷提示">
+          {isToolsOpen && (
+            <button
+              type="button"
+              className="prematch-tools-backdrop"
+              onClick={() => setIsToolsOpen(false)}
+              aria-label="关闭对话工具"
+            />
+          )}
+          <div className={`prematch-chat-tools ${isToolsOpen ? 'mobile-open' : ''}`} aria-label="任务快捷提示">
+            <div className="prematch-tools-heading">
+              <strong>对话工具</strong>
+              <button type="button" onClick={() => setIsToolsOpen(false)} aria-label="关闭对话工具">×</button>
+            </div>
             <div className="prematch-quick-prompts">
               {quickPrompts.map((prompt) => (
                 <button
                   type="button"
                   key={prompt.intent}
                   disabled={isSending || !permissions.canChat || challengeState.active}
-                  onClick={() => onQuickPrompt(prompt)}
+                  onClick={() => runChatTool(() => onQuickPrompt(prompt))}
                 >
                   {prompt.label}
                 </button>
@@ -869,7 +980,7 @@ function PrematchTaskWorkspace({
               type="button"
               className="prematch-report-button"
               disabled={isSending || !permissions.canChat || challengeState.active}
-              onClick={onCreateReport}
+              onClick={() => runChatTool(onCreateReport)}
             >
               形成当前思路报告
             </button>
@@ -878,7 +989,7 @@ function PrematchTaskWorkspace({
                 type="button"
                 className="prematch-challenge-button"
                 disabled={isSending || !permissions.canChat}
-                onClick={onStartChallenge}
+                onClick={() => runChatTool(onStartChallenge)}
                 title="让林婉从对方角度追问当前思路"
               >
                 检验一下
@@ -900,11 +1011,22 @@ function PrematchTaskWorkspace({
             </div>
           )}
           <form className="prematch-chat-input" onSubmit={onSend}>
+            <button
+              type="button"
+              className="prematch-tools-trigger"
+              onClick={() => setIsToolsOpen((current) => !current)}
+              aria-label="打开对话工具"
+              aria-haspopup="menu"
+              aria-expanded={isToolsOpen}
+              disabled={isSending || !permissions.canChat || challengeState.active}
+            >
+              ＋
+            </button>
             <textarea
               value={question}
               onChange={(event) => onQuestionChange(event.target.value)}
               disabled={isSending || !permissions.canChat || challengeState.phase === 'feedback'}
-              rows={4}
+              rows={2}
               placeholder={permissions.canChat
                 ? challengeState.phase === 'awaiting_answer'
                   ? '现场回答对方的追问…'
