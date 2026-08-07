@@ -91,7 +91,9 @@ import { searchEvidence } from './search/index.js';
 import {
   cleanEvidenceResults,
   mergeEvidenceLibrary,
-  publicEvidenceSource
+  publicEvidenceSource,
+  resolveEvidenceDisplaySummary,
+  sanitizeEvidenceTitle
 } from './search/evidenceSources.js';
 import {
   buildReviewableMessages,
@@ -825,7 +827,9 @@ app.post('/api/prematch/tasks/:taskId/chat', requireAuth, async (req, res, next)
     if (searchContext?.status === 'fallback' || searchContext?.status === 'unavailable') {
       answer = `本轮联网检索失败，以下只是检索方案，不是已核实的事实材料。\n\n${answer}`;
     } else if (searchContext?.status === 'partial') {
-      answer = `部分检索请求失败，本轮来源可能不完整。\n\n${answer}`;
+      answer = '部分检索请求失败。本轮已取得的材料已整理为下方极简论据卡片，原始资料可通过“查看原始来源”核验。';
+    } else if (searchContext?.status === 'success' && searchContext.sources?.length) {
+      answer = '本轮材料已整理为下方极简论据卡片。每条只保留中文核心摘要，原始资料可通过“查看原始来源”核验。';
     }
     if (!answer) throw httpError(502, 'Super 林婉暂时没有整理好回答，请重试。');
 
@@ -2690,22 +2694,22 @@ function buildEvidenceDisplaySources(sources, evidenceItems) {
   );
   return (Array.isArray(sources) ? sources : []).map((source) => {
     const item = itemById.get(source.id) || {};
-    const legacySummary = [item.evidenceContent, item.applicationAnalysis]
-      .map(normalizeText)
-      .filter(Boolean)
-      .join(' ');
-    const fallbackSummary = source.sourceLanguage === 'zh-CN'
-      ? '该材料可作为当前辩题的参考来源；具体支持方向、适用边界和限制请结合原始资料核验。'
-      : '该外文材料可作为当前辩题的参考来源；具体支持方向、适用边界和限制请结合原始资料核验。';
+    const evidenceTitle = sanitizeEvidenceTitle(item.evidenceTitle || item.coreConclusion)
+      || sanitizeEvidenceTitle(source.title)
+      || `论据${source.id || ''}`;
+    const displaySummary = resolveEvidenceDisplaySummary(item.displaySummary, [
+      [item.evidenceContent, item.applicationAnalysis].filter(Boolean).join(' '),
+      item.chineseExplanation
+    ]);
     return {
       ...source,
       sourceName: source.title || source.domain,
       sourceTitle: source.title || source.domain,
       sourceUrl: source.url,
       sourceExcerpt: source.contentExcerpt || source.snippet,
-      evidenceTitle: item.evidenceTitle || item.coreConclusion || source.title,
-      displaySummary: item.displaySummary || legacySummary || fallbackSummary,
-      coreConclusion: item.evidenceTitle || item.coreConclusion || source.title,
+      evidenceTitle,
+      displaySummary,
+      coreConclusion: evidenceTitle,
       evidenceContent: item.evidenceContent || source.snippet,
       originalExcerpt: source.contentExcerpt || source.snippet,
       chineseExplanation: item.chineseExplanation || '暂未生成中文说明，请结合来源原文谨慎使用。',

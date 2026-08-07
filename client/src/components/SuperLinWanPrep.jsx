@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { evidenceCardTitle, evidenceDisplaySummary } from '../utils/evidenceCard.js';
 
 const stanceOptions = [
   { value: 'affirmative', label: '正方' },
@@ -1017,62 +1018,21 @@ function MessageEvidenceSources({ search, canConfirm, isSending, onConfirm, onAd
             <article className="prematch-evidence-source" key={`${source.id}:${source.sourceUrl || source.url}`}>
               <div className="prematch-evidence-heading">
                 <b>{source.id}</b>
-                <span>{source.sourceTitle || source.sourceName || source.domain}</span>
-                <em>{evidenceSourceTypeLabel(source.sourceType)}</em>
+                <em>{source.sourceLanguage === 'zh-CN' ? '简体中文资料' : '外文资料 · 中文摘要'}</em>
               </div>
-              <h3>{source.evidenceTitle || source.coreConclusion || source.title}</h3>
+              <h3>{evidenceCardTitle(source)}</h3>
               <div className="prematch-evidence-summary">
-                <b>核心摘要</b>
                 <p>{evidenceDisplaySummary(source)}</p>
               </div>
-              <p className="prematch-evidence-meta">
-                <span>来源：{source.sourceTitle || source.sourceName || source.title || source.domain}</span>
-                {source.publisher && <span>发布机构：{source.publisher}</span>}
-                {source.publishedAt && <span>时间：{formatEvidenceDate(source.publishedAt)}</span>}
-                <span>{source.sourceLanguageLabel || (source.sourceLanguage === 'zh-CN' ? '简体中文资料' : '外文资料（摘要已中文化）')}</span>
-              </p>
               <div className="prematch-evidence-links">
                 <a href={source.sourceUrl || source.url} target="_blank" rel="noopener noreferrer">查看原始来源</a>
               </div>
-              {(source.sourceExcerpt || source.contentExcerpt || source.snippet) && (
-                <details className="prematch-evidence-original">
-                  <summary>展开原文与资料信息</summary>
-                  <p>{source.sourceExcerpt || source.contentExcerpt || source.snippet}</p>
-                  <a href={source.sourceUrl || source.url} target="_blank" rel="noopener noreferrer">打开原始网页或 PDF</a>
-                </details>
-              )}
             </article>
           ))}
         </div>
       )}
     </section>
   );
-}
-
-function evidenceSourceTypeLabel(sourceType) {
-  return ({
-    academic: '论文 / 研究',
-    official: '政策 / 官方资料',
-    media: '新闻',
-    organization: '报告 / 机构资料',
-    other: '案例 / 其他'
-  })[sourceType] || '其他资料';
-}
-
-function evidenceDisplaySummary(source) {
-  if (source?.displaySummary) return source.displaySummary;
-  const legacyChineseSummary = [source?.evidenceContent, source?.applicationAnalysis]
-    .filter(Boolean)
-    .join(' ');
-  if (legacyChineseSummary) return legacyChineseSummary;
-  if (source?.chineseExplanation) return source.chineseExplanation;
-  return '该来源暂未生成中文辩论摘要，请通过原始资料入口核验后使用。';
-}
-
-function formatEvidenceDate(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
 }
 
 function visiblePrematchMessageContent(message) {

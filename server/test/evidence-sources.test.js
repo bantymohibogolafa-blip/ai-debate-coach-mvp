@@ -2,10 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   canonicalizeEvidenceUrl,
+  cleanEvidenceSummaryInput,
   cleanEvidenceResults,
+  EVIDENCE_SUMMARY_FALLBACK,
   mergeEvidenceLibrary,
   normalizeEvidenceLibrary,
-  publicEvidenceSource
+  publicEvidenceSource,
+  resolveEvidenceDisplaySummary,
+  sanitizeEvidenceDisplaySummary,
+  sanitizeEvidenceTitle
 } from '../src/search/evidenceSources.js';
 
 test('source cleaning filters invalid URLs, deduplicates tracking variants and bounds fields', () => {
@@ -101,4 +106,28 @@ test('public evidence keeps concise display fields separate from hidden source e
   assert.match(publicSource.displaySummary, /不能单独证明/);
   assert.equal(publicSource.publisher, 'Example University');
   assert.equal(publicSource.publishedAt, '2025-05-06T00:00:00.000Z');
+});
+
+test('summary input cleaning removes document metadata and reference tails before prompting', () => {
+  const cleaned = cleanEvidenceSummaryInput(`
+    <nav>登录后查看</nav>
+    作者：张三；单位：某大学；邮编：100000；
+    ## DOI\n10.1234/example
+    ## Keywords\nAI; creativity
+    ## Abstract
+    研究发现生成式AI能够提高创意执行效率，但不能替代人的核心判断。
+    ## References
+    [1] A very long reference list
+  `);
+  assert.match(cleaned, /研究发现生成式AI/);
+  assert.doesNotMatch(cleaned, /作者|单位|邮编|DOI|Keywords|Abstract|References|reference list|登录/);
+});
+
+test('display fields enforce 30 and 180 character limits without raw fallbacks', () => {
+  const title = sanitizeEvidenceTitle('论据'.repeat(40));
+  const summary = sanitizeEvidenceDisplaySummary('该研究说明人工智能可以辅助创新，但不能替代人的核心判断。'.repeat(20));
+  assert.ok(Array.from(title).length <= 30);
+  assert.ok(Array.from(summary).length <= 180);
+  assert.equal(resolveEvidenceDisplaySummary('', ['Only an English snippet']), EVIDENCE_SUMMARY_FALLBACK);
+  assert.equal(resolveEvidenceDisplaySummary('', ['旧版中文AI说明，可支持效率观点，但不能证明长期创造力提高。']).includes('不能证明'), true);
 });

@@ -584,6 +584,11 @@ test('evidence intent searches after idempotency, persists stable sources and fi
   assert.equal(JSON.stringify(searched.body).includes('Teachers provide emotional support'), true);
   assert.equal(searched.body.contextManifest.search.sources[0].sourceName, 'Teacher Emotional Support Study');
   assert.equal(searched.body.contextManifest.search.sources[0].coreConclusion, '机制具有长期影响');
+  assert.ok(Array.from(searched.body.contextManifest.search.sources[0].evidenceTitle).length <= 30);
+  assert.ok(Array.from(searched.body.contextManifest.search.sources[0].displaySummary).length <= 180);
+  assert.equal(searched.body.contextManifest.search.sources[0].displaySummary.includes('不能直接证明'), true);
+  assert.match(searched.body.assistantMessage.content, /极简论据卡片/);
+  assert.doesNotMatch(searched.body.assistantMessage.content, /Teachers|DOI|Abstract|References/);
   assert.equal(searched.body.contextManifest.search.sources[0].chineseExplanation, '原文说明教师的情感支持与更高的学生投入度相关。');
   assert.equal(searched.body.contextManifest.search.sources[0].applicationAnalysis.includes('不能直接证明'), true);
   const finalPrompt = harness.modelRequests.at(-1).map((message) => message.content).join('\n');

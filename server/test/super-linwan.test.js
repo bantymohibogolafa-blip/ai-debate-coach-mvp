@@ -490,6 +490,32 @@ test('personal response parser keeps bounded Chinese evidence presentation field
   assert.match(parsed.evidenceItems[0].applicationAnalysis, /相关性不等于因果/);
 });
 
+test('evidence prompt receives cleaned material and exact card length rules', () => {
+  const prompt = buildPersonalTaskLinWanMessages({
+    task: { id: 'personal-a', debateTopic: '生成式人工智能是否提升创造力', stance: 'affirmative' },
+    memory: getDefaultPersonalTaskMemory(),
+    taskSummary: '',
+    recentMessages: [],
+    currentQuestion: '整理这些论据',
+    intent: 'evidence',
+    search: {
+      status: 'success',
+      sources: [{
+        id: 'E1',
+        title: 'AI and creativity',
+        domain: 'example.edu',
+        snippet: '## DOI 10.1234/test 作者：张三；单位：某大学；',
+        contentExcerpt: '## Abstract 研究发现AI可以提高执行效率。## References [1] 无关文献'
+      }]
+    }
+  }).map((message) => message.content).join('\n');
+
+  assert.match(prompt, /不超过30个汉字/);
+  assert.match(prompt, /绝不超过180个汉字/);
+  assert.match(prompt, /研究发现AI可以提高执行效率/);
+  assert.doesNotMatch(prompt, /10\.1234|张三|某大学|无关文献/);
+});
+
 test('task note remains task-local state and is not inserted into the model prompt', () => {
   const memory = normalizePersonalTaskMemory({ note: '只给用户看的私人备战笔记' });
   assert.equal(memory.note, '只给用户看的私人备战笔记');

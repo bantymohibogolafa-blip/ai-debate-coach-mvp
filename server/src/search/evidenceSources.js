@@ -11,6 +11,53 @@ const MEDIA_DOMAINS = [
 export const EVIDENCE_LIBRARY_LIMIT = 40;
 export const SEARCH_SOURCE_LIMIT = 5;
 export const SEARCH_CONTEXT_LIMIT = 12000;
+export const EVIDENCE_TITLE_LIMIT = 30;
+export const EVIDENCE_SUMMARY_LIMIT = 180;
+export const EVIDENCE_SUMMARY_FALLBACK = '暂未生成有效摘要，请查看原始来源。';
+
+export function cleanEvidenceSummaryInput(value, limit = 2400) {
+  let text = String(value || '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/(?:^|\n)\s*#{0,6}\s*(?:references\b|参考文献)[\s\S]*$/gim, ' ')
+    .replace(/(?:^|\n)\s*#{0,6}\s*(?:doi\b|keywords?\b|关键词)\s*[:：]?[^\n]*/gim, ' ')
+    .replace(/(?:^|\n)\s*(?:作者(?:单位)?|单位|通讯作者|通信作者|地址|邮编|发布日期|发布时间|收稿日期|接受日期|authors?|affiliations?|corresponding author|published(?: at| on)?)\s*[:：][^\n]*/gim, ' ')
+    .replace(/\b(?:https?:\/\/)?(?:dx\.)?doi\.org\/\S+|\bdoi\s*[:：]?\s*10\.\d{4,9}\/\S+/gi, ' ')
+    .replace(/(?:作者(?:单位)?|单位|通讯作者|通信作者|地址|邮编|发布日期|发布时间|收稿日期|接受日期)\s*[:：][^。；;]{0,300}[。；;]/g, ' ')
+    .replace(/#{1,6}\s*(?:abstract|摘要)\s*[:：]?/gi, ' ')
+    .replace(/\b(?:keywords?|abstract)\s*[:：]/gi, ' ')
+    .replace(/(?:请升级浏览器|浏览器版本过低|下载全文|立即下载|登录后查看|请登录|订阅后阅读|subscribe|sign in|log in)/gi, ' ')
+    .replace(/[|_*~`]{2,}/g, ' ')
+    .replace(/(?:[-=—]{3,}|[◆◇■□●○▶►]{2,})/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const referencesIndex = text.search(/(?:^|\s)(?:references|参考文献)\s*[:：]?/i);
+  if (referencesIndex >= 0) text = text.slice(0, referencesIndex).trim();
+  return sliceCharacters(text, limit);
+}
+
+export function sanitizeEvidenceTitle(value) {
+  return sliceCharacters(cleanEvidenceSummaryInput(value, 200), EVIDENCE_TITLE_LIMIT);
+}
+
+export function sanitizeEvidenceDisplaySummary(value) {
+  const summary = cleanEvidenceSummaryInput(value, EVIDENCE_SUMMARY_LIMIT);
+  if (!/[\u3400-\u9FFF]/.test(summary)) return '';
+  return summary;
+}
+
+export function resolveEvidenceDisplaySummary(displaySummary, legacyFields = []) {
+  const primary = sanitizeEvidenceDisplaySummary(displaySummary);
+  if (primary) return primary;
+  for (const legacy of Array.isArray(legacyFields) ? legacyFields : []) {
+    const cleanedLegacy = sanitizeEvidenceDisplaySummary(legacy);
+    if (cleanedLegacy) return cleanedLegacy;
+  }
+  return EVIDENCE_SUMMARY_FALLBACK;
+}
 
 export function canonicalizeEvidenceUrl(value) {
   try {
@@ -146,8 +193,8 @@ export function publicEvidenceSource(source) {
     sourceName: clean(source?.sourceName, 240) || clean(source?.title, 240) || domainOf(url),
     publisher: clean(source?.publisher, 240),
     publishedAt: normalizeIso(source?.publishedAt),
-    evidenceTitle: clean(source?.evidenceTitle, 500),
-    displaySummary: clean(source?.displaySummary, 600),
+    evidenceTitle: sanitizeEvidenceTitle(source?.evidenceTitle),
+    displaySummary: sanitizeEvidenceDisplaySummary(source?.displaySummary),
     coreConclusion: clean(source?.coreConclusion, 500),
     evidenceContent: clean(source?.evidenceContent, 1200),
     chineseExplanation: clean(source?.chineseExplanation, 1200),
@@ -218,4 +265,8 @@ function clean(value, limit) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, limit);
+}
+
+function sliceCharacters(value, limit) {
+  return Array.from(String(value || '')).slice(0, limit).join('');
 }

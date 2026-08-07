@@ -7,19 +7,24 @@ const prepSource = fs.readFileSync(
   fileURLToPath(new URL('../src/components/SuperLinWanPrep.jsx', import.meta.url)),
   'utf8'
 );
+const styleSource = fs.readFileSync(
+  fileURLToPath(new URL('../src/styles.css', import.meta.url)),
+  'utf8'
+);
 
-test('evidence entries default to concise Chinese debate summaries and keep original text collapsed', () => {
+test('evidence entries render only an ID, language tag, title, safe summary and source link', () => {
   assert.equal((prepSource.match(/function MessageEvidenceSources/g) || []).length, 1);
-  assert.match(prepSource, /核心摘要/);
   assert.match(prepSource, /evidenceDisplaySummary\(source\)/);
-  assert.match(prepSource, /source\?\.displaySummary/);
-  assert.match(prepSource, /source\.sourceTitle/);
-  assert.match(prepSource, /evidenceSourceTypeLabel/);
+  assert.match(prepSource, /evidenceCardTitle\(source\)/);
+  assert.match(prepSource, /简体中文资料/);
+  assert.match(prepSource, /外文资料 · 中文摘要/);
   assert.match(prepSource, /查看原始来源/);
-  assert.match(prepSource, /<details className="prematch-evidence-original">/);
-  assert.match(prepSource, /展开原文与资料信息/);
-  assert.match(prepSource, /source\.sourceExcerpt/);
-  assert.equal(prepSource.includes('<dt>相关原文</dt>'), false);
+  assert.equal(prepSource.includes('prematch-evidence-meta'), false);
+  assert.equal(prepSource.includes('prematch-evidence-original'), false);
+  assert.equal(prepSource.includes('source.sourceExcerpt'), false);
+  assert.equal(prepSource.includes('source.contentExcerpt'), false);
+  assert.equal(prepSource.includes('source.snippet'), false);
+  assert.match(styleSource, /-webkit-line-clamp:\s*6/);
 });
 
 test('scope adjustment, task note, and latest-round revocation use the existing task API', () => {
@@ -38,7 +43,7 @@ test('evidence scope renders only Chinese displayQuery and keeps internal search
   assert.equal(component.includes('item.searchQuery'), false);
   assert.equal(component.includes('item.query'), false);
   assert.match(component, /简体中文资料/);
-  assert.match(component, /外文资料（摘要已中文化）/);
+  assert.match(component, /外文资料 · 中文摘要/);
   assert.match(component, /search\.languageNotice/);
   assert.match(prepSource, /visiblePrematchMessageContent\(message\)/);
   assert.match(prepSource, /search\?\.status === 'pending_confirmation'/);
