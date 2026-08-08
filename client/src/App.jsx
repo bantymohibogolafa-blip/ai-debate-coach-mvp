@@ -2978,7 +2978,6 @@ function App() {
 
       {activeTab === 'training' && (
       <>
-      {hasSessionContent && (
       <section className="arena-hero">
         <div className="hero-copy">
           <p className="eyebrow">锋辩</p>
@@ -3009,7 +3008,6 @@ function App() {
           </div>
         </div>
       </section>
-      )}
 
       {!hasSessionContent && (
       <TrainingSetup

@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   getTrainingSnapshot,
   getTrainingStepAvailability,
   isMeaningfulTrainingTopic,
   validateTrainingSetup
 } from '../src/utils/trainingSetup.js';
+
+const appSource = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 
 const readyConfig = {
   topic: '中学生使用 AI 工具利大于弊',
@@ -45,4 +48,16 @@ test('snapshot is detached from later config changes', () => {
   changed.topic = '新辩题';
   assert.equal(snapshot.topic, readyConfig.topic);
   assert.equal(snapshot.defensePrep, '论点一');
+});
+
+test('arena hero remains above TrainingSetup before and after training starts', () => {
+  const heroIndex = appSource.indexOf('<section className="arena-hero">');
+  const setupIndex = appSource.indexOf('<TrainingSetup');
+
+  assert.ok(heroIndex >= 0);
+  assert.ok(setupIndex > heroIndex);
+  assert.doesNotMatch(appSource, /\{hasSessionContent && \(\s*<section className="arena-hero">/);
+  for (const label of ['当前轮次', '我的立场', '难度', '训练模式']) {
+    assert.ok(appSource.includes(label));
+  }
 });
