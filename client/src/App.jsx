@@ -6525,42 +6525,60 @@ function TrainingProfileCard({ profile }) {
           <span>统一五维能力画像</span>
           <h3>{profile.level || '当前能力状态'}</h3>
         </div>
-        <strong>{profile.overallEstimate ?? '--'}</strong>
+        <div className="training-profile-estimate">
+          <span>能力估值</span>
+          <strong>{profile.overallEstimate ?? '--'}</strong>
+        </div>
       </div>
       <div className="training-profile-mobile-summary">
-        <span>{profile.overall !== null && profile.overall !== undefined ? `综合 ${formatScoreValue(profile.overall)}` : '暂无综合分'}</span>
-        <span>已覆盖 {profile.observedDimensionCount || observedDimensions.length}/{profile.totalDimensionCount || 5}</span>
-        <strong>{weakest.length ? `相对较弱：${weakest.map((item) => item.label).join('、')}` : '暂未形成可观察短板'}</strong>
-        <p>与能力估测页使用同一模型和同一空间数据。</p>
+        <strong>
+          {profile.level || '当前能力状态'} · {profile.overall !== null && profile.overall !== undefined ? `综合 ${formatScoreValue(profile.overall)}` : '暂无综合分'}
+        </strong>
+        <span>{weakest.length ? `弱项：${weakest.map((item) => item.label).join('、')}` : '弱项：暂未形成可观察短板'}</span>
       </div>
-      <div className={`training-profile-grid ${isExpanded ? 'mobile-expanded' : ''}`} id="training-profile-details">
-        <div>
-          <span>综合能力</span>
-          <strong>{profile.overall !== null && profile.overall !== undefined ? `${formatScoreValue(profile.overall)} / 100` : '暂无估测'}</strong>
+      <div className={`training-profile-details ${isExpanded ? 'mobile-expanded' : ''}`} id="training-profile-details">
+        <div className="training-profile-grid">
+          <div>
+            <span>综合能力</span>
+            <strong>{profile.overall !== null && profile.overall !== undefined ? `${formatScoreValue(profile.overall)} / 100` : '暂无估测'}</strong>
+          </div>
+          <div className="training-profile-mobile-detail">
+            <span>能力估值</span>
+            <strong>{profile.overallEstimate ?? '暂无估测'}</strong>
+          </div>
+          <div>
+            <span>能力覆盖</span>
+            <strong>{profile.observedDimensionCount || observedDimensions.length}/{profile.totalDimensionCount || 5} 项 · {profile.coverage || 0}% 权重覆盖</strong>
+          </div>
+          <div>
+            <span>相对较弱能力</span>
+            <strong>{weakest.length ? weakest.map((item) => `${item.label} ${formatScoreValue(item.score)}`).join('、') : '暂无足够证据'}</strong>
+          </div>
+          <div>
+            <span>近阶段变化</span>
+            <strong>{trendText} · 推荐辩位 {profile.roleRecommendation?.bestRole || '覆盖不足，待补测'}</strong>
+          </div>
         </div>
-        <div>
-          <span>能力覆盖</span>
-          <strong>{profile.observedDimensionCount || observedDimensions.length}/{profile.totalDimensionCount || 5} 项 · {profile.coverage || 0}% 权重覆盖</strong>
+        <div className="training-profile-dimensions" aria-label="五维能力详情">
+          {(Array.isArray(profile.dimensions) ? profile.dimensions : []).map((dimension) => (
+            <div key={dimension.key || dimension.label}>
+              <span>{dimension.label}</span>
+              <strong>{Number(dimension.records) > 0 && Number.isFinite(Number(dimension.score)) ? formatScoreValue(dimension.score) : '待测'}</strong>
+            </div>
+          ))}
         </div>
-        <div>
-          <span>相对较弱能力</span>
-          <strong>{weakest.length ? weakest.map((item) => `${item.label} ${formatScoreValue(item.score)}`).join('、') : '暂无足够证据'}</strong>
-        </div>
-        <div>
-          <span>近阶段变化</span>
-          <strong>{trendText} · 推荐辩位 {profile.roleRecommendation?.bestRole || '覆盖不足，待补测'}</strong>
-        </div>
+        {unobservedDimensions.length > 0 && (
+          <div className="history-empty">
+            <strong>待测能力：{unobservedDimensions.map((dimension) => dimension.label).join('、')}</strong>
+            <p>
+              {unobservedDimensions.map((dimension) => (
+                `${dimension.label}可${dimension.assessment || '通过对应训练完成测评'}`
+              )).join('；')}。林婉不会在测评前把这些能力判断为短板。
+            </p>
+          </div>
+        )}
+        <p className="training-profile-model-note">当前五维画像与能力估测页使用同一模型和同一空间数据。</p>
       </div>
-      {unobservedDimensions.length > 0 && (
-        <div className="history-empty">
-          <strong>待测能力：{unobservedDimensions.map((dimension) => dimension.label).join('、')}</strong>
-          <p>
-            {unobservedDimensions.map((dimension) => (
-              `${dimension.label}可${dimension.assessment || '通过对应训练完成测评'}`
-            )).join('；')}。林婉不会在测评前把这些能力判断为短板。
-          </p>
-        </div>
-      )}
       <button
         type="button"
         className="training-profile-toggle"
@@ -6568,7 +6586,7 @@ function TrainingProfileCard({ profile }) {
         aria-controls="training-profile-details"
         onClick={() => setIsExpanded((current) => !current)}
       >
-        {isExpanded ? '收起详情' : '展开详情'}
+        {isExpanded ? '收起画像' : '展开画像'}
       </button>
     </article>
   );

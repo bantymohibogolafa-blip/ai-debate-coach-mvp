@@ -2,7 +2,9 @@ import { useState } from 'react';
 
 export default function LinWanContextManifest({ manifest, autoShow = true }) {
   const content = getManifestContent(manifest);
-  const [isExpanded, setIsExpanded] = useState(Boolean(autoShow));
+  const [isExpanded, setIsExpanded] = useState(() => (
+    Boolean(autoShow) && (typeof window === 'undefined' || !window.matchMedia('(max-width: 620px)').matches)
+  ));
   if (!content.length) return null;
 
   return (
@@ -13,8 +15,7 @@ export default function LinWanContextManifest({ manifest, autoShow = true }) {
         aria-expanded={isExpanded}
         onClick={() => setIsExpanded((value) => !value)}
       >
-        <span aria-hidden="true">{isExpanded ? '▾' : '›'}</span>
-        {isExpanded ? '本轮参考' : '查看本轮参考'}
+        {isExpanded ? '收起本轮参考 ▲' : '查看本轮参考 ▼'}
       </button>
       {isExpanded && (
         <ul>

@@ -2981,6 +2981,30 @@ textarea:focus {
   line-height: 1;
 }
 
+.training-profile-estimate {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.training-profile-estimate span {
+  font-size: 11px;
+}
+
+.training-profile-details {
+  display: grid;
+  gap: 12px;
+}
+
+.training-profile-model-note {
+  display: none;
+}
+
+.training-profile-mobile-detail,
+.training-profile-dimensions {
+  display: none !important;
+}
+
 .training-profile-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3204,7 +3228,6 @@ textarea:focus {
 .linwan-context-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   min-height: 32px;
   border: 0;
   padding: 4px 0;
@@ -3212,12 +3235,6 @@ textarea:focus {
   background: transparent;
   font-size: 12px;
   font-weight: 900;
-}
-
-.linwan-context-toggle span {
-  margin: 0;
-  color: #2f7375;
-  font-size: 14px;
 }
 
 .linwan-context-manifest ul {
@@ -5936,54 +5953,94 @@ textarea:focus {
   }
 
   .training-profile-card {
-    gap: 9px;
-    padding: 12px;
+    gap: 8px;
+    padding: 11px 12px;
   }
 
   .training-profile-heading {
-    display: flex;
+    display: none;
   }
 
-  .training-profile-heading strong {
-    font-size: 22px;
+  .training-profile-card.empty {
+    gap: 5px;
   }
 
   .training-profile-mobile-summary {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 10px;
+    display: grid;
+    gap: 4px;
   }
 
-  .training-profile-mobile-summary strong,
-  .training-profile-mobile-summary p {
-    flex-basis: 100%;
+  .training-profile-mobile-summary strong {
+    color: #263942;
+    font-size: 16px;
+    line-height: 1.35;
   }
 
-  .training-profile-mobile-summary p {
+  .training-profile-mobile-summary span {
+    color: #687982;
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.4;
+  }
+
+  .training-profile-details {
+    display: none;
+  }
+
+  .training-profile-details.mobile-expanded {
+    display: grid;
   }
 
   .training-profile-grid {
-    display: none;
     grid-template-columns: 1fr;
   }
 
-  .training-profile-grid.mobile-expanded {
-    display: grid;
+  .training-profile-grid .training-profile-mobile-detail {
+    display: grid !important;
+  }
+
+  .training-profile-dimensions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .training-profile-dimensions div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border: 1px solid #eadfd6;
+    border-radius: 8px;
+    padding: 8px 9px;
+    background: #fff;
+  }
+
+  .training-profile-dimensions strong {
+    color: #245e62;
+  }
+
+  .training-profile-model-note {
+    display: block;
+    border-top: 1px solid #eadfd6;
+    padding-top: 9px;
+    font-size: 12px;
+    line-height: 1.5;
   }
 
   .training-profile-toggle {
     display: block;
-    min-height: 44px;
+    justify-self: start;
+    min-height: 32px;
     border-radius: 8px;
+    padding: 5px 10px;
     color: #245e62;
     background: #e8f2f1;
+    font-size: 13px;
     font-weight: 900;
   }
 
   .experience-boundary-note {
-    overflow-wrap: anywhere;
+    display: none;
   }
 }
 
@@ -6028,6 +6085,162 @@ textarea:focus {
 }
 
 @media (max-width: 620px) {
+  .arena-hero,
+  .session-active .arena-hero {
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .session-active .arena-hero .hero-copy {
+    align-self: start;
+  }
+
+  .session-active .arena-hero .eyebrow {
+    margin-bottom: 4px;
+    font-size: 11px;
+  }
+
+  .session-active .arena-hero h1 {
+    font-size: clamp(24px, 7.4vw, 30px);
+    line-height: 1.08;
+  }
+
+  .app-shell:not(.session-active) .arena-hero h1 {
+    font-size: clamp(25px, 7.6vw, 30px);
+  }
+
+  .arena-hero .scoreboard,
+  .session-active .arena-hero .scoreboard {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 12px;
+    padding: 7px 10px;
+  }
+
+  .arena-hero .scoreboard div,
+  .session-active .arena-hero .scoreboard div {
+    display: grid;
+    min-width: 0;
+    gap: 1px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 249, 239, 0.13);
+    padding: 5px 0;
+  }
+
+  .arena-hero .scoreboard div:nth-last-child(-n + 2),
+  .session-active .arena-hero .scoreboard div:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
+  .arena-hero .scoreboard span {
+    font-size: 11px;
+  }
+
+  .arena-hero .scoreboard strong {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 15px;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .experience-panel {
+    gap: 10px;
+  }
+
+  .experience-panel .panel-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 2px;
+  }
+
+  .experience-panel .panel-header .eyebrow {
+    margin-bottom: 3px;
+  }
+
+  .experience-panel .panel-header h2 {
+    font-size: 19px;
+  }
+
+  .experience-panel .linwan-settings-open {
+    width: auto;
+    min-height: 34px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  .experience-panel > .experience-input-row {
+    position: relative;
+    border: 1px solid #cfe0e1;
+    border-radius: 8px;
+    padding: 8px;
+    background: #f8fbfc;
+  }
+
+  .experience-panel > .panel-header {
+    order: -6;
+  }
+
+  .experience-panel > .training-profile-card {
+    order: -5;
+  }
+
+  .experience-panel > .experience-boundary-note,
+  .experience-panel > .linwan-guest-note {
+    order: -4;
+  }
+
+  .experience-panel > .experience-quick-panel {
+    order: -3;
+  }
+
+  .experience-panel > .experience-input-row {
+    order: -2;
+  }
+
+  .experience-panel > .linwan-speech-status {
+    order: -1;
+  }
+
+  .experience-quick-panel {
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .experience-featured-questions {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .experience-featured-questions button,
+  .experience-quick-questions button {
+    min-height: 32px;
+    padding: 6px 9px;
+    font-size: 13px;
+    line-height: 1.3;
+  }
+
+  .experience-more-questions {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .assistant-chat-message.opening {
+    padding: 12px 13px;
+  }
+
+  .linwan-context-manifest {
+    margin-top: 7px;
+    padding-top: 5px;
+  }
+
+  .linwan-context-toggle {
+    min-height: 28px;
+    padding: 2px 0;
+  }
+
   .experience-input-row {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 8px;
