@@ -11,10 +11,10 @@ import TeamPreparationBoard from './components/TeamPreparationBoard.jsx';
 import { getAbilityVideosForDimension } from './data/abilityVideoMap.js';
 import useSpeechInput from './hooks/useSpeechInput.js';
 import {
-  getMobileTrainingSnapshot,
-  getMobileTrainingStepAvailability,
-  validateMobileTrainingSetup
-} from './utils/mobileTrainingSetup.js';
+  getTrainingSnapshot,
+  getTrainingStepAvailability,
+  validateTrainingSetup
+} from './utils/trainingSetup.js';
 import { normalizeAbilityHistoryValue } from './utils/abilityChart.js';
 import { appendSpeechTranscript, stopPlaybackBeforeSpeechInput } from './utils/speechInput.js';
 import {
@@ -435,8 +435,7 @@ function App() {
   const [reviewGenerationStatus, setReviewGenerationStatus] = useState('idle');
   const [reviewLoadingError, setReviewLoadingError] = useState('');
   const [error, setError] = useState('');
-  const [setupStep, setSetupStep] = useState('topic');
-  const [mobileSetupStep, setMobileSetupStep] = useState('topic');
+  const [trainingSetupStep, setTrainingSetupStep] = useState('topic');
   const [longOutputPromptMode, setLongOutputPromptMode] = useState('');
   const [topicDirection, setTopicDirection] = useState('education');
   const [generatedTopics, setGeneratedTopics] = useState([]);
@@ -450,8 +449,8 @@ function App() {
   const [selectedPolishType, setSelectedPolishType] = useState('');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showPwaHint, setShowPwaHint] = useState(false);
-  const mobileTopicInputRef = useRef(null);
-  const mobileSetupRef = useRef(null);
+  const trainingTopicInputRef = useRef(null);
+  const trainingSetupRef = useRef(null);
   const reviewRequestRef = useRef(false);
   const polishRequestIdRef = useRef(0);
   const polishAbortControllerRef = useRef(null);
@@ -486,11 +485,6 @@ function App() {
   const currentRound = Math.min(userAnswers + 1, config.rounds);
   const isCelebrityMode = config.celebrityDebater !== 'none';
   const selectedSideLabel = getOptionLabel(sides, config.userSide) || '待选择';
-  const opponentSideLabel = config.userSide
-    ? config.userSide === 'affirmative'
-      ? '反方'
-      : '正方'
-    : '待定';
   const selectedDebater = celebrityDebaters.find((item) => item.value === config.celebrityDebater);
   const selectedTrainingMode = trainingModes.find((item) => item.value === config.trainingMode);
   const usesDifficulty = selectedTrainingMode?.usesDifficulty !== false;
@@ -523,17 +517,17 @@ function App() {
   const displayedRecords = isTeamSpace ? teamMemberRecords : personalRecords;
   const displayedRecordsPage = isTeamSpace ? teamMemberRecordsPage : personalRecordsPage;
   const displayedAbilityEstimate = isTeamSpace ? teamAbilityEstimate : personalAbilityEstimate;
-  const mobileTrainingValues = useMemo(
+  const trainingValues = useMemo(
     () => ({ config, defensePrep, freeDebatePrep }),
     [config, defensePrep, freeDebatePrep]
   );
-  const mobileStepAvailability = useMemo(
-    () => getMobileTrainingStepAvailability(mobileTrainingValues),
-    [mobileTrainingValues]
+  const trainingStepAvailability = useMemo(
+    () => getTrainingStepAvailability(trainingValues),
+    [trainingValues]
   );
-  const mobileTrainingSnapshot = useMemo(
-    () => getMobileTrainingSnapshot(mobileTrainingValues),
-    [mobileTrainingValues]
+  const trainingSnapshot = useMemo(
+    () => getTrainingSnapshot(trainingValues),
+    [trainingValues]
   );
 
   useEffect(() => {
@@ -1559,8 +1553,7 @@ function App() {
       if (mode === 'defense') setDefensePrep(task.description || '');
       if (mode === 'free_debate') setFreeDebatePrep(task.description || '');
     }
-    setSetupStep(roundSelectionModes.includes(mode) ? 'rounds' : mode === 'defense' ? 'rounds' : 'ready');
-    setMobileSetupStep(mode === 'defense' || mode === 'free_debate' ? 'config' : 'confirm');
+    setTrainingSetupStep(mode === 'defense' || mode === 'free_debate' ? 'config' : 'confirm');
     setActiveTab('training');
     if (longOutputModes.includes(mode)) {
       setLongOutputPromptMode(mode);
@@ -1715,7 +1708,7 @@ function App() {
     });
   }
 
-  function selectTrainingMode(value, { advance = true } = {}) {
+  function selectTrainingMode(value) {
     const mode = trainingModes.find((item) => item.value === value) || trainingModes[2];
     const nextPolishOptions = polishOptionsByMode[value] || polishOptionsByMode.general;
     updateConfig({
@@ -1724,109 +1717,39 @@ function App() {
       rounds: mode.rounds
     });
     setSelectedPolishType(nextPolishOptions[0].id);
-    if (advance) setSetupStep(roundSelectionModes.includes(value) ? 'rounds' : 'ready');
     setGeneratedTopics([]);
     if (longOutputModes.includes(value)) {
       setLongOutputPromptMode(value);
     }
   }
 
-  function goToDefensePrepStep() {
-    if (isTraining || isBusy) return;
-    setSetupStep('defensePrep');
-    setError('');
-  }
-
-  function goToFreeDebatePrepStep() {
-    if (isTraining || isBusy) return;
-    setSetupStep('freeDebatePrep');
-    setError('');
-  }
-
-  function goBackFromSetupStep() {
-    if (isTraining || isBusy) return;
-    setError('');
-    if (setupStep === 'defensePrep') {
-      setSetupStep('rounds');
-      return;
-    }
-    if (setupStep === 'freeDebatePrep') {
-      setSetupStep('rounds');
-      return;
-    }
-    goToModeStep();
-  }
-
-  function goToModeStep() {
-    if (isTraining || isBusy) return;
-    const validationError = validatePreModeConfig();
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-    setSetupStep('mode');
-    setError('');
-  }
-
-  function goToTopicStep() {
-    if (isTraining || isBusy) return;
-    setError('');
-    setSetupStep('topic');
-    setMobileSetupStep('topic');
-  }
-
-  function validatePreModeConfig() {
-    if (!config.topic.trim()) {
-      return '请先输入辩题，或从随机生成的候选辩题中选择一个。';
-    }
-
-    if (!config.userSide) {
-      return '请先选择你的立场。';
-    }
-
-    return '';
-  }
-
   function validateTrainingConfig() {
-    const preModeError = validatePreModeConfig();
-    if (preModeError) return preModeError;
-
-    if (!config.trainingMode) return '请先选择训练模式。';
-
-    if (config.trainingMode === 'defense' && !defensePrep.trim()) {
-      return '请先填写己方分论点和论据，AI 才能根据你的立论进行质询。';
-    }
-
-    if (config.trainingMode === 'free_debate' && !freeDebatePrep.trim()) {
-      return '请至少填写一个主要论点，方便 AI 基于你的真实观点进行交锋。';
-    }
-
-    return '';
+    return validateTrainingSetup(trainingValues)?.message || '';
   }
 
-  function focusMobileSetupField(field) {
+  function focusTrainingSetupField(field) {
     window.requestAnimationFrame(() => {
       const target = field === 'topic'
-        ? mobileTopicInputRef.current
-        : mobileSetupRef.current?.querySelector(`[data-mobile-field="${field}"] button, [data-mobile-field="${field}"] textarea`);
+        ? trainingTopicInputRef.current
+        : trainingSetupRef.current?.querySelector(`[data-training-field="${field}"] button, [data-training-field="${field}"] textarea`);
       target?.focus({ preventScroll: true });
       target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   }
 
-  function goToMobileSetupStep(nextStep) {
+  function goToTrainingSetupStep(nextStep) {
     if (isTraining || isBusy) return;
     const target = nextStep === 'config' ? 'config' : nextStep === 'confirm' ? 'confirm' : null;
-    const validation = target ? validateMobileTrainingSetup(mobileTrainingValues, target) : null;
+    const validation = target ? validateTrainingSetup(trainingValues, target) : null;
     if (validation) {
       setError(validation.message);
-      setMobileSetupStep(validation.field === 'topic' ? 'topic' : 'config');
-      focusMobileSetupField(validation.field);
+      setTrainingSetupStep(validation.field === 'topic' ? 'topic' : 'config');
+      focusTrainingSetupField(validation.field);
       return;
     }
     setError('');
-    setMobileSetupStep(nextStep);
-    window.requestAnimationFrame(() => mobileSetupRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    setTrainingSetupStep(nextStep);
+    window.requestAnimationFrame(() => trainingSetupRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }
 
   async function startTraining() {
@@ -2071,10 +1994,11 @@ function App() {
     setIsTraining(false);
     setTrainingSession(null);
     setLongOutputPromptMode(longOutputModes.includes(nextMode) ? nextMode : '');
-    setSetupStep(getSetupStepForMode(nextMode, {
-      hasDefensePrep: Boolean(defensePrep.trim()),
-      hasFreeDebatePrep: Boolean(freeDebatePrep.trim())
-    }));
+    setTrainingSetupStep(
+      (nextMode === 'defense' && !defensePrep.trim()) || (nextMode === 'free_debate' && !freeDebatePrep.trim())
+        ? 'config'
+        : 'confirm'
+    );
     setActiveTab('training');
   }
 
@@ -2148,7 +2072,7 @@ function App() {
     setDefensePrep('');
     setFreeDebatePrep('');
     setTrainingSession(null);
-    setSetupStep('topic');
+    setTrainingSetupStep('topic');
     setLongOutputPromptMode('');
     setActiveTaskSession(null);
     setActivePrepTrainingContext(null);
@@ -2275,7 +2199,7 @@ function App() {
     closeOnboarding();
     window.requestAnimationFrame(() => {
       document
-        .querySelector('.setup-panel, .mode-selector-panel, .arena-hero')
+        .querySelector('.training-setup, .arena-hero')
         ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }
@@ -3054,29 +2978,7 @@ function App() {
 
       {activeTab === 'training' && (
       <>
-      {!hasSessionContent && setupStep === 'mode' && (
-      <>
-        <section className="mode-selector-panel" aria-label="单项训练模式">
-          {trainingModes.map((mode) => (
-            <button
-              type="button"
-              key={mode.value}
-              className={config.trainingMode === mode.value ? 'active' : ''}
-              onClick={() => selectTrainingMode(mode.value)}
-              disabled={isBusy || isTraining || hasSessionContent}
-            >
-              <strong>{mode.label}</strong>
-              <span>{mode.description}</span>
-            </button>
-          ))}
-        </section>
-        <button className="ghost-button setup-back-button" onClick={goToTopicStep} disabled={isBusy}>
-          上一步
-        </button>
-      </>
-      )}
-
-      {setupStep !== 'mode' && (
+      {hasSessionContent && (
       <section className="arena-hero">
         <div className="hero-copy">
           <p className="eyebrow">锋辩</p>
@@ -3110,12 +3012,12 @@ function App() {
       )}
 
       {!hasSessionContent && (
-      <MobileTrainingSetup
-          panelRef={mobileSetupRef}
-          topicInputRef={mobileTopicInputRef}
-          step={mobileSetupStep}
-          availability={mobileStepAvailability}
-          snapshot={mobileTrainingSnapshot}
+      <TrainingSetup
+          panelRef={trainingSetupRef}
+          topicInputRef={trainingTopicInputRef}
+          step={trainingSetupStep}
+          availability={trainingStepAvailability}
+          snapshot={trainingSnapshot}
           config={config}
           error={error}
           isBusy={isBusy}
@@ -3124,7 +3026,7 @@ function App() {
           topicDirection={topicDirection}
           defensePrep={defensePrep}
           freeDebatePrep={freeDebatePrep}
-          onStepChange={goToMobileSetupStep}
+          onStepChange={goToTrainingSetupStep}
           onConfigChange={(patch) => {
             updateConfig({ ...config, ...patch });
             if (error) setError('');
@@ -3136,7 +3038,7 @@ function App() {
           onGenerateTopics={generateTopics}
           onSelectTopic={selectGeneratedTopic}
           onSelectCelebrity={selectCelebrityDebater}
-          onSelectMode={(value) => selectTrainingMode(value, { advance: false })}
+          onSelectMode={selectTrainingMode}
           onDefensePrepChange={(value) => {
             setDefensePrep(value);
             if (error) setError('');
@@ -3178,260 +3080,8 @@ function App() {
         </section>
       )}
 
-      {!hasSessionContent && (setupStep === 'rounds' || setupStep === 'defensePrep' || setupStep === 'freeDebatePrep' || setupStep === 'ready') && (
-        <section className="match-strip" aria-label="对阵信息">
-          <div className="side-card user-side">
-            <span>你方</span>
-            <strong>{selectedSideLabel}</strong>
-          </div>
-          <div className="versus-mark">VS</div>
-          <div className="side-card ai-side">
-            <span>{isCelebrityMode ? '明星辩手模式' : 'AI 攻辩方'}</span>
-            <strong>{isCelebrityMode ? `${selectedDebater.shortName} · ${opponentSideLabel}` : opponentSideLabel}</strong>
-          </div>
-        </section>
-      )}
-
-      <section className={`layout ${hasSessionContent ? 'debate-layout' : 'setup-layout'}`}>
-        {!hasSessionContent && setupStep !== 'mode' && (
-        <aside className="panel setup-panel">
-          <div className="panel-title">
-            <p className="eyebrow">赛前设置</p>
-            <h2>{getSetupTitle(setupStep)}</h2>
-          </div>
-
-          <div className="setup-progress" aria-label="赛前设置进度">
-            <span className={setupStep === 'topic' ? 'active' : 'done'}>1 辩题</span>
-            <span className={setupStep === 'mode' ? 'active' : setupStep === 'topic' ? '' : 'done'}>2 模式</span>
-            <span className={setupStep === 'rounds' || setupStep === 'defensePrep' || setupStep === 'freeDebatePrep' || setupStep === 'ready' ? 'active' : ''}>3 开赛</span>
-          </div>
-
-          {setupStep === 'topic' ? (
-            <>
-              <label className="field">
-                <span>辩题</span>
-                <textarea
-                  value={config.topic}
-                  disabled={isBusy}
-                  onChange={(event) => updateConfig({ ...config, topic: event.target.value })}
-                  placeholder="例如：中学生使用 AI 工具利大于弊"
-                  rows={4}
-                />
-              </label>
-
-              <div className="topic-generator">
-                <OptionGroup
-                  label="随机辩题方向"
-                  options={topicDirections}
-                  value={topicDirection}
-                  disabled={isBusy}
-                  onChange={(value) => {
-                    setTopicDirection(value);
-                    setGeneratedTopics([]);
-                  }}
-                  className="topic-direction-options"
-                />
-                <button
-                  type="button"
-                  className="topic-generate-button"
-                  onClick={generateTopics}
-                  disabled={isBusy}
-                >
-                  随机生成候选辩题
-                </button>
-                {generatedTopics.length > 0 && (
-                  <div className="generated-topic-list" aria-label="候选辩题">
-                    {generatedTopics.map((topic) => (
-                      <button
-                        type="button"
-                        key={topic}
-                        className={topic === config.topic ? 'selected' : ''}
-                        onClick={() => selectGeneratedTopic(topic)}
-                        disabled={isBusy}
-                      >
-                        {topic}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <OptionGroup
-                label="我的立场"
-                options={sides}
-                value={config.userSide}
-                disabled={isBusy}
-                onChange={(value) => updateConfig({ ...config, userSide: value })}
-              />
-
-              <OptionGroup
-                label="明星辩手模式"
-                options={celebrityDebaters}
-                value={config.celebrityDebater}
-                disabled={isBusy}
-                onChange={selectCelebrityDebater}
-                className="celebrity-options"
-              />
-
-              {isCelebrityMode && (
-                <p className="mode-note">
-                  {usesDifficulty ? '已启用市赛难度。' : '本模式仍采用固定绝对评分标准。'}{selectedDebater?.description || '该模式仅做公开表达风格的训练模拟，不代表人物本人观点或真实发言。'}以上为基于公开表达特征的风格化模拟，仅用于辩论训练，不代表相关人物本人观点或真实发言。
-                </p>
-              )}
-
-              {usesDifficulty && (
-                <OptionGroup
-                  label="难度"
-                  options={difficulties}
-                  value={config.difficulty}
-                  disabled={isBusy || isCelebrityMode}
-                  onChange={(value) => updateConfig({ ...config, difficulty: value })}
-                />
-              )}
-
-              <button className="primary-button" onClick={goToModeStep} disabled={isBusy}>
-                下一步：选择训练模式
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="selected-topic-card">
-                <span>已选辩题</span>
-                <strong>{config.topic}</strong>
-                <button type="button" onClick={goToTopicStep} disabled={isBusy}>
-                  修改辩题
-                </button>
-              </div>
-
-              <div className="selected-topic-card">
-                <span>已选模式</span>
-                <strong>{selectedTrainingMode?.label || '待选择'}</strong>
-                <button type="button" onClick={goToModeStep} disabled={isBusy}>
-                  修改模式
-                </button>
-              </div>
-
-              {setupStep === 'rounds' && (
-                <>
-                  <OptionGroup
-                    label="轮数"
-                    options={roundOptions.map((value) => ({ label: `${value}轮`, value }))}
-                    value={config.rounds}
-                    disabled={isBusy}
-                    onChange={(value) => updateConfig({ ...config, rounds: value })}
-                  />
-
-                  <div className="round-progress" aria-label="轮次进度">
-                    {Array.from({ length: config.rounds }, (_, index) => (
-                      <span
-                        key={index}
-                        className={index < currentRound ? 'active' : ''}
-                        aria-hidden="true"
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-
-              {setupStep === 'defensePrep' && (
-                <div className="defense-prep-card">
-                  <div className="prep-context-grid" aria-label="防守训练上下文">
-                    <div>
-                      <span>你方立场</span>
-                      <strong>{selectedSideLabel}</strong>
-                    </div>
-                    <div>
-                      <span>AI 质询方</span>
-                      <strong>{opponentSideLabel}</strong>
-                    </div>
-                    <div>
-                      <span>训练轮数</span>
-                      <strong>{config.rounds}轮</strong>
-                    </div>
-                  </div>
-                  <label className="field">
-                    <span>己方分论点与论据</span>
-                    <textarea
-                      value={defensePrep}
-                      disabled={isBusy}
-                      onChange={(event) => {
-                        setDefensePrep(event.target.value);
-                        if (error) setError('');
-                      }}
-                      placeholder={'请写下你方准备防守的几个分论点和论据。例如：\n1. 手机可以作为学习工具：查资料、看教学视频、记录作业。\n论据：部分学校已在课堂中使用平板或学习终端辅助教学。\n\n2. 手机能提高安全联络效率：突发情况能及时联系家长或老师。\n论据：校园突发事件中，及时联络能降低沟通成本。'}
-                      rows={8}
-                    />
-                  </label>
-                  <p className="mode-note">开始后，AI 会站在对立面，根据你填写的分论点和论据进行质询；你只需要防守，不要反问。</p>
-                </div>
-              )}
-
-              {setupStep === 'freeDebatePrep' && (
-                <div className="defense-prep-card">
-                  <div className="prep-context-grid" aria-label="自由辩论上下文">
-                    <div>
-                      <span>我方立场</span>
-                      <strong>{selectedSideLabel}</strong>
-                    </div>
-                    <div>
-                      <span>AI 对立面</span>
-                      <strong>{opponentSideLabel}</strong>
-                    </div>
-                    <div>
-                      <span>训练轮数</span>
-                      <strong>{config.rounds}轮</strong>
-                    </div>
-                  </div>
-                  <label className="field">
-                    <span>自由辩论主要论点</span>
-                    <textarea
-                      value={freeDebatePrep}
-                      disabled={isBusy}
-                      onChange={(event) => {
-                        setFreeDebatePrep(event.target.value);
-                        if (error) setError('');
-                      }}
-                      placeholder="请写下你方在自由辩论中准备坚持的主要论点和论据。AI 将只基于这些内容进行反问和质询，不会自行添加你的定义。"
-                      rows={8}
-                    />
-                  </label>
-                  <p className="mode-note">开始后，AI 只能基于你在这里写下的定义、论点、论据，以及后续对话中真实说出的内容进行交锋。</p>
-                </div>
-              )}
-
-              <div className="button-stack">
-                <button
-                  className="primary-button"
-                  onClick={
-                    setupStep === 'rounds' && config.trainingMode === 'defense'
-                      ? goToDefensePrepStep
-                      : setupStep === 'rounds' && config.trainingMode === 'free_debate'
-                        ? goToFreeDebatePrepStep
-                        : startTraining
-                  }
-                  disabled={isBusy}
-                >
-                  {setupStep === 'rounds' && config.trainingMode === 'defense'
-                    ? '下一步：填写己方观点'
-                    : setupStep === 'rounds' && config.trainingMode === 'free_debate'
-                      ? '下一步：填写主要论点'
-                    : isLoading && !isTraining
-                      ? '生成中...'
-                      : config.trainingMode === 'free_debate'
-                        ? '进入自由辩论'
-                        : '开始训练'}
-                </button>
-                <button className="ghost-button" onClick={goBackFromSetupStep} disabled={isBusy}>
-                  上一步
-                </button>
-              </div>
-            </>
-          )}
-          {error && !hasSessionContent && <div className="error-box setup-error">{error}</div>}
-        </aside>
-        )}
-
-        {hasSessionContent && (
+      {hasSessionContent && (
+      <section className="layout debate-layout">
         <section className="panel coach-panel">
           <div className="panel-header">
             <div>
@@ -3631,8 +3281,8 @@ function App() {
 
           {error && <div className="error-box">{error}</div>}
         </section>
-        )}
       </section>
+      )}
 
       {review && (
         <section className="panel review-panel">
@@ -5214,13 +4864,6 @@ function getWeakestDimensions(dimensionScores, count = 2) {
     .slice(0, count);
 }
 
-function getSetupStepForMode(mode, { hasDefensePrep = false, hasFreeDebatePrep = false } = {}) {
-  if (mode === 'defense' && !hasDefensePrep) return 'defensePrep';
-  if (mode === 'free_debate' && !hasFreeDebatePrep) return 'freeDebatePrep';
-  if (roundSelectionModes.includes(mode)) return 'rounds';
-  return 'ready';
-}
-
 function getRecommendedTrainingModeForDimension(name, fallbackMode = 'free_debate') {
   const normalizedName = String(name || '');
   const rules = [
@@ -6300,7 +5943,7 @@ function LinWanVoicePlayer({ state, onAction, onStop, onSeek, disabled = false }
   );
 }
 
-function MobileTrainingSetup({
+function TrainingSetup({
   panelRef,
   topicInputRef,
   step,
@@ -6334,8 +5977,8 @@ function MobileTrainingSetup({
   ];
 
   return (
-    <section className="mobile-training-setup panel" ref={panelRef} aria-label="移动端赛前设置">
-      <nav className="mobile-setup-steps" aria-label="赛前设置步骤">
+    <section className="training-setup panel" ref={panelRef} aria-label="赛前训练设置">
+      <nav className="training-setup-steps" aria-label="赛前设置步骤">
         {stepItems.map((item, index) => {
           const isAvailable = availability[item.value];
           const currentIndex = stepItems.findIndex((candidate) => candidate.value === step);
@@ -6350,8 +5993,8 @@ function MobileTrainingSetup({
               disabled={isBusy}
               onClick={() => onStepChange(item.value)}
             >
-              {status === 'done' && <span className="mobile-step-icon" aria-hidden="true">✓</span>}
-              {status === 'locked' && <span className="mobile-step-icon" aria-hidden="true">•</span>}
+              {status === 'done' && <span className="training-step-icon" aria-hidden="true">✓</span>}
+              {status === 'locked' && <span className="training-step-icon" aria-hidden="true">•</span>}
               <span>{item.label}</span>
             </button>
           );
@@ -6359,12 +6002,12 @@ function MobileTrainingSetup({
       </nav>
 
       {step === 'topic' && (
-        <div className="mobile-setup-body mobile-topic-step">
-          <div className="mobile-setup-heading">
+        <div className="training-setup-body training-topic-step">
+          <div className="training-setup-heading">
             <p className="eyebrow">第 1 步</p>
             <h2>先确定本轮辩题</h2>
           </div>
-          <label className="field" data-mobile-field="topic">
+          <label className="field" data-training-field="topic">
             <span>辩题</span>
             <textarea
               ref={topicInputRef}
@@ -6375,7 +6018,7 @@ function MobileTrainingSetup({
               rows={3}
             />
           </label>
-          <div className="topic-generator mobile-topic-generator">
+          <div className="topic-generator training-topic-generator">
             <OptionGroup
               label="随机辩题方向"
               options={topicDirections}
@@ -6403,29 +6046,26 @@ function MobileTrainingSetup({
               </div>
             )}
           </div>
-          <button className="primary-button mobile-next-button" type="button" onClick={() => onStepChange('config')} disabled={isBusy}>
+          <button className="primary-button training-next-button" type="button" onClick={() => onStepChange('config')} disabled={isBusy}>
             下一步：选择模式
           </button>
         </div>
       )}
 
       {step === 'config' && (
-        <div className="mobile-setup-body mobile-config-step">
-          <div className="mobile-setup-heading">
+        <div className="training-setup-body training-config-step">
+          <div className="training-setup-heading">
             <p className="eyebrow">第 2 步</p>
             <h2>配置训练方式</h2>
           </div>
-          <div data-mobile-field="userSide">
+          <div className="training-config-grid">
+          <div className="training-config-column">
+          <div data-training-field="userSide">
             <OptionGroup label="我的立场" options={sides} value={config.userSide} disabled={isBusy} onChange={(value) => onConfigChange({ userSide: value })} />
           </div>
-          {selectedMode?.usesDifficulty !== false && (
-            <div data-mobile-field="difficulty">
-              <OptionGroup label="难度" options={difficulties} value={config.difficulty} disabled={isBusy || config.celebrityDebater !== 'none'} onChange={(value) => onConfigChange({ difficulty: value })} />
-            </div>
-          )}
-          <div className="mobile-mode-field" data-mobile-field="trainingMode">
-            <span className="mobile-field-label">训练模式</span>
-            <div className="mobile-mode-grid">
+          <div className="training-mode-field" data-training-field="trainingMode">
+            <span className="training-field-label">训练模式</span>
+            <div className="training-mode-grid">
               {trainingModes.map((mode) => (
                 <button
                   type="button"
@@ -6447,10 +6087,17 @@ function MobileTrainingSetup({
               value={config.rounds}
               disabled={isBusy}
               onChange={(value) => onConfigChange({ rounds: value })}
-              className="mobile-round-options"
+              className="training-round-options"
             />
           )}
-          <div className="mobile-celebrity-field">
+          {selectedMode?.usesDifficulty !== false && (
+            <div data-training-field="difficulty">
+              <OptionGroup label="难度" options={difficulties} value={config.difficulty} disabled={isBusy || config.celebrityDebater !== 'none'} onChange={(value) => onConfigChange({ difficulty: value })} />
+            </div>
+          )}
+          </div>
+          <div className="training-config-column training-config-secondary">
+          <div className="training-celebrity-field">
             <OptionGroup
               label="明星辩手模式"
               options={celebrityDebaters}
@@ -6464,18 +6111,20 @@ function MobileTrainingSetup({
             )}
           </div>
           {config.trainingMode === 'defense' && (
-            <label className="field" data-mobile-field="defensePrep">
+            <label className="field" data-training-field="defensePrep">
               <span>己方分论点与论据</span>
               <textarea value={defensePrep} disabled={isBusy} onChange={(event) => onDefensePrepChange(event.target.value)} rows={5} placeholder="请写下你方准备防守的分论点和论据。" />
             </label>
           )}
           {config.trainingMode === 'free_debate' && (
-            <label className="field" data-mobile-field="freeDebatePrep">
+            <label className="field" data-training-field="freeDebatePrep">
               <span>自由辩论主要论点</span>
               <textarea value={freeDebatePrep} disabled={isBusy} onChange={(event) => onFreeDebatePrepChange(event.target.value)} rows={5} placeholder="请至少写下一个准备坚持的主要论点和论据。" />
             </label>
           )}
-          <div className="mobile-setup-actions">
+          </div>
+          </div>
+          <div className="training-setup-actions">
             <button className="ghost-button" type="button" onClick={() => onStepChange('topic')} disabled={isBusy}>返回修改辩题</button>
             <button className="primary-button" type="button" onClick={() => onStepChange('confirm')} disabled={isBusy}>下一步：确认开赛</button>
           </div>
@@ -6483,12 +6132,12 @@ function MobileTrainingSetup({
       )}
 
       {step === 'confirm' && (
-        <div className="mobile-setup-body mobile-confirm-step">
-          <div className="mobile-setup-heading">
+        <div className="training-setup-body training-confirm-step">
+          <div className="training-setup-heading">
             <p className="eyebrow">第 3 步</p>
             <h2>确认本轮设置</h2>
           </div>
-          <dl className="mobile-confirmation-list">
+          <dl className="training-confirmation-list">
             <div><dt>辩题</dt><dd>{snapshot.topic}</dd></div>
             <div><dt>我的立场</dt><dd>{getOptionLabel(sides, snapshot.userSide)}</dd></div>
             <div><dt>训练模式</dt><dd>{selectedMode?.label || '待选择'}</dd></div>
@@ -6498,11 +6147,11 @@ function MobileTrainingSetup({
             {snapshot.trainingMode === 'defense' && <div><dt>防守准备</dt><dd>{snapshot.defensePrep ? '已填写' : '未填写'}</dd></div>}
             {snapshot.trainingMode === 'free_debate' && <div><dt>主要论点</dt><dd>{snapshot.freeDebatePrep ? '已填写' : '未填写'}</dd></div>}
           </dl>
-          <div className="mobile-confirm-links">
+          <div className="training-confirm-links">
             <button type="button" onClick={() => onStepChange('topic')} disabled={isBusy}>修改辩题</button>
             <button type="button" onClick={() => onStepChange('config')} disabled={isBusy}>修改配置</button>
           </div>
-          <div className="mobile-setup-actions">
+          <div className="training-setup-actions">
             <button className="ghost-button" type="button" onClick={() => onStepChange('config')} disabled={isBusy}>返回修改配置</button>
             <button className="primary-button" type="button" onClick={onStart} disabled={isBusy}>
               {isLoading ? '生成中...' : config.trainingMode === 'free_debate' ? '进入自由辩论' : '开始训练'}
@@ -6511,7 +6160,7 @@ function MobileTrainingSetup({
         </div>
       )}
 
-      {error && <div className="error-box mobile-setup-error" role="alert">{error}</div>}
+      {error && <div className="error-box training-setup-error" role="alert">{error}</div>}
     </section>
   );
 }
@@ -7205,14 +6854,6 @@ function getRoundPromptLabel(trainingMode) {
   if (trainingMode === 'summary') return '场上已有交锋点';
   if (trainingMode === 'closing') return '对立方结辩素材';
   return '本轮追问';
-}
-
-function getSetupTitle(setupStep) {
-  if (setupStep === 'topic') return '选择辩题与立场';
-  if (setupStep === 'rounds') return '选择训练轮数';
-  if (setupStep === 'defensePrep') return '填写防守立论要点';
-  if (setupStep === 'freeDebatePrep') return '填写自由辩论主要论点';
-  return '确认训练设置';
 }
 
 function getHeroSubtitle(trainingMode) {

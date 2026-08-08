@@ -1,10 +1,10 @@
-export const mobileTrainingSteps = ['topic', 'config', 'confirm'];
+export const trainingSetupSteps = ['topic', 'config', 'confirm'];
 
 export function isMeaningfulTrainingTopic(value) {
   return /[\p{L}\p{N}]/u.test(String(value || '').trim());
 }
 
-export function validateMobileTrainingSetup({ config, defensePrep = '', freeDebatePrep = '' }, target = 'confirm') {
+export function validateTrainingSetup({ config, defensePrep = '', freeDebatePrep = '' }, target = 'confirm') {
   if (!isMeaningfulTrainingTopic(config?.topic)) {
     return { field: 'topic', message: '请输入包含有效文字或数字的辩题。' };
   }
@@ -22,13 +22,13 @@ export function validateMobileTrainingSetup({ config, defensePrep = '', freeDeba
   return null;
 }
 
-export function getMobileTrainingStepAvailability(values) {
-  const topicReady = !validateMobileTrainingSetup(values, 'config');
-  const configReady = !validateMobileTrainingSetup(values, 'confirm');
+export function getTrainingStepAvailability(values) {
+  const topicReady = !validateTrainingSetup(values, 'config');
+  const configReady = !validateTrainingSetup(values, 'confirm');
   return { topic: true, config: topicReady, confirm: configReady };
 }
 
-export function getMobileTrainingSnapshot({ config, defensePrep = '', freeDebatePrep = '' }) {
+export function getTrainingSnapshot({ config, defensePrep = '', freeDebatePrep = '' }) {
   return {
     topic: config.topic,
     userSide: config.userSide,
