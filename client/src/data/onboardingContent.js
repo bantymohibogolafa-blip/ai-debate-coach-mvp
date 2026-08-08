@@ -1,4 +1,4 @@
-export const onboardingKicker = '8页快速认识锋辩';
+export const onboardingKicker = '9页快速认识锋辩';
 
 export const onboardingModeCards = Object.freeze([
   Object.freeze({ title: '立论训练', fit: '开篇立论、定义判准和论点结构。', summary: '练习把观点讲清楚、立稳，并形成完整的论证链。' }),
@@ -17,7 +17,8 @@ export const onboardingPages = Object.freeze([
     bullets: Object.freeze([
       '可以在“我的记录”中查看之前的训练；',
       '可以通过“能力估测”观察自己的能力变化；',
-      '可以向林婉咨询长期训练、赛前准备和反复出现的问题；',
+      '可以向林婉咨询长期训练、近期问题和训练方向；',
+      '可以用 Super 林婉围绕一场具体比赛持续进行赛前备战；',
       '可以进入团队空间完成团队任务和查看团队数据。'
     ]),
     tip: '训练中，AI是你的对手；复盘时，AI才是你的教练。',
@@ -61,7 +62,7 @@ export const onboardingPages = Object.freeze([
   Object.freeze({
     id: 'linwan',
     title: '林婉 · 辩论顾问',
-    intro: '林婉用于长期训练分析和赛前准备。她不是单场训练中的对手，而是帮助你观察反复问题、制定训练方向的辩论顾问。',
+    intro: '林婉用于长期训练分析和日常辩论咨询。她不是单场训练中的对手，而是帮助你观察反复问题、理解近期训练画像并制定训练方向的辩论顾问。',
     bullets: Object.freeze([
       '会参考当前空间的近期训练画像；',
       '会结合最近12轮完整对话；',
@@ -74,13 +75,28 @@ export const onboardingPages = Object.freeze([
     tip: '单轮训练的具体细节，优先在对应训练记录下询问复盘助手。'
   }),
   Object.freeze({
+    id: 'super-linwan',
+    title: 'Super 林婉 · 赛前备战',
+    intro: 'Super 林婉用于准备一场具体比赛。你可以为一个辩题建立独立的备战任务，与她持续拆题、发散论点、寻找论据和检验思路。每个任务都有自己的资料、对话和思路状态，不会和日常林婉聊天或其他比赛混在一起。',
+    features: Object.freeze([
+      Object.freeze({ title: '独立备战任务', description: '为一场具体比赛建立任务，辩题、立场、已有想法和后续讨论会持续保留。' }),
+      Object.freeze({ title: '拆辩题', description: '分析核心概念、争议对象、比较标准、双方举证责任和可能的关键战场。' }),
+      Object.freeze({ title: '发散论点', description: '基于已经确认和否定的思路继续寻找不同的论证路线，并比较各自优势和风险。' }),
+      Object.freeze({ title: '搜集论据', description: '围绕当前论点检索事实、案例、数据和研究，并区分可用材料、追查线索和待核实内容。' }),
+      Object.freeze({ title: '当前思路报告', description: '把任务中已经形成的观点、材料和判断整理成当前阶段的备战思路。' }),
+      Object.freeze({ title: '即时检验', description: '让 Super 林婉基于当前讨论直接追问，检查论证链、漏洞和临场回应是否真正站得住。' })
+    ]),
+    tip: 'Super 林婉目前使用独立的个人备战任务。登录后才能创建任务并跨设备继续。'
+  }),
+  Object.freeze({
     id: 'spaces',
     title: '个人空间与团队空间',
     sections: Object.freeze([
       Object.freeze({ title: '个人空间', description: '个人空间中的训练记录、能力估测和近期训练画像属于你个人。' }),
       Object.freeze({ title: '团队空间', description: '切换到某个团队空间后，你在该团队中的训练记录、能力估测和训练画像会单独计算。' }),
       Object.freeze({ title: '数据隔离', description: '不同空间的数据彼此隔离。切换空间后，页面显示的记录、画像和团队数据也会随之变化。' }),
-      Object.freeze({ title: '林婉', description: '林婉分析训练问题时，会使用你当前所在空间的训练画像，同时结合最近12轮完整对话。' })
+      Object.freeze({ title: '林婉', description: '林婉分析训练问题时，会使用你当前所在空间的训练画像，同时结合最近12轮完整对话。' }),
+      Object.freeze({ title: 'Super 林婉', description: 'Super 林婉的赛前备战任务目前独立保存在个人账号中，不会自动读取团队训练画像。' })
     ]),
     bullets: Object.freeze([
       '查看团队任务；',

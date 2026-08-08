@@ -784,7 +784,7 @@ textarea:disabled {
 
 .onboarding-progress {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(9, minmax(0, 1fr));
   gap: 8px;
   padding: 0 22px 14px;
 }

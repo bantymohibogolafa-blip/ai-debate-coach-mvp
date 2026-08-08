@@ -53,11 +53,12 @@ function PageBody({ page }) {
     );
   }
 
-  if (page.id === 'answering' || page.id === 'review') {
+  if (page.features) {
     return (
       <>
+        {page.intro && <p>{page.intro}</p>}
         <FeatureList items={page.features} />
-        <div className="onboarding-tip">{page.tip}</div>
+        {page.tip && <div className="onboarding-tip">{page.tip}</div>}
       </>
     );
   }
