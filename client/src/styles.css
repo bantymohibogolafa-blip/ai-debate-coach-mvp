@@ -3042,6 +3042,13 @@ textarea:focus {
   background: #f8fbfc;
 }
 
+.experience-quick-panel > h3 {
+  display: none;
+  margin: 0;
+  color: #245e62;
+  font-size: 15px;
+}
+
 .experience-featured-questions,
 .experience-quick-questions {
   display: grid;
@@ -3223,6 +3230,15 @@ textarea:focus {
   padding-top: 8px;
   color: #687982;
   font-size: 12px;
+}
+
+.linwan-message-actions {
+  margin-top: 10px;
+}
+
+.linwan-message-actions > .linwan-voice-player,
+.linwan-message-actions > .linwan-context-manifest {
+  margin-top: 0;
 }
 
 .linwan-context-toggle {
@@ -6146,6 +6162,7 @@ textarea:focus {
 
   .experience-panel {
     gap: 10px;
+    min-height: calc(100dvh - 16px);
   }
 
   .experience-panel .panel-header {
@@ -6171,41 +6188,29 @@ textarea:focus {
   }
 
   .experience-panel > .experience-input-row {
-    position: relative;
+    position: sticky;
+    z-index: 12;
+    bottom: 0;
     border: 1px solid #cfe0e1;
     border-radius: 8px;
-    padding: 8px;
-    background: #f8fbfc;
-  }
-
-  .experience-panel > .panel-header {
-    order: -6;
-  }
-
-  .experience-panel > .training-profile-card {
-    order: -5;
-  }
-
-  .experience-panel > .experience-boundary-note,
-  .experience-panel > .linwan-guest-note {
-    order: -4;
-  }
-
-  .experience-panel > .experience-quick-panel {
-    order: -3;
-  }
-
-  .experience-panel > .experience-input-row {
-    order: -2;
-  }
-
-  .experience-panel > .linwan-speech-status {
-    order: -1;
+    padding: 8px 8px max(8px, env(safe-area-inset-bottom, 0px));
+    background: rgba(248, 251, 252, 0.98);
+    box-shadow: 0 -10px 24px rgba(24, 36, 43, 0.12);
+    backdrop-filter: blur(12px);
+    margin-top: auto;
   }
 
   .experience-quick-panel {
     gap: 6px;
     padding: 8px;
+  }
+
+  .experience-quick-panel > h3 {
+    display: block;
+  }
+
+  .experience-quick-panel.has-conversation {
+    display: none;
   }
 
   .experience-featured-questions {
@@ -6236,30 +6241,88 @@ textarea:focus {
     padding-top: 5px;
   }
 
+  .linwan-message-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 14px;
+    margin-top: 8px;
+    border-top: 1px solid rgba(47, 115, 117, 0.16);
+    padding-top: 5px;
+  }
+
+  .linwan-message-actions > .linwan-context-manifest {
+    flex: 1 1 auto;
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .linwan-message-actions > .linwan-voice-player {
+    flex: 0 0 auto;
+    order: -1;
+  }
+
+  .linwan-message-actions .linwan-tts-button,
+  .linwan-message-actions .linwan-context-toggle {
+    min-height: 28px;
+  }
+
   .linwan-context-toggle {
     min-height: 28px;
     padding: 2px 0;
   }
 
+  .experience-chat-list {
+    height: clamp(280px, 56dvh, 600px);
+    max-height: none;
+    padding-bottom: 96px;
+    scroll-padding-bottom: 96px;
+  }
+
   .experience-input-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 8px;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    gap: 6px;
+    align-items: end;
   }
 
   .experience-input-row textarea {
-    grid-column: 1 / -1;
+    grid-column: 2;
+    grid-row: 1;
     min-width: 0;
+    min-height: 44px;
+    max-height: 132px;
+    resize: none;
+    line-height: 1.5;
   }
 
   .experience-input-row button {
-    width: 100%;
+    width: auto;
     min-width: 0;
     min-height: 44px;
   }
 
   .linwan-speech-input {
+    grid-column: 1;
+    grid-row: 1;
+    width: 44px !important;
+    min-width: 44px;
+    padding: 0;
     font-size: 13px;
+  }
+
+  .linwan-speech-input > span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .experience-input-row > button:last-child {
+    grid-column: 3;
+    grid-row: 1;
+    padding: 0 14px;
   }
 }
 

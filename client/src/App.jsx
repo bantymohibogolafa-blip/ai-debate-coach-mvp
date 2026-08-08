@@ -5318,7 +5318,6 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
     }
   ];
   const openingMessage = '我是林婉，你的辩论顾问，也是你的辩论搭子。\n\n我会参考你最近的训练状态，不局限于某一场比赛，综合分析你的问题，提出我的建议。\n\n另外，我也有许多大赛经验。赛前准备、攻防设计、临场心态这些问题，都可以拿来问我，我会把能用的经验讲给你听。\n\n辩论赛的准备过程是痛苦且艰辛的，但没事，有我在，我们慢慢来。';
-  const hasTrainingProfile = Number(trainingProfile?.scoredRecordCount || 0) > 0;
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState([]);
   const [isSending, setIsSending] = useState(false);
@@ -5336,6 +5335,7 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
   const chatListRef = useRef(null);
   const questionInputRef = useRef(null);
   const historyScrollRestoreRef = useRef(null);
+  const shouldAutoScrollRef = useRef(true);
   const ttsAudioRef = useRef(null);
   const ttsCacheRef = useRef(new Map());
   const ttsRequestsRef = useRef(new Map());
@@ -5376,6 +5376,14 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
     container.scrollTop = restore.previousTop + container.scrollHeight - restore.previousHeight;
     historyScrollRestoreRef.current = null;
   }, [messages]);
+
+  useLayoutEffect(() => {
+    const input = questionInputRef.current;
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = `${input.scrollHeight}px`;
+    input.style.overflowY = input.scrollHeight > input.clientHeight ? 'auto' : 'hidden';
+  }, [question]);
 
   useEffect(() => {
     isLinWanMountedRef.current = true;
@@ -5555,7 +5563,20 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
 
   function scrollLinWanToBottom() {
     const container = chatListRef.current;
-    if (container) container.scrollTop = container.scrollHeight;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+    shouldAutoScrollRef.current = true;
+  }
+
+  function scrollLinWanToBottomIfFollowing() {
+    if (shouldAutoScrollRef.current) scrollLinWanToBottom();
+  }
+
+  function handleLinWanScroll() {
+    const container = chatListRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldAutoScrollRef.current = distanceFromBottom <= 80;
   }
 
   async function sendExperienceQuestion(nextQuestion = question) {
@@ -5604,7 +5625,7 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
       if (data.historyEnabled && !data.historySaved) {
         setHistoryNotice('本轮回答暂未保存到历史记录。');
       }
-      requestAnimationFrame(scrollLinWanToBottom);
+      requestAnimationFrame(scrollLinWanToBottomIfFollowing);
     } catch (error) {
       if (error?.name === 'AbortError' || requestId !== sendRequestIdRef.current) return;
       setChatError('林婉暂时没有回应，请稍后再试。');
@@ -5621,6 +5642,8 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
     sendExperienceQuestion(item);
     setShowAllQuickQuestions(false);
   }
+
+  const hasConversation = messages.some((item) => item.id !== 'linwan-opening');
 
   async function saveLinWanProfile(nextProfile) {
     const sessionId = linWanSessionIdRef.current;
@@ -6058,7 +6081,8 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
       </p>
       {!isLoggedIn && <p className="linwan-guest-note">游客聊天仅保留在当前页面，登录后可恢复云端历史并设置“我的林婉”。</p>}
 
-      <section className="experience-quick-panel" aria-label="快捷问题">
+      <section className={`experience-quick-panel ${hasConversation ? 'has-conversation' : 'is-empty'}`} aria-label="快捷问题">
+        <h3>有什么想和林婉聊的？</h3>
         <div className="experience-featured-questions">
           {featuredQuickQuestions.map((item) => (
             <button
@@ -6112,7 +6136,7 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
         </div>
       )}
 
-      <div className="assistant-chat-list experience-chat-list" ref={chatListRef}>
+      <div className="assistant-chat-list experience-chat-list" ref={chatListRef} onScroll={handleLinWanScroll}>
         {historyState.status === 'ready' && historyState.hasMore && (
           <button type="button" className="linwan-load-older" disabled={isLoadingOlder} onClick={loadOlderHistory}>
             {isLoadingOlder ? '加载中…' : '加载更早消息'}
@@ -6140,17 +6164,21 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
                   {item.createdAt && <time dateTime={item.createdAt}>{formatLinWanLocalTime(item.createdAt)}</time>}
                 </div>
                 <p>{item.content}</p>
-                {item.role === 'assistant' && item.contextManifest && (
-                  <LinWanContextManifest manifest={item.contextManifest} autoShow={profile.autoShowContext} />
-                )}
-                {canPlayTts && (
-                  <LinWanVoicePlayer
-                    state={ttsState}
-                    disabled={isLinWanSpeechBusy}
-                    onAction={() => handleLinWanVoiceAction(item.content, ttsKey, ttsState)}
-                    onStop={() => stopLinWanVoice(ttsKey)}
-                    onSeek={(value) => seekLinWanAudio(ttsKey, value)}
-                  />
+                {item.role === 'assistant' && (item.contextManifest || canPlayTts) && (
+                  <div className="linwan-message-actions">
+                    {item.contextManifest && (
+                      <LinWanContextManifest manifest={item.contextManifest} autoShow={profile.autoShowContext} />
+                    )}
+                    {canPlayTts && (
+                      <LinWanVoicePlayer
+                        state={ttsState}
+                        disabled={isLinWanSpeechBusy}
+                        onAction={() => handleLinWanVoiceAction(item.content, ttsKey, ttsState)}
+                        onStop={() => stopLinWanVoice(ttsKey)}
+                        onSeek={(value) => seekLinWanAudio(ttsKey, value)}
+                      />
+                    )}
+                  </div>
                 )}
               </article>
             </div>
@@ -6168,8 +6196,8 @@ function DebateExperienceChat({ trainingProfile, trainingSpace, isLoggedIn, curr
           value={question}
           disabled={isSending || historyState.status !== 'ready'}
           onChange={(event) => setQuestion(event.target.value)}
-          placeholder={hasTrainingProfile ? '例如：我最近最该练什么？帮我安排三天训练计划。' : '例如：自由辩总被带跑怎么办？赛前准备一个辩题该怎么做？'}
-          rows={3}
+          placeholder="问问林婉……"
+          rows={1}
         />
         <SpeechInputButton
           speech={linWanSpeech}
