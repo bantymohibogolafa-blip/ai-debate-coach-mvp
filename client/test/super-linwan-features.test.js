@@ -93,3 +93,21 @@ test('mobile chat tools separate quick prompts from report and challenge actions
   assert.match(styleSource, /\.prematch-chat-tools\.mobile-open\s*\{[\s\S]*?bottom:\s*calc\(128px \+ env\(safe-area-inset-bottom, 0px\)\)/);
   assert.match(styleSource, /\.prematch-chat-tools\.mobile-open\s*\{[\s\S]*?overflow-y:\s*auto/);
 });
+
+test('mobile awaiting-answer state keeps an uncovered exit action beside the composer', () => {
+  assert.match(prepSource, /isNoteOpen \|\| isToolsOpen \|\| challengeState\.active \? 'is-hidden'/);
+  assert.match(prepSource, /className="prematch-challenge-exit"/);
+  assert.match(prepSource, /className=\{`prematch-chat-input \$\{challengeState\.phase === 'awaiting_answer' \? 'challenge-answering' : ''\}`\}/);
+  assert.equal((prepSource.match(/challengeState\.phase === 'awaiting_answer' && \(/g) || []).length, 0);
+  assert.match(styleSource, /\.prematch-chat-input\.challenge-answering\s*\{[\s\S]*?grid-template-columns:\s*72px minmax\(0, 1fr\) auto/);
+  assert.match(styleSource, /\.prematch-challenge-exit\s*\{[\s\S]*?display:\s*inline-flex/);
+  assert.match(styleSource, /\.prematch-chat-card\.challenge-active \.prematch-chat-list\s*\{[\s\S]*?padding-bottom:\s*12px/);
+});
+
+test('desktop chat tools keep the mobile hierarchy in a restrained wide-screen layout', () => {
+  assert.match(styleSource, /@media \(min-width:\s*621px\)\s*\{[\s\S]*?\.prematch-chat-tools\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 0\.8fr\) minmax\(460px, 1\.2fr\)/);
+  assert.match(styleSource, /@media \(min-width:\s*621px\)\s*\{[\s\S]*?\.prematch-tool-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styleSource, /@media \(min-width:\s*621px\)\s*\{[\s\S]*?\.prematch-tool-action span\s*\{[\s\S]*?display:\s*block/);
+  assert.match(styleSource, /@media \(min-width:\s*621px\)\s*\{[\s\S]*?\.prematch-chat-input\.challenge-answering\s*\{[\s\S]*?grid-template-columns:\s*104px minmax\(0, 1fr\) auto/);
+  assert.match(styleSource, /@media \(min-width:\s*621px\) and \(max-width:\s*1100px\)\s*\{[\s\S]*?\.prematch-chat-tools\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
+});

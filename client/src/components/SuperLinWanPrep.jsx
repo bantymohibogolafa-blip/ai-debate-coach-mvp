@@ -836,7 +836,7 @@ function PrematchTaskWorkspace({
 
       <button
         type="button"
-        className={`prematch-note-fab ${hasUnsavedNote ? 'has-unsaved-note' : ''} ${isNoteOpen || isToolsOpen ? 'is-hidden' : ''}`}
+        className={`prematch-note-fab ${hasUnsavedNote ? 'has-unsaved-note' : ''} ${isNoteOpen || isToolsOpen || challengeState.active ? 'is-hidden' : ''}`}
         onClick={() => setIsNoteOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={isNoteOpen}
@@ -891,7 +891,7 @@ function PrematchTaskWorkspace({
       </section>
 
       <div className="prematch-workspace-grid">
-        <section className="panel prematch-chat-card">
+        <section className={`panel prematch-chat-card ${challengeState.active ? 'challenge-active' : ''}`}>
           <div className="panel-header">
             <div>
               <p className="eyebrow">任务对话</p>
@@ -1008,23 +1008,29 @@ function PrematchTaskWorkspace({
               <button type="button" onClick={onEndChallenge} disabled={isSending}>结束检验</button>
             </div>
           )}
-          {challengeState.phase === 'awaiting_answer' && (
-            <div className="prematch-challenge-actions">
-              <button type="button" onClick={onEndChallenge} disabled={isSending}>结束检验</button>
-            </div>
-          )}
-          <form className="prematch-chat-input" onSubmit={onSend}>
-            <button
-              type="button"
-              className="prematch-tools-trigger"
-              onClick={() => setIsToolsOpen((current) => !current)}
-              aria-label="打开对话工具"
-              aria-haspopup="menu"
-              aria-expanded={isToolsOpen}
-              disabled={isSending || !permissions.canChat || challengeState.active}
-            >
-              ＋
-            </button>
+          <form className={`prematch-chat-input ${challengeState.phase === 'awaiting_answer' ? 'challenge-answering' : ''}`} onSubmit={onSend}>
+            {challengeState.phase === 'awaiting_answer' ? (
+              <button
+                type="button"
+                className="prematch-challenge-exit"
+                onClick={onEndChallenge}
+                disabled={isSending}
+              >
+                结束检验
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="prematch-tools-trigger"
+                onClick={() => setIsToolsOpen((current) => !current)}
+                aria-label="打开对话工具"
+                aria-haspopup="menu"
+                aria-expanded={isToolsOpen}
+                disabled={isSending || !permissions.canChat || challengeState.active}
+              >
+                ＋
+              </button>
+            )}
             <textarea
               value={question}
               onChange={(event) => onQuestionChange(event.target.value)}

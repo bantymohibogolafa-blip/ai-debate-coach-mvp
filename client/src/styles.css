@@ -6868,6 +6868,10 @@ textarea:focus {
   background: #f5faf9;
 }
 
+.prematch-challenge-exit {
+  display: none;
+}
+
 @media (max-width: 640px) {
   .prematch-challenge-actions {
     align-items: stretch;
@@ -6893,6 +6897,88 @@ textarea:focus {
   border-color: rgba(200, 80, 45, 0.3);
   color: #8b4329;
   background: #fff1e9;
+}
+
+@media (min-width: 621px) {
+  .prematch-chat-tools {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(460px, 1.2fr);
+    align-items: stretch;
+    gap: 12px;
+    border-top: 1px solid #e0e9ea;
+    padding-top: 12px;
+  }
+
+  .prematch-quick-prompts {
+    align-content: start;
+    align-items: center;
+  }
+
+  .prematch-tool-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .prematch-tool-action {
+    display: grid;
+    width: 100%;
+    min-height: 70px;
+    gap: 3px;
+    border: 1px solid #d5e3e3 !important;
+    border-radius: 10px !important;
+    padding: 10px 12px !important;
+    text-align: left;
+  }
+
+  .prematch-tool-action strong {
+    color: #315f62;
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .prematch-tool-action span {
+    display: block;
+    color: #6b8084;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.45;
+  }
+
+  .prematch-report-button {
+    color: inherit !important;
+    background: #fff8f4 !important;
+  }
+
+  .prematch-challenge-button {
+    color: inherit !important;
+    background: #f3f9f8 !important;
+  }
+
+  .prematch-chat-input.challenge-answering {
+    grid-template-columns: 104px minmax(0, 1fr) auto;
+  }
+
+  .prematch-challenge-exit {
+    display: inline-flex;
+    width: 104px;
+    min-width: 104px;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #b9d2d0;
+    border-radius: 10px;
+    padding: 8px 12px;
+    color: #315f62;
+    background: #edf7f5;
+    font-weight: 900;
+  }
+}
+
+@media (min-width: 621px) and (max-width: 1100px) {
+  .prematch-chat-tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .prematch-chat-input textarea {
@@ -7581,6 +7667,10 @@ textarea:focus {
     overscroll-behavior: contain;
   }
 
+  .prematch-chat-card.challenge-active .prematch-chat-list {
+    padding-bottom: 12px;
+  }
+
   .prematch-chat-tools {
     display: none;
   }
@@ -7707,6 +7797,27 @@ textarea:focus {
     padding: 8px 8px max(8px, env(safe-area-inset-bottom, 0px));
     background: rgba(255, 255, 255, 0.98);
     box-shadow: 0 -6px 20px rgba(24, 48, 53, 0.06);
+  }
+
+  .prematch-chat-input.challenge-answering {
+    grid-template-columns: 72px minmax(0, 1fr) auto;
+  }
+
+  .prematch-challenge-exit {
+    display: inline-flex;
+    width: 72px;
+    min-width: 72px !important;
+    min-height: 44px !important;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #b9d2d0 !important;
+    border-radius: 12px !important;
+    padding: 7px 8px !important;
+    color: #315f62 !important;
+    background: #edf7f5 !important;
+    font-size: 12px;
+    font-weight: 900;
+    line-height: 1.25;
   }
 
   .prematch-tools-trigger {
