@@ -6,6 +6,7 @@ dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 const apiUrl = process.env.DEEPSEEK_API_URL || 'https://api.deepseek.com/chat/completions';
 const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
 const thinkingType = process.env.DEEPSEEK_THINKING || 'disabled';
+const requestTimeoutMs = positiveIntegerEnv('DEEPSEEK_TIMEOUT_MS', 120000);
 
 export async function callDeepSeek(messages, options = {}) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -17,24 +18,43 @@ export async function callDeepSeek(messages, options = {}) {
     throw error;
   }
 
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      thinking: {
-        type: thinkingType
-      },
-      temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 500
-    })
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  let response;
+  let responseText;
 
-  const responseText = await response.text();
+  try {
+    response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        thinking: {
+          type: thinkingType
+        },
+        temperature: options.temperature ?? 0.7,
+        max_tokens: options.maxTokens ?? 500
+      }),
+      signal: controller.signal
+    });
+    responseText = await response.text();
+  } catch (cause) {
+    if (controller.signal.aborted) {
+      throw createDeepSeekError('DeepSeek API request timed out.', 'DEEPSEEK_TIMEOUT', {
+        status: 504,
+        timeoutMs: requestTimeoutMs,
+        cause
+      });
+    }
+    throw cause;
+  } finally {
+    clearTimeout(timeout);
+  }
+
   let data;
 
   try {
@@ -151,4 +171,9 @@ function createSafeBodyPreview(value) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 500);
+}
+
+function positiveIntegerEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
 }

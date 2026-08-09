@@ -98,17 +98,23 @@ export function validateDefenseOpeningAnalysis(content, { difficulty = 'campus' 
 
 export function buildDefenseAnalysisRepairInstruction({ hasNextRound = true, difficulty = 'campus' } = {}) {
   const nextQuestionExample = hasNextRound
-    ? '{"questionText":"沿用上一条下一轮质询","targetPoint":"沿用上一条攻击点","requiredResponse":"沿用上一条回应要求"}'
+    ? '{"questionText":"你方如何回应这一项核心漏洞？","targetPoint":"沿用上一条核心攻击点","requiredResponse":"回应这一项核心义务"}'
     : 'null';
   return [
-    '你上一条防守分析的JSON字段类型或结构不符合接口要求。只修复格式，不得重新评价用户回答，不得改变原有判断、分数或追问内容。',
+    '你上一条防守分析的JSON字段类型或结构不符合接口要求。只修复格式，不得重新评价用户回答，也不得改变原有判断或分数。',
     '只输出一个JSON对象，不要Markdown或解释。所有分数字段必须是0到100之间的数字（不能是字符串或说明文字），isCurrentQuestionAnswered必须是布尔值。',
     'answeredQuestionIds、delayedAnswerQuestionIds、unresolvedPoints必须是字符串数组；reason必须是非空字符串。',
     'roundScore必须完整包含contentQuality、currentQuestionRelevance、responseCompleteness、timeliness、defensiveEffectiveness、delayedRecoveryQuality六个数字字段。',
     hasNextRound
       ? 'nextQuestion必须是对象，并完整包含非空字符串questionText、targetPoint、requiredResponse。'
       : '本轮是最后一轮，nextQuestion必须严格为null。',
+    hasNextRound
+      ? 'nextQuestion必须保留上一条的同一个核心攻击点；如果问题或回应义务超载，必须只做压缩改写，不得原样复制超载文本，也不得新增攻击点。'
+      : '',
     hasNextRound ? getDefenseQuestionScopeRepairRule(difficulty, 'nextQuestion') : '',
+    hasNextRound && difficulty === 'novice'
+      ? '输出前逐字检查：questionText只能出现一个“？”；requiredResponse不得出现“以及、分别、同时、并说明、并解释、并回应、并明确、并给出、并比较、并论证”。'
+      : '',
     `严格结构示例：{"answerStatus":"partially_answered","currentQuestionCompletion":65,"isCurrentQuestionAnswered":false,"answeredQuestionIds":[],"delayedAnswerQuestionIds":[],"unresolvedPoints":["尚未回应的明确义务"],"reason":"沿用上一条判断说明","followUpStrategy":"press_unresolved_point","roundScore":{"contentQuality":70,"currentQuestionRelevance":75,"responseCompleteness":65,"timeliness":80,"defensiveEffectiveness":60,"delayedRecoveryQuality":0},"nextQuestion":${nextQuestionExample}}`
   ].filter(Boolean).join('\n');
 }

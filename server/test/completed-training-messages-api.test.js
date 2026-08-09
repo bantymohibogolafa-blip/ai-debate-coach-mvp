@@ -22,8 +22,27 @@ process.env.DEEPSEEK_API_KEY = 'test-key';
 process.env.DEEPSEEK_API_URL = 'https://deepseek.completed.test/chat/completions';
 process.env.SUPABASE_URL = 'https://supabase.completed.test';
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role';
+process.env.SUPABASE_TIMEOUT_MS = '25';
 
 const { app } = await import('../src/index.js');
+
+test('returns a recoverable 504 when a Supabase request times out', async (t) => {
+  const port = await listen(t, async (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => {
+      const error = new Error('aborted');
+      error.name = 'AbortError';
+      reject(error);
+    }, { once: true });
+  }));
+
+  const response = await requestJson(
+    port,
+    `/api/training-records?localUserId=${LOCAL_USER_ID}&spaceType=personal`
+  );
+
+  assert.equal(response.status, 504);
+  assert.equal(response.body.message, '数据库服务响应超时，请稍后重试。');
+});
 
 test('all completed-training consumers exclude the unanswered AI tail', async (t) => {
   const harness = createHarness();

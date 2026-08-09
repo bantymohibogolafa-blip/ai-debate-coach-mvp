@@ -4,6 +4,7 @@ import test from 'node:test';
 process.env.DEEPSEEK_API_KEY = 'deepseek-unit-test-key';
 process.env.DEEPSEEK_API_URL = 'https://deepseek.unit.test/chat/completions';
 process.env.DEEPSEEK_MODEL = 'deepseek-test-model';
+process.env.DEEPSEEK_TIMEOUT_MS = '25';
 
 const originalFetch = global.fetch;
 const { callDeepSeek } = await import('../src/deepseek.js?deepseek-unit-test');
@@ -55,6 +56,24 @@ test('rejects truncated output instead of returning partial content', async () =
   await assert.rejects(
     callDeepSeek([{ role: 'user', content: '测试' }]),
     (error) => error.code === 'DEEPSEEK_OUTPUT_TRUNCATED' && error.finishReason === 'length'
+  );
+});
+
+test('aborts a DeepSeek request after the configured timeout', async () => {
+  global.fetch = async (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => {
+      const error = new Error('aborted');
+      error.name = 'AbortError';
+      reject(error);
+    }, { once: true });
+  });
+
+  await assert.rejects(
+    callDeepSeek([{ role: 'user', content: 'timeout' }]),
+    (error) => error.code === 'DEEPSEEK_TIMEOUT'
+      && error.status === 504
+      && error.timeoutMs === 25
+      && error.cause?.name === 'AbortError'
   );
 });
 

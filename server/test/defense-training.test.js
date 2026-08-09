@@ -144,6 +144,15 @@ test('strict defense analysis validation enforces final-round null and repair ke
   assert.match(repair, /nextQuestion必须严格为null/);
 });
 
+test('novice analysis repair resolves overloaded follow-up structure without changing its attack point', () => {
+  const repair = buildDefenseAnalysisRepairInstruction({ hasNextRound: true, difficulty: 'novice' });
+  assert.match(repair, /同一个核心攻击点/);
+  assert.match(repair, /不得原样复制超载文本/);
+  assert.match(repair, /questionText只能出现一个/);
+  assert.match(repair, /requiredResponse不得出现/);
+  assert.doesNotMatch(repair, /不得改变原有判断、分数或追问内容/);
+});
+
 test('novice defense questions enforce one bounded and realistically answerable duty', () => {
   const overloaded = JSON.stringify({
     questionText: '你如何保证内容绝对准确？并且如何确保学生永远不会形成错误认知？',

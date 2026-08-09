@@ -123,6 +123,7 @@ const linWanProfileTable = process.env.SUPABASE_LINWAN_PROFILE_TABLE || 'linwan_
 const prematchTasksTable = process.env.SUPABASE_PREMATCH_TASKS_TABLE || 'prematch_tasks';
 const prematchMessagesTable = process.env.SUPABASE_PREMATCH_MESSAGES_TABLE || 'prematch_messages';
 const prematchTrainingLinksTable = process.env.SUPABASE_PREMATCH_TRAINING_LINKS_TABLE || 'prematch_training_links';
+const supabaseRequestTimeoutMs = positiveIntegerEnv('SUPABASE_TIMEOUT_MS', 30000);
 const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '30d';
 const LINWAN_SPEAKING_STYLE = '以年轻高中辩论队学姐的状态自然说话。语气清醒、克制但不疏离，真诚、有精神，带自然的热情。表达中等偏快、紧凑利落，停顿短而自然，句尾收得干净，不拖腔。像在认真陪队友复盘和给建议，直接但不冷漠。不要高冷审判感、客服腔、播音腔、舞台朗诵感或过度甜美。';
 const XIAOMI_TTS_MODEL = normalizeText(process.env.XIAOMI_TTS_MODEL || 'mimo-v2.5-tts');
@@ -4876,6 +4877,10 @@ function getPublicErrorMessage(error) {
     return 'AI 暂时没有返回内容，请重试。';
   }
 
+  if (error.code === 'DEEPSEEK_TIMEOUT') {
+    return 'AI 服务响应超时，请稍后重试。';
+  }
+
   if (error.code === 'NO_MEANINGFUL_USER_INPUT') {
     return '请先完成至少一次有效作答，再结束训练。';
   }
@@ -4918,6 +4923,10 @@ function getPublicErrorMessage(error) {
 
   if (error.code === 'SUPABASE_NOT_CONFIGURED') {
     return '历史记录服务暂未配置，请检查 Supabase 环境变量。';
+  }
+
+  if (error.code === 'SUPABASE_TIMEOUT') {
+    return '数据库服务响应超时，请稍后重试。';
   }
 
   if (error.code === 'JWT_NOT_CONFIGURED') {
@@ -7052,17 +7061,36 @@ async function ensureLegacyPersonalTeam(teamCode) {
 
 async function supabaseRequest(pathname, options = {}) {
   const { url, serviceRoleKey } = getSupabaseConfig();
-  const response = await fetch(`${url}/rest/v1/${pathname}`, {
-    method: options.method || 'GET',
-    headers: {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
-      'Content-Type': 'application/json',
-      ...(options.prefer ? { Prefer: options.prefer } : {})
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
-  const data = await response.json().catch(() => ({}));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), supabaseRequestTimeoutMs);
+  let response;
+  let data;
+
+  try {
+    response = await fetch(`${url}/rest/v1/${pathname}`, {
+      method: options.method || 'GET',
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+        'Content-Type': 'application/json',
+        ...(options.prefer ? { Prefer: options.prefer } : {})
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal
+    });
+    data = await response.json().catch(() => ({}));
+  } catch (cause) {
+    if (controller.signal.aborted) {
+      const error = new Error('Supabase request timed out.', { cause });
+      error.code = 'SUPABASE_TIMEOUT';
+      error.status = 504;
+      error.timeoutMs = supabaseRequestTimeoutMs;
+      throw error;
+    }
+    throw cause;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     console.error('Supabase request failed', {
