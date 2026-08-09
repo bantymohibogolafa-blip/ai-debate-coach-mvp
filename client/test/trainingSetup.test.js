@@ -9,6 +9,7 @@ import {
 } from '../src/utils/trainingSetup.js';
 
 const appSource = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+const styleSource = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 
 const readyConfig = {
   topic: '中学生使用 AI 工具利大于弊',
@@ -60,4 +61,12 @@ test('arena hero remains above TrainingSetup before and after training starts', 
   for (const label of ['当前轮次', '我的立场', '难度', '训练模式']) {
     assert.ok(appSource.includes(label));
   }
+});
+
+test('desktop training view uses a wider scoped shell without changing other tabs', () => {
+  assert.match(appSource, /activeTab === 'training' \? 'training-view' : ''/);
+  assert.match(styleSource, /@media \(min-width:\s*1000px\)\s*\{[\s\S]*?\.app-shell\.training-view\s*\{[\s\S]*?width:\s*min\(1600px, calc\(100% - 40px\)\)/);
+  assert.match(styleSource, /\.training-view \.training-setup\s*\{[\s\S]*?width:\s*calc\(100% - 24px\);[\s\S]*?max-width:\s*none/);
+  assert.match(styleSource, /\.training-view \.training-topic-step\s*\{[\s\S]*?max-width:\s*1400px/);
+  assert.match(styleSource, /\.training-view \.training-confirm-step\s*\{[\s\S]*?max-width:\s*1240px/);
 });

@@ -7346,6 +7346,25 @@ textarea:focus {
   margin-top: 12px;
 }
 
+@media (min-width: 1000px) {
+  .app-shell.training-view {
+    width: min(1600px, calc(100% - 40px));
+  }
+
+  .training-view .training-setup {
+    width: calc(100% - 24px);
+    max-width: none;
+  }
+
+  .training-view .training-topic-step {
+    max-width: 1400px;
+  }
+
+  .training-view .training-confirm-step {
+    max-width: 1240px;
+  }
+}
+
 @media (max-width: 999px) {
   .training-setup {
     width: min(860px, calc(100% - 24px));

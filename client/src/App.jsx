@@ -2261,7 +2261,7 @@ function App() {
   }
 
   return (
-    <main className={`app-shell ${hasSessionContent ? 'session-active' : ''}`}>
+    <main className={`app-shell ${hasSessionContent ? 'session-active' : ''} ${activeTab === 'training' ? 'training-view' : ''}`}>
       <section className="team-topbar compact-topbar" aria-label="当前状态与功能区">
         <div className="topbar-brand">
           <strong>锋辩</strong>
