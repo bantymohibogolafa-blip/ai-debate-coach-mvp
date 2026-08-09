@@ -976,25 +976,29 @@ function PrematchTaskWorkspace({
                 </button>
               ))}
             </div>
-            <button
-              type="button"
-              className="prematch-report-button"
-              disabled={isSending || !permissions.canChat || challengeState.active}
-              onClick={() => runChatTool(onCreateReport)}
-            >
-              形成当前思路报告
-            </button>
-            {!challengeState.active && (
+            <div className="prematch-tool-actions">
               <button
                 type="button"
-                className="prematch-challenge-button"
-                disabled={isSending || !permissions.canChat}
-                onClick={() => runChatTool(onStartChallenge)}
-                title="让林婉从对方角度追问当前思路"
+                className="prematch-tool-action prematch-report-button"
+                disabled={isSending || !permissions.canChat || challengeState.active}
+                onClick={() => runChatTool(onCreateReport)}
               >
-                检验一下
+                <strong>形成当前思路报告</strong>
+                <span>汇总目前已经形成的观点、材料与判断</span>
               </button>
-            )}
+              {!challengeState.active && (
+                <button
+                  type="button"
+                  className="prematch-tool-action prematch-challenge-button"
+                  disabled={isSending || !permissions.canChat}
+                  onClick={() => runChatTool(onStartChallenge)}
+                  title="让林婉从对方角度追问当前思路"
+                >
+                  <strong>检验一下</strong>
+                  <span>AI 根据当前思路对你展开质询和攻击，帮助你理清思路。</span>
+                </button>
+              )}
+            </div>
           </div>
           {challengeState.phase === 'feedback' && (
             <div className="prematch-challenge-actions">
@@ -1006,7 +1010,6 @@ function PrematchTaskWorkspace({
           )}
           {challengeState.phase === 'awaiting_answer' && (
             <div className="prematch-challenge-actions">
-              <span>请直接在下方回答这个问题。</span>
               <button type="button" onClick={onEndChallenge} disabled={isSending}>结束检验</button>
             </div>
           )}

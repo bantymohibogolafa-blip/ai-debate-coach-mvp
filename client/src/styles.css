@@ -6780,6 +6780,16 @@ textarea:focus {
   gap: 8px;
 }
 
+.prematch-tool-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.prematch-tool-action span {
+  display: none;
+}
+
 .prematch-quick-prompts button,
 .prematch-report-button {
   border: 1px solid #c9dddd;
@@ -7591,11 +7601,14 @@ textarea:focus {
   .prematch-chat-tools.mobile-open {
     position: absolute;
     right: 8px;
-    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     left: 8px;
     z-index: 23;
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    max-height: calc(100% - 152px - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
     margin: 0;
     border: 1px solid #d8e5e5;
@@ -7635,6 +7648,51 @@ textarea:focus {
     width: 100%;
     min-height: 42px;
     padding-inline: 8px;
+  }
+
+  .prematch-tool-actions {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid #d8e5e5;
+    border-radius: 11px;
+    background: #f8fbfa;
+  }
+
+  .prematch-tool-action {
+    display: grid;
+    gap: 3px;
+    min-height: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding: 11px 12px !important;
+    text-align: left;
+  }
+
+  .prematch-tool-action + .prematch-tool-action {
+    border-top: 1px solid #d8e5e5 !important;
+  }
+
+  .prematch-tool-action strong {
+    color: #315f62;
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .prematch-tool-action span {
+    display: block;
+    color: #698084;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.55;
+  }
+
+  .prematch-report-button,
+  .prematch-challenge-button {
+    color: inherit !important;
+    background: transparent !important;
   }
 
   .prematch-chat-input {

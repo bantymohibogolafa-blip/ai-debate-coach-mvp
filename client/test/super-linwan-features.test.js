@@ -83,3 +83,13 @@ test('instant challenge stays in the existing chat flow with lightweight control
   assert.match(prepSource, /challengeState\.round < 3/);
   assert.match(prepSource, /latestStoredUserMessage\?\.contextManifest\?\.challenge/);
 });
+
+test('mobile chat tools separate quick prompts from report and challenge actions', () => {
+  assert.match(prepSource, /className="prematch-tool-actions"/);
+  assert.match(prepSource, /汇总目前已经形成的观点、材料与判断/);
+  assert.match(prepSource, /AI 根据当前思路对你展开质询和攻击，帮助你理清思路。/);
+  assert.equal(prepSource.includes('请直接在下方回答这个问题。'), false);
+  assert.match(styleSource, /\.prematch-tool-actions\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(styleSource, /\.prematch-chat-tools\.mobile-open\s*\{[\s\S]*?bottom:\s*calc\(128px \+ env\(safe-area-inset-bottom, 0px\)\)/);
+  assert.match(styleSource, /\.prematch-chat-tools\.mobile-open\s*\{[\s\S]*?overflow-y:\s*auto/);
+});
