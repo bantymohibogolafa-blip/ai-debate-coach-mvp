@@ -31,6 +31,11 @@ import {
   isMeaningfulUserInput,
   withCompletedTrainingMessages
 } from '../../shared/completedTrainingMessages.js';
+import {
+  getTaskDerivedStatus,
+  isTaskActive,
+  isTaskExpired
+} from '../../shared/teamTaskDeadline.js';
 
 const LINWAN_PLAYBACK_RATE = 1;
 const LINWAN_VOICE_VERSION = 'mimo-v2.5-tts:bing-tang:pcm16-v1';
@@ -417,6 +422,7 @@ function App() {
   const [isTaskDetailLoading, setIsTaskDetailLoading] = useState(false);
   const [taskDetailError, setTaskDetailError] = useState('');
   const [activeTaskSession, setActiveTaskSession] = useState(null);
+  const [trainingEntrySource, setTrainingEntrySource] = useState(null);
   const [activePrepTrainingContext, setActivePrepTrainingContext] = useState(null);
   const [prepReturnTaskId, setPrepReturnTaskId] = useState('');
   const [personalPrepDraft, setPersonalPrepDraft] = useState(null);
@@ -1509,7 +1515,9 @@ function App() {
       return;
     }
     if (!isTaskActive(task)) {
-      setTaskActionError('该任务已结束，不能继续通过任务入口训练。');
+      setTaskActionError(isTaskExpired(task)
+        ? '该任务已截止，不能继续通过任务入口训练。'
+        : '该任务已结束，不能继续通过任务入口训练。');
       return;
     }
     const mode = task.mode || 'free_debate';
@@ -1549,6 +1557,14 @@ function App() {
       requiredCount: task.requiredCount || 1,
       deadline: task.deadline || ''
     });
+    setTrainingEntrySource({
+      type: 'team-task',
+      teamCode: task.teamCode || currentTeam?.teamCode,
+      taskId: task.id
+    });
+    setSelectedTaskDetail((current) => current?.task?.id === task.id
+      ? current
+      : { task, stats: null, completedCount: task.completedCount || 0, memberProgress: [] });
     if (task.taskCategory === 'current_match') {
       if (mode === 'defense') setDefensePrep(task.description || '');
       if (mode === 'free_debate') setFreeDebatePrep(task.description || '');
@@ -1755,6 +1771,13 @@ function App() {
   async function startTraining() {
     if (isBusy) return;
 
+    if (activeTaskSession && !isTaskActive(activeTaskSession)) {
+      setError(isTaskExpired(activeTaskSession)
+        ? '该团队任务已截止，不能开始新的任务训练。'
+        : '该团队任务已结束，不能开始新的任务训练。');
+      return;
+    }
+
     const validationError = validateTrainingConfig();
     if (validationError) {
       setError(validationError);
@@ -1774,6 +1797,10 @@ function App() {
     setSaveStatus('');
     const nextTrainingSession = {
       ...config,
+      ...(activeTaskSession ? {
+        taskId: activeTaskSession.taskId,
+        teamCode: activeTaskSession.teamCode
+      } : {}),
       aiSide: getOpponentSideValue(config.userSide),
       userSideLabel: getOptionLabel(sides, config.userSide),
       aiSideLabel: getOptionLabel(sides, getOpponentSideValue(config.userSide)),
@@ -1785,6 +1812,7 @@ function App() {
     setTrainingSession(nextTrainingSession);
 
     if (config.trainingMode === 'constructive' && config.userSide === 'affirmative') {
+      setTrainingEntrySource(null);
       setHistory([]);
       setIsTraining(true);
       setIsLoading(false);
@@ -1805,6 +1833,7 @@ function App() {
           ? { defenseQuestion: data.defenseQuestion }
           : {})
       }]);
+      setTrainingEntrySource(null);
       setIsTraining(true);
     } catch (requestError) {
       setError(getFriendlyError(requestError));
@@ -2050,6 +2079,28 @@ function App() {
     setSelectedRecord(null);
   }
 
+  function returnToTeamTask() {
+    if (trainingEntrySource?.type !== 'team-task' || hasSessionContent) return;
+    const teamCode = trainingEntrySource.teamCode;
+    setActiveTaskSession(null);
+    setTrainingEntrySource(null);
+    setHistory([]);
+    setDefenseRoundStates([]);
+    setAnswer('');
+    setReview('');
+    setStructuredReview(null);
+    setError('');
+    setSaveStatus('');
+    setTrainingSession(null);
+    setIsTraining(false);
+    setLongOutputPromptMode('');
+    setTrainingSetupStep('topic');
+    setCurrentTrainingSpace({ type: 'team', teamCode });
+    setActiveTeamPanelTab('tasks');
+    setActiveTab('team');
+    setSelectedRecord(null);
+  }
+
   function resetTraining() {
     if (isBusy || isRecording) return;
 
@@ -2075,6 +2126,7 @@ function App() {
     setTrainingSetupStep('topic');
     setLongOutputPromptMode('');
     setActiveTaskSession(null);
+    setTrainingEntrySource(null);
     setActivePrepTrainingContext(null);
     setPrepReturnTaskId('');
   }
@@ -3046,6 +3098,7 @@ function App() {
             if (error) setError('');
           }}
           onStart={startTraining}
+          onReturnToTeamTask={trainingEntrySource?.type === 'team-task' ? returnToTeamTask : null}
         />
       )}
 
@@ -4300,6 +4353,7 @@ function TeamTasksPanel({
   onCloseTask,
   onClearTaskDetail
 }) {
+  const deadlineNow = useTaskDeadlineNow();
   return (
     <div className="team-tasks-panel">
       <div className="task-panel-header">
@@ -4330,18 +4384,18 @@ function TeamTasksPanel({
                 <span>{task.difficultyApplicable === false ? '训练标准：统一标准' : `难度：${getOptionLabel(difficulties, task.difficulty) || '--'}`}</span>
                 <span>风格：{getOptionLabel(celebrityDebaters, task.styleId) || '普通 AI'}</span>
                 <span>任务对象：{getTaskAssignmentLabel(task)}</span>
-                <span>状态：{getTaskStatusLabel(task.status)}</span>
+                <span>状态：{getTaskStatusLabel(getTaskDerivedStatus(task, deadlineNow))}</span>
                 <span>我的进度：{task.completedCount || 0} / {task.requiredCount || 1}</span>
               </div>
               {task.description && <p className="task-description">{task.description}</p>}
               <div className="task-actions">
-                <button type="button" onClick={() => onStartTask(task)} disabled={!isTaskActive(task)}>
-                  开始训练
+                <button type="button" onClick={() => onStartTask(task)} disabled={!isTaskActive(task, deadlineNow)}>
+                  {isTaskExpired(task, deadlineNow) && !['ended', 'closed'].includes(task.status) ? '已截止' : '开始训练'}
                 </button>
                 <button type="button" className="ghost-button" onClick={() => onOpenTaskDetail(task)}>
                   查看详情
                 </button>
-                {isOwner && isTaskActive(task) && (
+                {isOwner && isTaskActive(task, deadlineNow) && (
                   <button type="button" className="danger" onClick={() => onCloseTask(task)}>
                     结束任务
                   </button>
@@ -4377,6 +4431,7 @@ function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, o
       : [];
   const recentRecords = Array.isArray(stats.recentRecords) ? stats.recentRecords : [];
   const [copyStatus, setCopyStatus] = useState('');
+  const deadlineNow = useTaskDeadlineNow();
   const totalMembers = Number(stats.totalMembers ?? memberProgress.length) || memberProgress.length;
   const completedMembers = Number(stats.completedMembers ?? memberProgress.filter((member) => member.status === 'completed').length) || 0;
   const completionRate = Number.isFinite(Number(stats.completionRate))
@@ -4439,7 +4494,7 @@ function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, o
         <strong>该任务由队长布置，训练参数已锁定。</strong>
         <div className="task-meta-grid">
           <span>任务对象：{getTaskAssignmentLabel(task)}</span>
-          <span>状态：{getTaskStatusLabel(task.status)}</span>
+          <span>状态：{getTaskStatusLabel(getTaskDerivedStatus(task, deadlineNow))}</span>
           <span>用户立场：{getOptionLabel(sides, task.userSide) || '--'}</span>
           <span>AI 立场：{getOptionLabel(sides, task.aiSide) || '--'}</span>
           <span>训练模式：{getOptionLabel(trainingModes, task.mode) || '--'}</span>
@@ -4472,8 +4527,8 @@ function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, o
       {copyStatus && <div className="history-status">{copyStatus}</div>}
 
       <div className="task-actions">
-        <button type="button" onClick={() => onStartTask(task)} disabled={!isTaskActive(task)}>
-          开始训练
+        <button type="button" onClick={() => onStartTask(task)} disabled={!isTaskActive(task, deadlineNow)}>
+          {isTaskExpired(task, deadlineNow) && !['ended', 'closed'].includes(task.status) ? '已截止' : '开始训练'}
         </button>
         {isOwner && task.status === 'active' && (
           <button type="button" className="danger" onClick={() => onCloseTask(task)}>
@@ -5964,7 +6019,8 @@ function TrainingSetup({
   onSelectMode,
   onDefensePrepChange,
   onFreeDebatePrepChange,
-  onStart
+  onStart,
+  onReturnToTeamTask
 }) {
   const selectedMode = trainingModes.find((item) => item.value === config.trainingMode);
   const selectedCelebrity = celebrityDebaters.find((item) => item.value === config.celebrityDebater);
@@ -5976,6 +6032,11 @@ function TrainingSetup({
 
   return (
     <section className="training-setup panel" ref={panelRef} aria-label="赛前训练设置">
+      {onReturnToTeamTask && (
+        <button type="button" className="training-team-task-return" onClick={onReturnToTeamTask} disabled={isBusy}>
+          ← 返回团队任务
+        </button>
+      )}
       <nav className="training-setup-steps" aria-label="赛前设置步骤">
         {stepItems.map((item, index) => {
           const isAvailable = availability[item.value];
@@ -7209,13 +7270,20 @@ function formatTaskDeadline(value) {
   })}`;
 }
 
-function isTaskActive(task = {}) {
-  return (task.status || 'active') === 'active';
+function useTaskDeadlineNow(refreshIntervalMs = 30_000) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), refreshIntervalMs);
+    return () => window.clearInterval(timer);
+  }, [refreshIntervalMs]);
+
+  return now;
 }
 
 function getTaskStatusLabel(status) {
   if (status === 'ended' || status === 'closed') return '已结束';
-  if (status === 'expired') return '已过期';
+  if (status === 'expired') return '已截止';
   if (status === 'archived') return '已归档';
   return '进行中';
 }

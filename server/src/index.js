@@ -50,6 +50,11 @@ import {
   getTrainingRecordVersionMetadata
 } from './scoringVersions.js';
 import { buildAbilityTaskRecommendations } from './teamTaskRecommendation.js';
+import {
+  getTaskDeadlineTime,
+  isTaskActive,
+  isTaskEnded
+} from '../../shared/teamTaskDeadline.js';
 import { getPolishOptions, getPolishTypeProfile } from './polishPrompts.js';
 import {
   buildLinWanPreferencePrompt,
@@ -244,9 +249,10 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/debate/start', async (req, res, next) => {
+app.post('/api/debate/start', optionalAuth, async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body);
+    await validateTeamTaskTrainingStart(req.body, req.user);
     const messages = buildStartMessages(payload);
     let content = await callDeepSeekComplete(messages, getDebateGenerationOptions(payload.trainingMode, 'start'), payload);
     if (payload.trainingMode === 'defense') {
@@ -1839,9 +1845,11 @@ async function validateTrainingRecordPayload(body, authUser = null) {
         throw badRequest('任务信息无效，请从任务入口重新开始训练。');
       }
       const task = await requireTeamTask(taskId, normalizedTeamCode);
-      if (!isTaskActive(task)) {
+      if (isTaskEnded(task)) {
         throw httpError(403, '该训练任务已关闭，不能继续提交任务记录。');
       }
+      // Sessions completed after the deadline remain normal training records;
+      // deadline-filtered progress queries below exclude them from task credit.
       await requireTaskAssignedToUser(task, authUser.id);
       let authoritativeTopic = task.topic;
       let authoritativeSide = task.user_side;
@@ -6155,6 +6163,32 @@ async function requireTeamTask(taskId, teamCode) {
   return task;
 }
 
+async function validateTeamTaskTrainingStart(body, authUser) {
+  const taskId = normalizeText(body.taskId || body.task_id);
+  if (!taskId) return null;
+  if (!authUser?.id) {
+    throw httpError(401, '团队任务训练需要登录后开始。');
+  }
+  if (!isUuid(taskId)) {
+    throw badRequest('任务信息无效，请从任务入口重新开始训练。');
+  }
+
+  const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
+  if (!isValidTeamCode(teamCode)) {
+    throw badRequest('团队身份信息无效，请重新进入团队任务。');
+  }
+
+  await requireActiveMembership(teamCode, authUser.id);
+  const task = await requireTeamTask(taskId, teamCode);
+  await requireTaskAssignedToUser(task, authUser.id);
+  if (!isTaskActive(task)) {
+    throw httpError(403, isTaskEnded(task)
+      ? '该团队任务已结束，不能开始新的任务训练。'
+      : '该团队任务已截止，不能开始新的任务训练。');
+  }
+  return task;
+}
+
 async function closeTeamTask({ taskId, teamCode, localUserId }) {
   await requireTeamManager(teamCode, localUserId);
   await requireTeamTask(taskId, teamCode);
@@ -6291,10 +6325,13 @@ async function requireTaskVisibleToUser(task, member, appUserId) {
 
 async function syncTaskAssignmentProgress(taskId, teamCode, appUserId) {
   if (!taskId || !teamCode || !appUserId) return;
-  const [task, completedCount] = await Promise.all([
-    requireTeamTask(taskId, teamCode),
-    fetchTaskCompletedCount(taskId, teamCode, appUserId)
-  ]);
+  const task = await requireTeamTask(taskId, teamCode);
+  const records = await fetchTaskRecords(taskId, teamCode, {
+    localUserId: appUserId,
+    limit: 1000,
+    deadline: task.deadline
+  });
+  const completedCount = records.length;
   // Current-match tasks are confirmed explicitly by the assignee. Merely
   // running a linked training session must never complete the board task.
   if (task.task_category === 'current_match') return;
@@ -6320,14 +6357,12 @@ async function syncTaskAssignmentProgress(taskId, teamCode, appUserId) {
   }
 }
 
-function isTaskActive(task = {}) {
-  return (task.status || 'active') === 'active';
-}
-
 async function fetchTaskCompletedCount(taskId, teamCode, localUserId) {
+  const task = await requireTeamTask(taskId, teamCode);
   const records = await fetchTaskRecords(taskId, teamCode, {
     localUserId,
-    limit: 1000
+    limit: 1000,
+    deadline: task.deadline
   });
   return records.length;
 }
@@ -6335,7 +6370,7 @@ async function fetchTaskCompletedCount(taskId, teamCode, localUserId) {
 async function fetchTeamTaskStats(task, currentLocalUserId) {
   const [members, records] = await Promise.all([
     fetchTaskAssignedMembers(task, task.team_code),
-    fetchTaskRecords(task.id, task.team_code, { limit: 1000 })
+    fetchTaskRecords(task.id, task.team_code, { limit: 1000, deadline: task.deadline })
   ]);
   const requiredCount = task.required_count || 1;
   const recordsByMember = new Map();
@@ -6928,7 +6963,7 @@ async function fetchAllTeamRecordsForStats(teamCode) {
   }
 }
 
-async function fetchTaskRecords(taskId, teamCode, { localUserId = '', limit = 1000 } = {}) {
+async function fetchTaskRecords(taskId, teamCode, { localUserId = '', limit = 1000, deadline = null } = {}) {
   const query = new URLSearchParams({
     select: 'id,space_type,team_code,local_user_id,app_user_id,nickname,topic,user_side,ai_side,difficulty,style_id,training_mode,task_id,messages,review,score,result,battlefield,created_at',
     space_type: 'eq.team',
@@ -6940,6 +6975,11 @@ async function fetchTaskRecords(taskId, teamCode, { localUserId = '', limit = 10
 
   if (localUserId) {
     query.set(isUuid(localUserId) ? 'app_user_id' : 'local_user_id', `eq.${localUserId}`);
+  }
+
+  const deadlineTime = getTaskDeadlineTime({ deadline });
+  if (deadlineTime !== null) {
+    query.set('created_at', `lte.${new Date(deadlineTime).toISOString()}`);
   }
 
   return supabaseRequest(`${trainingRecordsTable}?${query.toString()}`);

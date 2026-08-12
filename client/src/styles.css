@@ -7128,6 +7128,22 @@ textarea:focus {
   scroll-margin-top: 16px;
 }
 
+.training-team-task-return {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  margin: 0 0 10px;
+  border: 0;
+  padding: 0 8px;
+  color: #2f7375;
+  background: transparent;
+  font-weight: 800;
+}
+
+.training-team-task-return:hover:not(:disabled) {
+  background: #eef6f5;
+}
+
 .training-setup-steps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -7993,6 +8009,10 @@ textarea:focus {
     width: auto;
     margin: 10px 0 0;
     padding: 12px;
+  }
+
+  .training-team-task-return {
+    min-height: 44px;
   }
 
   .training-setup-steps {

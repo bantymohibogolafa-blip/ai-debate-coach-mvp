@@ -70,3 +70,13 @@ test('desktop training view uses a wider scoped shell without changing other tab
   assert.match(styleSource, /\.training-view \.training-topic-step\s*\{[\s\S]*?max-width:\s*1400px/);
   assert.match(styleSource, /\.training-view \.training-confirm-step\s*\{[\s\S]*?max-width:\s*1240px/);
 });
+
+test('team-task setup exposes a lightweight source return that is cleared on start', () => {
+  assert.match(appSource, /type:\s*'team-task'/);
+  assert.match(appSource, /← 返回团队任务/);
+  assert.match(appSource, /setActiveTeamPanelTab\('tasks'\)/);
+  assert.match(appSource, /setActiveTab\('team'\)/);
+  assert.match(appSource, /setTrainingEntrySource\(null\)/);
+  assert.match(styleSource, /\.training-team-task-return\s*\{[\s\S]*?min-height:\s*36px/);
+  assert.match(styleSource, /\.training-team-task-return\s*\{\s*min-height:\s*44px/);
+});
