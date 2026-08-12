@@ -4493,6 +4493,29 @@ textarea:focus {
   background: #fbfcfd;
 }
 
+.task-card {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  scroll-margin-top: 24px;
+}
+
+.task-card.expanded {
+  border-color: #bdd6d8;
+  background: #fbfdfd;
+}
+
+.task-card > .task-detail {
+  min-width: 0;
+  margin: 2px -16px -16px;
+  border: 0;
+  border-top: 1px solid #d8e3e8;
+  border-radius: 0 0 8px 8px;
+  padding: 16px;
+  background: #fff;
+}
+
 .task-card-main {
   display: grid;
   gap: 6px;
@@ -4778,6 +4801,20 @@ textarea:focus {
 }
 
 @media (max-width: 620px) {
+  .task-card {
+    scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 88px);
+  }
+
+  .task-detail,
+  .task-locked-config,
+  .member-progress-wrap,
+  .member-progress-table,
+  .team-recent-section,
+  .task-detail .history-list {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .app-shell {
     width: 100%;
     padding-top: 0;

@@ -421,6 +421,7 @@ function App() {
   const [selectedTaskDetail, setSelectedTaskDetail] = useState(null);
   const [isTaskDetailLoading, setIsTaskDetailLoading] = useState(false);
   const [taskDetailError, setTaskDetailError] = useState('');
+  const taskDetailRequestIdRef = useRef(0);
   const [activeTaskSession, setActiveTaskSession] = useState(null);
   const [trainingEntrySource, setTrainingEntrySource] = useState(null);
   const [activePrepTrainingContext, setActivePrepTrainingContext] = useState(null);
@@ -1457,6 +1458,8 @@ function App() {
       requestLogin();
       return;
     }
+    const requestId = taskDetailRequestIdRef.current + 1;
+    taskDetailRequestIdRef.current = requestId;
     setSelectedTaskDetail({ task, stats: null, completedCount: task.completedCount || 0, memberProgress: [] });
     setIsTaskDetailLoading(true);
     setTaskDetailError('');
@@ -1466,17 +1469,30 @@ function App() {
         getJson(`/api/team/tasks/detail?taskId=${encodeURIComponent(task.id)}&teamCode=${encodeURIComponent(currentTeam.teamCode)}&localUserId=${encodeURIComponent(localUserId)}`),
         getJson(`/api/team/tasks/stats?taskId=${encodeURIComponent(task.id)}&teamCode=${encodeURIComponent(currentTeam.teamCode)}&localUserId=${encodeURIComponent(localUserId)}`)
       ]);
-      setSelectedTaskDetail({
-        task: detailData.task || task,
-        completedCount: detailData.completedCount || 0,
-        memberProgress: Array.isArray(detailData.memberProgress) ? detailData.memberProgress : [],
-        stats: statsData
-      });
+      if (taskDetailRequestIdRef.current === requestId) {
+        setSelectedTaskDetail({
+          task: detailData.task || task,
+          completedCount: detailData.completedCount || 0,
+          memberProgress: Array.isArray(detailData.memberProgress) ? detailData.memberProgress : [],
+          stats: statsData
+        });
+      }
     } catch (requestError) {
-      setTaskDetailError(getFriendlyError(requestError));
+      if (taskDetailRequestIdRef.current === requestId) {
+        setTaskDetailError(getFriendlyError(requestError));
+      }
     } finally {
-      setIsTaskDetailLoading(false);
+      if (taskDetailRequestIdRef.current === requestId) {
+        setIsTaskDetailLoading(false);
+      }
     }
+  }
+
+  function clearTaskDetail() {
+    taskDetailRequestIdRef.current += 1;
+    setSelectedTaskDetail(null);
+    setIsTaskDetailLoading(false);
+    setTaskDetailError('');
   }
 
   async function closeTeamTask(task) {
@@ -1499,7 +1515,7 @@ function App() {
         localUserId
       });
       setTaskActionStatus('任务已关闭。');
-      setSelectedTaskDetail(null);
+      clearTaskDetail();
       await loadTeamTasks(currentTeam.teamCode);
     } catch (requestError) {
       setTaskActionError(getFriendlyError(requestError));
@@ -3617,10 +3633,7 @@ function App() {
           onStartTask={startTaskTraining}
           onOpenTaskDetail={openTaskDetail}
           onCloseTask={closeTeamTask}
-          onClearTaskDetail={() => {
-            setSelectedTaskDetail(null);
-            setTaskDetailError('');
-          }}
+          onClearTaskDetail={clearTaskDetail}
         />
       )}
     </main>
@@ -4354,6 +4367,31 @@ function TeamTasksPanel({
   onClearTaskDetail
 }) {
   const deadlineNow = useTaskDeadlineNow();
+  const expandedTaskId = selectedTaskDetail?.task?.id || '';
+  const taskCardRefs = useRef(new Map());
+
+  useEffect(() => {
+    if (!expandedTaskId) return undefined;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const taskCard = taskCardRefs.current.get(expandedTaskId);
+      if (!taskCard) return;
+
+      const rect = taskCard.getBoundingClientRect();
+      const comfortableTop = window.innerWidth <= 620 ? 88 : 24;
+      const comfortableBottom = window.innerHeight * 0.65;
+      const isCardTopComfortablyVisible = rect.top >= comfortableTop && rect.top <= comfortableBottom;
+      if (!isCardTopComfortablyVisible) {
+        taskCard.scrollIntoView({
+          behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+          block: 'start'
+        });
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [expandedTaskId]);
+
   return (
     <div className="team-tasks-panel">
       <div className="task-panel-header">
@@ -4372,56 +4410,69 @@ function TeamTasksPanel({
         <div className="history-empty">暂无训练任务</div>
       ) : (
         <div className="task-list">
-          {tasks.map((task) => (
-            <article className="task-card" key={task.id}>
-              <div className="task-card-main">
+          {tasks.map((task) => {
+            const isExpanded = expandedTaskId === task.id;
+            return (
+              <article
+                className={`task-card${isExpanded ? ' expanded' : ''}`}
+                key={task.id}
+                ref={(node) => {
+                  if (node) taskCardRefs.current.set(task.id, node);
+                  else taskCardRefs.current.delete(task.id);
+                }}
+              >
+                <div className="task-card-main">
                 <span>{formatTaskDeadline(task.deadline)}</span>
                 <h3>{task.title}</h3>
                 <p>{task.topic}</p>
-              </div>
-              <div className="task-meta-grid">
+                </div>
+                <div className="task-meta-grid">
                 <span>模式：{getOptionLabel(trainingModes, task.mode) || '自由辩论'}</span>
                 <span>{task.difficultyApplicable === false ? '训练标准：统一标准' : `难度：${getOptionLabel(difficulties, task.difficulty) || '--'}`}</span>
                 <span>风格：{getOptionLabel(celebrityDebaters, task.styleId) || '普通 AI'}</span>
                 <span>任务对象：{getTaskAssignmentLabel(task)}</span>
                 <span>状态：{getTaskStatusLabel(getTaskDerivedStatus(task, deadlineNow))}</span>
                 <span>我的进度：{task.completedCount || 0} / {task.requiredCount || 1}</span>
-              </div>
-              {task.description && <p className="task-description">{task.description}</p>}
-              <div className="task-actions">
+                </div>
+                {task.description && <p className="task-description">{task.description}</p>}
+                <div className="task-actions">
                 <button type="button" onClick={() => onStartTask(task)} disabled={!isTaskActive(task, deadlineNow)}>
                   {isTaskExpired(task, deadlineNow) && !['ended', 'closed'].includes(task.status) ? '已截止' : '开始训练'}
                 </button>
-                <button type="button" className="ghost-button" onClick={() => onOpenTaskDetail(task)}>
-                  查看详情
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => (isExpanded ? onClearTaskDetail() : onOpenTaskDetail(task))}
+                  aria-expanded={isExpanded}
+                >
+                  {isExpanded ? '收起' : '查看详情'}
                 </button>
                 {isOwner && isTaskActive(task, deadlineNow) && (
                   <button type="button" className="danger" onClick={() => onCloseTask(task)}>
                     结束任务
                   </button>
                 )}
-              </div>
-            </article>
-          ))}
+                </div>
+                {isExpanded && (
+                  <TaskDetail
+                    detail={selectedTaskDetail}
+                    isLoading={isTaskDetailLoading}
+                    error={taskDetailError}
+                    isOwner={isOwner}
+                    onStartTask={onStartTask}
+                    onCloseTask={onCloseTask}
+                  />
+                )}
+              </article>
+            );
+          })}
         </div>
-      )}
-
-      {selectedTaskDetail && (
-        <TaskDetail
-          detail={selectedTaskDetail}
-          isLoading={isTaskDetailLoading}
-          error={taskDetailError}
-          isOwner={isOwner}
-          onClose={onClearTaskDetail}
-          onStartTask={onStartTask}
-          onCloseTask={onCloseTask}
-        />
       )}
     </div>
   );
 }
 
-function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, onCloseTask }) {
+function TaskDetail({ detail, isLoading, error, isOwner, onStartTask, onCloseTask }) {
   const task = detail.task || {};
   const stats = detail.stats || {};
   const memberProgress = Array.isArray(stats.memberProgress)
@@ -4469,16 +4520,6 @@ function TaskDetail({ detail, isLoading, error, isOwner, onClose, onStartTask, o
 
   return (
     <div className="task-detail">
-      <div className="history-detail-header">
-        <div>
-          <span>{formatTaskDeadline(task.deadline)}</span>
-          <h3>{task.title}</h3>
-        </div>
-        <button type="button" onClick={onClose}>
-          收起
-        </button>
-      </div>
-
       {isLoading && <div className="history-status">正在加载任务详情...</div>}
       {error && <div className="error-box">{error}</div>}
 
