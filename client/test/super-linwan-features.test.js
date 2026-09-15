@@ -101,7 +101,7 @@ test('mobile awaiting-answer state keeps an uncovered exit action beside the com
   assert.equal((prepSource.match(/challengeState\.phase === 'awaiting_answer' && \(/g) || []).length, 0);
   assert.match(styleSource, /\.prematch-chat-input\.challenge-answering\s*\{[\s\S]*?grid-template-columns:\s*72px minmax\(0, 1fr\) auto/);
   assert.match(styleSource, /\.prematch-challenge-exit\s*\{[\s\S]*?display:\s*inline-flex/);
-  assert.match(styleSource, /\.prematch-chat-card\.challenge-active \.prematch-chat-list\s*\{[\s\S]*?padding-bottom:\s*12px/);
+  assert.match(styleSource, /\.prematch-chat-card\.challenge-active \.prematch-chat-list::after\s*\{\s*display:\s*none/);
 });
 
 test('desktop chat tools keep the mobile hierarchy in a restrained wide-screen layout', () => {

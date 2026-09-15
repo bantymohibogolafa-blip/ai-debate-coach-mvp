@@ -7442,15 +7442,27 @@ textarea:focus {
   }
 
   body.prematch-workspace-open .app-shell {
-    height: 100dvh;
+    position: fixed;
+    top: var(--prematch-viewport-top, 0px);
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: var(--prematch-viewport-height, 100dvh);
     overflow: hidden;
     padding-bottom: 0;
   }
 
+  body.prematch-workspace-open .app-shell > .compact-topbar,
+  body.prematch-workspace-open .app-shell > .history-status {
+    flex: 0 0 auto;
+  }
+
   .prematch-workspace {
+    position: relative;
+    flex: 1 1 0;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 0;
-    height: calc(100dvh - 76px - env(safe-area-inset-top, 0px));
     min-height: 0;
     overflow: hidden;
   }
@@ -7735,12 +7747,18 @@ textarea:focus {
     max-height: none;
     border-width: 0;
     border-radius: 0;
-    padding: 12px 10px 76px;
+    padding: 12px 10px;
     overscroll-behavior: contain;
   }
 
-  .prematch-chat-card.challenge-active .prematch-chat-list {
-    padding-bottom: 12px;
+  /* Keep note-button clearance inside the scroller so it can shrink above a keyboard. */
+  .prematch-chat-list::after {
+    height: 64px;
+    content: "";
+  }
+
+  .prematch-chat-card.challenge-active .prematch-chat-list::after {
+    display: none;
   }
 
   .prematch-chat-tools {
@@ -7942,9 +7960,9 @@ textarea:focus {
   }
 
   .prematch-note-fab {
-    position: fixed;
+    position: absolute;
     right: 18px;
-    bottom: max(82px, calc(env(safe-area-inset-bottom, 0px) + 76px));
+    bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     z-index: 24;
     display: inline-flex;
     align-items: center;

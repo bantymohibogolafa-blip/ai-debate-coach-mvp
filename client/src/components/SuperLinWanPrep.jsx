@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { evidenceCardTitle, evidenceDisplaySummary } from '../utils/evidenceCard.js';
+import { trackPrematchViewport } from '../utils/prematchViewport.js';
 
 const stanceOptions = [
   { value: 'affirmative', label: '正方' },
@@ -115,14 +116,19 @@ export default function SuperLinWanPrep({
   useEffect(() => {
     if (!detail?.messages?.length) return;
     window.requestAnimationFrame(() => {
-      chatEndRef.current?.scrollIntoView({ block: 'end' });
+      const chatList = chatEndRef.current?.parentElement;
+      if (chatList) chatList.scrollTop = chatList.scrollHeight;
     });
   }, [detail?.messages?.length, isSending]);
 
   useEffect(() => {
     if (!detail?.task?.id) return undefined;
     document.body.classList.add('prematch-workspace-open');
-    return () => document.body.classList.remove('prematch-workspace-open');
+    const stopTracking = trackPrematchViewport();
+    return () => {
+      stopTracking();
+      document.body.classList.remove('prematch-workspace-open');
+    };
   }, [detail?.task?.id]);
 
   async function loadTasks() {
