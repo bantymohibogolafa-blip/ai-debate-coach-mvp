@@ -1633,7 +1633,7 @@ function App() {
         topic: config.topic,
         userSide: config.userSide,
         aiSide: getOpponentSideValue(config.userSide),
-        ...(usesDifficulty ? { difficulty: config.difficulty } : {}),
+        ...(usesDifficulty ? { difficulty: config.celebrityDebater !== 'none' ? 'city' : config.difficulty } : {}),
         styleId: config.celebrityDebater,
         trainingMode: config.trainingMode,
         taskId: activeTaskSession?.taskId || '',
