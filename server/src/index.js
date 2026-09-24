@@ -1867,9 +1867,10 @@ async function validateTrainingRecordPayload(body, authUser = null, receipt = nu
   const reviewableMessages = buildReviewableMessages(messages);
   const review = normalizeText(receipt?.review?.content);
   let score = parseNullableScore(receipt?.review?.score);
-  const result = normalizeText(body.result);
+  const resultMatch = String(receipt?.review?.content || '').match(/胜负倾向[：:]\s*(?:\n|\r\n)?\s*(用户明显胜|用户小优|势均力敌|用户偏劣)/);
+  const result = resultMatch?.[1] || '';
   const battlefield = normalizeText(receipt?.review?.battlefield);
-  const modeDisplayName = normalizeText(body.modeDisplayName || body.mode_display_name);
+  const modeDisplayName = getScoringRubric(trainingMode).rubric.displayName;
   let scoreLevel = normalizeText(receipt?.review?.scoreLevel);
   let dimensionScores = normalizeDimensionScores(receipt?.review?.dimensionScores);
   const capTriggers = Array.isArray(receipt?.review?.capTriggers) ? receipt.review.capTriggers : [];
@@ -2011,6 +2012,9 @@ async function validateTrainingRecordPayload(body, authUser = null, receipt = nu
         plannedRounds: rounds,
         completedRounds: trainingMode === 'defense' ? completedRounds : undefined
       });
+      if (Math.abs(finalized.finalScore - Number(receipt.review.score)) > 0.0001) {
+        throw httpError(403, '复盘评分校验不一致，请重新生成复盘。');
+      }
       finalizedScore = finalized;
       score = finalized.finalScore;
       scoreLevel = finalized.scoreLevel;
