@@ -1592,7 +1592,7 @@ function App() {
     }
   }
 
-  async function saveTrainingRecord(reviewContent, reviewData = null, messagesForReview = reviewableMessages) {
+  async function saveTrainingRecord(reviewContent, reviewData = null, messagesForReview = reviewableMessages, reviewReceipt = '') {
     const completedMessages = buildReviewableMessages(messagesForReview);
     if (!completedMessages.some((item) => item.role === 'user' && isMeaningfulUserInput(item.content))) {
       setSaveStatus('');
@@ -1625,6 +1625,7 @@ function App() {
     try {
       const recordSpaceType = currentSpace.type === 'team' ? 'team' : 'personal';
       const data = await postJson('/api/training-records', {
+        reviewReceipt,
         spaceType: recordSpaceType,
         teamCode: recordSpaceType === 'team' ? currentSpace.teamCode : null,
         localUserId,
@@ -1961,6 +1962,10 @@ function App() {
       const sessionForReview = trainingSession || {};
       const data = await postJson('/api/debate/review', {
         ...config,
+        localUserId,
+        spaceType: currentSpace.type === 'team' ? 'team' : 'personal',
+        teamCode: currentSpace.type === 'team' ? currentSpace.teamCode : '',
+        taskId: activeTaskSession?.taskId || '',
         aiSide: sessionForReview.aiSide || getOpponentSideValue(config.userSide),
         userSideLabel: sessionForReview.userSideLabel || getOptionLabel(sides, config.userSide),
         aiSideLabel: sessionForReview.aiSideLabel || getOptionLabel(sides, getOpponentSideValue(config.userSide)),
@@ -1986,7 +1991,7 @@ function App() {
       setReview(content);
       setStructuredReview(nextStructuredReview);
       setIsTraining(false);
-      await saveTrainingRecord(content, nextStructuredReview, messagesForReview);
+      await saveTrainingRecord(content, nextStructuredReview, messagesForReview, data.reviewReceipt);
       reviewCompleted = true;
       setReviewGenerationStatus('complete');
       await new Promise((resolve) => window.setTimeout(resolve, 650));
