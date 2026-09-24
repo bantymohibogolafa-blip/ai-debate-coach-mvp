@@ -138,6 +138,46 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.deepEqual(saved.body.record.messages, history.slice(0, 2));
   assert.equal(harness.trainingRows[0].score, attackReview.structuredReview.score);
   assert.deepEqual(harness.trainingRows[0].messages, history.slice(0, 2));
+  assert.equal(harness.trainingRows[0].review_id, attackReview.reviewId);
+
+  // P1-1 regression: the signed result, not any client score-bearing field,
+  // is what enters training_records.
+  const forged = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    spaceType: 'personal',
+    localUserId: LOCAL_USER_ID,
+    topic: '测试辩题',
+    userSide: 'affirmative',
+    difficulty: 'novice',
+    styleId: 'none',
+    trainingMode: 'attack',
+    messages: history,
+    reviewReceipt: attackReview.reviewReceipt,
+    score: 99,
+    dimensionScores: [],
+    capTriggers: ['off_task'],
+    review: '伪造复盘'
+  });
+  assert.equal(forged.status, 200, 'replay returns existing authoritative record');
+  assert.equal(forged.body.record.score, 80);
+  assert.equal(harness.trainingRows.length, 1);
+
+  const noReceipt = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    spaceType: 'personal', localUserId: LOCAL_USER_ID,
+    topic: '测试辩题', userSide: 'affirmative', difficulty: 'novice',
+    styleId: 'none', trainingMode: 'attack', messages: history,
+    review: '伪造复盘', score: 99, dimensionScores: []
+  });
+  assert.equal(noReceipt.status, 400);
+  assert.equal(harness.trainingRows.length, 1);
+
+  const mismatched = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    spaceType: 'personal', localUserId: LOCAL_USER_ID,
+    topic: '替换后的辩题', userSide: 'affirmative', difficulty: 'novice',
+    styleId: 'none', trainingMode: 'attack', messages: history,
+    reviewReceipt: attackReview.reviewReceipt
+  });
+  assert.equal(mismatched.status, 403);
+  assert.equal(harness.trainingRows.length, 1);
 
   // Simulate a legacy database row that still contains the tail. The read boundary
   // must repair it before reopening the record or passing it to another consumer.
@@ -349,11 +389,20 @@ function createHarness() {
       return Response.json([{ id: USER_ID, username: 'completed_user', display_name: '完成消息测试' }]);
     }
     if (table === 'training_records' && method === 'POST') {
-      const row = { ...JSON.parse(init.body), id: `record-${++sequence}` };
+      const input = JSON.parse(init.body);
+      if (trainingRows.some((row) => row.review_id === input.review_id)) {
+        return Response.json({ message: 'duplicate key value violates unique constraint' }, { status: 409 });
+      }
+      const row = { ...input, id: `record-${++sequence}` };
       trainingRows.unshift(row);
       return Response.json([row]);
     }
-    if (table === 'training_records' && method === 'GET') return Response.json(trainingRows);
+    if (table === 'training_records' && method === 'GET') {
+      const reviewId = url.searchParams.get('review_id');
+      return Response.json(reviewId?.startsWith('eq.')
+        ? trainingRows.filter((row) => row.review_id === reviewId.slice(3))
+        : trainingRows);
+    }
     if (table === 'linwan_user_profile' && method === 'GET') return Response.json([]);
     if (table === 'linwan_messages' && method === 'GET') return Response.json([]);
     if (table === 'linwan_messages' && method === 'POST') {
