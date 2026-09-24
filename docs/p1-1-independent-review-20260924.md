@@ -7,7 +7,7 @@
 - PR #19 再次读取仍为 OPEN、Draft、未合并；远端 head 为 `9a8aad64b3211a44b328788ea82312f63c43dbc5`。
 - [原 GitHub Actions](https://github.com/bantymohibogolafa-blip/ai-debate-coach-mvp/actions/runs/35985569488) 确认 success，对应上述远端 head，不能当作本轮新增修改的 CI 结果。
 - 原目录 D:/项目 存在用户未提交内容，未改动。本轮在 D:/项目-p1-1-review 的 `fix/p1-1-review-bound-records` 分支工作。
-- 本轮修补准备推送原修复分支以运行新 CI；不合并 main、不触发生产部署。用户后续截图确认最新正式服务跟踪 main。
+- 本轮代码修补提交 `0710e9ffeed841fd6339f980f643582efecb5c19` 已推送原修复分支，PR 仍 Draft；对应 [新 CI 36006172439](https://github.com/bantymohibogolafa-blip/ai-debate-coach-mvp/actions/runs/36006172439) 已成功。不合并 main、不触发生产部署。用户后续截图确认最新正式服务跟踪 main。
 - 用户最新截图：正式服务为 `ai-debate-coach-mvp1`，服务 ID `srv-d841573tqb8s73et2o9g`，网址 https://ai-debate-coach-mvp1.onrender.com，Live commit `2e1c137`，2026-09-22 最近部署由 Auto-Deploy 触发。先前提供的无 1 网址不是这张截图所指的最新服务。
 
 ## 审查结论与修补
@@ -35,10 +35,12 @@
 | 类别 | 结果 | 边界 |
 | --- | --- | --- |
 | 原远端 CI | Success：217 服务端、75 客户端，Vite build 成功 | 只针对 9a8aad6；本轮修改尚未运行 GitHub CI |
-| 本轮本地自动化 | 226/226 服务端、75/75 客户端；Vite build 成功；git diff --check 通过 | Windows，Node 24.14.1 / npm 11.11.0；CI 使用 Node 20，待 push 后再核验 |
+| 本轮本地自动化 | 226/226 服务端、75/75 客户端；Vite build 成功；git diff --check 通过 | Windows，Node 24.14.1 / npm 11.11.0 |
+| 本轮代码 CI | 0710e9f 的 push 与 pull_request 两次运行均 Success，npm test / npm run build 成功 | GitHub Actions，Ubuntu / Node 20；run 36006166806 与 36006172439 |
 | 模拟 API 回归 | 六模式游客/登录复盘与保存、三轮真实 respond 路由签发到复盘保存、防守评分一致、缺失/伪造/错用途/过期凭证、篡改维度/回答/身份/任务/配置、并发重复、数据库提交后丢失响应、团队任务授权及关联、个人备战回流、历史/能力画像读取通过 | DeepSeek 与 Supabase 采用测试 mock；不是实际模型或实际 PostgreSQL 事务测试 |
 | 先前网址公开只读 | 无 1 的 mvp.onrender.com：/health 正常；首页 HTTP 200，加载 /assets/index-BGz0wMZw.js，不含 reviewReceipt | 此结果仅适用于先前网址；用户随后以截图确认最新入口是 mvp1.onrender.com |
 | 最新生产截图 | mvp1 服务跟踪 main，Live 为 2e1c137，最近由 Auto-Deploy 部署 | 来自用户截图；不是助手读取控制台的结果。当前开关和构建命令未显示 |
+| 最新入口公开只读 | mvp1.onrender.com 的 /health 正常，首页 HTTP 200，加载 /assets/index-BGz0wMZw.js | 健康检查已实测；生产写入流程未执行 |
 | 真实线上验收 | 未执行 | 未生成付费模型调用、写入正式测试成绩、读取私人历史或检查 Render 日志 |
 | 浏览器 UI | 连接重试及 reset 后仍 nodeRepl.fetch request failed | 未查看 Render 控制台，未做真实 UI 点击验证 |
 
@@ -58,12 +60,12 @@
 - 是否同一个服务提供 client/dist 与 API，是否还有独立 Static Site/CDN/PWA 缓存。
 - 确認使用的训练表和 Supabase 项目；仅确认 JWT_SECRET 已配置且保持不变，不抄录密钥。
 
-未满足这些条件并完成新提交 CI 核验前，不建议合并 PR #19。本文生成时远端 PR 仍是旧 head；推送后以实际 PR head 及其 CI 为准。
+新代码 CI 已通过；在上述部署配置确认及用户明确批准前，不建议合并 PR #19。最终合并时仍须核对实际 PR head 及其 CI。
 
 ## 发布顺序（尚未执行）
 
-1. 核实控制台信息，确定 push 修复分支不会触发生产；否则由用户决定生产隔离方式。
-2. 推送本轮本地提交到原修复分支，确认 PR head 和新 GitHub Actions 均匹配；条件允许时在独立测试环境演练。
+1. 已根据截图核实最新生产跟踪 main，修补已推送独立修复分支。
+2. 已确认代码提交与新 GitHub Actions 匹配且通过；条件允许时仍应在独立测试环境演练。
 3. 记录具体回滚部署 ID，选低流量时段，明确旧客户端兼容影响，再向用户请求针对明确 commit 的合并/生产部署确认。
 4. 获得确认后按实际 Render 配置合并或手动部署目标 commit，前后端同版本。Auto-Deploy 开启时合并本身可能立即触发部署。
 5. 发布后以专用测试账号/任务执行验收，并分别记录模型、数据库和真实 UI 结果。
