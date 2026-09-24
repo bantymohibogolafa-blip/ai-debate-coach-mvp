@@ -42,6 +42,7 @@ import {
   validateDefenseTurnAnalysis
 } from './defenseTraining.js';
 import { buildAbilityEstimate, buildRecentBehaviorEvidence } from './abilityProfile.js';
+import { fingerprintReviewMessages, signReviewReceipt, verifyReviewReceipt } from './reviewReceipt.js';
 import {
   CURRENT_DIFFICULTY_CALIBRATION_VERSION,
   CURRENT_ESTIMATOR_VERSION,
@@ -412,9 +413,22 @@ app.post('/api/debate/polish', async (req, res, next) => {
   }
 });
 
-app.post('/api/debate/review', async (req, res, next) => {
+app.post('/api/debate/review', optionalAuth, async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body, { requirePrep: false });
+    const receiptSpaceType = normalizeSpaceType(req.body.spaceType || req.body.space_type);
+    const receiptTeamCode = receiptSpaceType === 'team' ? normalizeTeamCode(req.body.teamCode || req.body.team_code) : '';
+    const receiptTaskId = normalizeText(req.body.taskId || req.body.task_id);
+    const receiptLocalUserId = normalizeText(req.body.localUserId || req.body.local_user_id);
+    if (!isValidLocalUserId(receiptLocalUserId)) throw badRequest('请刷新页面后再生成复盘。');
+    if (receiptSpaceType === 'team') {
+      if (!req.user?.id) throw httpError(401, '团队训练需要登录后生成复盘。');
+      if (!isValidTeamCode(receiptTeamCode)) throw badRequest('团队身份无效。');
+      await requireActiveMembership(receiptTeamCode, req.user.id);
+    } else if (receiptTaskId) {
+      throw badRequest('个人训练不能绑定团队任务。');
+    }
+    if (receiptTaskId && !isUuid(receiptTaskId)) throw badRequest('训练任务 ID 无效。');
     const originalHistory = payload.history;
     const reviewableHistory = buildReviewableMessages(originalHistory);
 
@@ -469,7 +483,37 @@ app.post('/api/debate/review', async (req, res, next) => {
     }
     const formattedContent = formatStructuredReview(structuredReview, content);
 
-    res.json({ content: formattedContent, structuredReview });
+    // Bind the authoritative score and the completed history to one identity.
+    const identity = {
+      appUserId: req.user?.id || null,
+      localUserId: receiptLocalUserId,
+      spaceType: receiptSpaceType,
+      teamCode: receiptTeamCode,
+      taskId: receiptTaskId
+    };
+    const session = {
+      topic: payload.topic,
+      userSide: payload.userSide,
+      difficulty: payload.difficulty,
+      styleId: payload.celebrityDebater,
+      trainingMode: payload.trainingMode,
+      rounds: payload.rounds,
+      messages: reviewableHistory,
+      messagesDigest: fingerprintReviewMessages(reviewableHistory)
+    };
+    const { reviewId, reviewReceipt } = signReviewReceipt({
+      identity, session,
+      review: {
+        content: formattedContent,
+        score: structuredReview.score,
+        scoreLevel: structuredReview.scoreLevel,
+        dimensionScores: structuredReview.dimensionScores,
+        capTriggers: structuredReview.capTriggers,
+        defenseRoundStates: payload.defenseRoundStates,
+        battlefield: structuredReview.battlefield
+      }
+    }, getJwtSecret());
+    res.json({ content: formattedContent, structuredReview, reviewId, reviewReceipt });
   } catch (error) {
     next(error);
   }
@@ -1453,18 +1497,31 @@ app.get('/api/training-records', optionalAuth, async (req, res, next) => {
 
 app.post('/api/training-records', optionalAuth, async (req, res, next) => {
   try {
-    const record = await validateTrainingRecordPayload(req.body, req.user);
-    const savedRecords = await insertTrainingRecord(record);
+    const receipt = verifyReviewReceipt(req.body?.reviewReceipt, getJwtSecret());
+    const record = await validateTrainingRecordPayload(req.body, req.user, receipt);
+    let savedRecords;
+    let alreadySaved = false;
+    try {
+      savedRecords = await insertTrainingRecord(record);
+    } catch (error) {
+      if (error?.code !== 'SUPABASE_REQUEST_FAILED' || error.status !== 409) throw error;
+      const rows = await supabaseRequest(
+        `${trainingRecordsTable}?review_id=eq.${encodeURIComponent(receipt.reviewId)}&select=*&limit=1`
+      );
+      if (!rows[0]) throw error;
+      savedRecords = rows;
+      alreadySaved = true;
+    }
     if (record.task_id && record.space_type === 'team' && record.app_user_id) {
       await syncTaskAssignmentProgress(record.task_id, record.team_code, record.app_user_id);
     }
     const prematchLink = await tryLinkPrematchTrainingResult({
-      body: req.body,
+      body: { ...req.body, prepResultSummary: { ...(req.body?.prepResultSummary || {}), score: record.score, scoreLevel: record.score_level, battlefield: record.battlefield } },
       authUser: req.user,
       savedRecord: savedRecords[0]
     });
 
-    res.status(201).json({
+    res.status(alreadySaved ? 200 : 201).json({
       record: mapTrainingRecordFromDb(savedRecords[0]),
       prematchLink
     });
@@ -1792,7 +1849,7 @@ function validateSessionPayload(body, { requirePrep = true } = {}) {
   };
 }
 
-async function validateTrainingRecordPayload(body, authUser = null) {
+async function validateTrainingRecordPayload(body, authUser = null, receipt = null) {
   const teamCode = normalizeTeamCode(body.teamCode || body.team_code);
   const localUserId = normalizeText(body.localUserId || body.local_user_id || body.userId || body.user_id);
   const nickname = normalizeNickname(body.nickname);
@@ -1808,20 +1865,33 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   const taskId = normalizeText(body.taskId || body.task_id);
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const reviewableMessages = buildReviewableMessages(messages);
-  const review = normalizeText(body.review);
-  let score = parseNullableScore(body.score);
+  const review = normalizeText(receipt?.review?.content);
+  let score = parseNullableScore(receipt?.review?.score);
   const result = normalizeText(body.result);
-  const battlefield = normalizeText(body.battlefield);
+  const battlefield = normalizeText(receipt?.review?.battlefield);
   const modeDisplayName = normalizeText(body.modeDisplayName || body.mode_display_name);
-  let scoreLevel = normalizeText(body.scoreLevel || body.score_level);
-  let dimensionScores = normalizeDimensionScores(body.dimensionScores || body.dimension_scores);
-  const capTriggers = Array.isArray(body.capTriggers) ? body.capTriggers : [];
+  let scoreLevel = normalizeText(receipt?.review?.scoreLevel);
+  let dimensionScores = normalizeDimensionScores(receipt?.review?.dimensionScores);
+  const capTriggers = Array.isArray(receipt?.review?.capTriggers) ? receipt.review.capTriggers : [];
   const submittedRounds = Number(body.rounds);
-  const submittedDefenseRoundStates = body.defenseRoundStates || body.defense_round_states;
+  const submittedDefenseRoundStates = receipt?.review?.defenseRoundStates || [];
   const completedRounds = Math.min(5, countMeaningfulUserMessages(reviewableMessages));
 
   if (!isValidLocalUserId(localUserId)) {
     throw badRequest('用户身份无效，请刷新页面后重试。');
+  }
+  if (!receipt || receipt.identity?.appUserId !== (authUser?.id || null)
+    || receipt.identity?.localUserId !== localUserId
+    || receipt.identity?.spaceType !== spaceType
+    || receipt.identity?.teamCode !== (spaceType === 'team' ? teamCode : '')
+    || receipt.identity?.taskId !== taskId) {
+    throw httpError(403, '复盘凭证的用户、空间或任务身份不匹配。');
+  }
+  if (receipt.session?.messagesDigest !== fingerprintReviewMessages(reviewableMessages)
+    || receipt.session.topic !== topic || receipt.session.userSide !== userSide
+    || receipt.session.trainingMode !== trainingMode
+    || receipt.session.styleId !== styleId) {
+    throw httpError(403, '训练配置或会话已变化，请重新生成复盘。');
   }
 
   let normalizedTeamCode = null;
@@ -1873,6 +1943,12 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     throw badRequest('个人模式记录不能绑定团队任务。');
   }
 
+  // Team task configuration is authoritative and must match the original review.
+  if (receipt.session.topic !== topic || receipt.session.userSide !== userSide
+    || receipt.session.trainingMode !== trainingMode || receipt.session.styleId !== styleId
+    || receipt.session.difficulty !== difficulty) {
+    throw httpError(403, '复盘与当前任务配置不一致，请重新生成复盘。');
+  }
   if (!isValidNickname(normalizedNickname)) {
     throw badRequest('昵称无效，请重新加入团队。');
   }
@@ -1913,17 +1989,16 @@ async function validateTrainingRecordPayload(body, authUser = null) {
   // Current clients always submit dimensions plus round states; only that
   // authoritative path is finalized here.
   if (trainingMode === 'defense' && dimensionScores.length) {
-    const statesFromMessages = reviewableMessages
+    const statesFromMessages = receipt.session.messages
       .filter((item) => item?.role === 'user' && item.defenseRoundState)
       .map((item) => item.defenseRoundState);
-    rounds = Number.isInteger(submittedRounds) && submittedRounds >= 1 && submittedRounds <= 5
-      ? submittedRounds
-      : Math.max(completedRounds, 1);
+    rounds = receipt.session.rounds;
     defenseRoundStates = Array.isArray(submittedDefenseRoundStates)
       ? submittedDefenseRoundStates
       : statesFromMessages;
   }
 
+  if (!dimensionScores.length) throw badRequest('复盘凭证缺少有效评分维度。');
   let finalizedScore = null;
   if (dimensionScores.length) {
     try {
@@ -2021,7 +2096,8 @@ async function validateTrainingRecordPayload(body, authUser = null) {
     projection_version: CURRENT_PROJECTION_VERSION,
     difficulty_calibration_version: CURRENT_DIFFICULTY_CALIBRATION_VERSION,
     estimator_version: CURRENT_ESTIMATOR_VERSION,
-    created_at: new Date().toISOString()
+    created_at: new Date().toISOString(),
+    review_id: receipt.reviewId
   };
 
   if (taskId) {
