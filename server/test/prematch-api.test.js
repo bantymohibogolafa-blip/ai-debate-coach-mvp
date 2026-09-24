@@ -747,7 +747,7 @@ test('completed formal training links back as a structured summary only', async 
   const { rubric } = getScoringRubric('constructive');
   const { reviewReceipt } = signReviewReceipt({
     identity: { appUserId: USER_A, localUserId: `user_${USER_A}`, spaceType: 'personal', teamCode: '', taskId: '' },
-    session: { topic: '测试辩题 A', userSide: 'affirmative', difficulty: 'novice', styleId: 'none', trainingMode: 'constructive', rounds: 3, messages: trainingMessages, messagesDigest: fingerprintReviewMessages(trainingMessages) },
+    session: { topic: '测试辩题 A', userSide: 'affirmative', difficulty: 'novice', styleId: 'none', trainingMode: 'constructive', rounds: 3, sourcePrepTaskId: TASK_A, messages: trainingMessages, messagesDigest: fingerprintReviewMessages(trainingMessages) },
     review: { content: '正式复盘摘要', score: 76, scoreLevel: '良好', dimensionScores: rubric.dimensions.map(({ name }) => ({ name, score: 76, maxScore: 100 })), capTriggers: [], defenseRoundStates: [], battlefield: '' }
   }, JWT_SECRET);
   const result = await requestJson(
