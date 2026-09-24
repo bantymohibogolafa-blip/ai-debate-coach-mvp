@@ -433,6 +433,9 @@ function App() {
   const [historyError, setHistoryError] = useState('');
   const [teamDataError, setTeamDataError] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
+  const [saveRecovery, setSaveRecovery] = useState('');
+  const pendingTrainingSaveRef = useRef(null);
+  const savingTrainingRef = useRef(false);
   const [answer, setAnswer] = useState('');
   const [review, setReview] = useState('');
   const [structuredReview, setStructuredReview] = useState(null);
@@ -510,7 +513,7 @@ function App() {
     () => buildTrainingMessageView(history, isTraining),
     [history, isTraining]
   );
-  const isBusy = isLoading || isReviewing || isPolishing || trainingSpeech.isBusy;
+  const isBusy = isLoading || isReviewing || isPolishing || trainingSpeech.isBusy || saveRecovery === 'saving';
   const canFinishTraining = hasMeaningfulUserContribution && !isBusy && !isRecording;
   const hasSessionContent = isTraining || history.length > 0 || Boolean(review);
   const isLoggedIn = Boolean(authToken && currentUser?.id);
@@ -1555,6 +1558,8 @@ function App() {
     setDefenseRoundStates([]);
     setAnswer('');
     setReview('');
+    setSaveRecovery('');
+    pendingTrainingSaveRef.current = null;
     setStructuredReview(null);
     setError('');
     setSelectedRecord(null);
@@ -1593,6 +1598,7 @@ function App() {
   }
 
   async function saveTrainingRecord(reviewContent, reviewData = null, messagesForReview = reviewableMessages, reviewReceipt = '') {
+    if (savingTrainingRef.current) return;
     const completedMessages = buildReviewableMessages(messagesForReview);
     if (!completedMessages.some((item) => item.role === 'user' && isMeaningfulUserInput(item.content))) {
       setSaveStatus('');
@@ -1621,6 +1627,10 @@ function App() {
     }
 
     setSaveStatus('正在保存本次训练记录...');
+    savingTrainingRef.current = true;
+    setSaveRecovery('saving');
+    // Preserve the original render's identity/config and exact receipt on retry.
+    pendingTrainingSaveRef.current = () => saveTrainingRecord(reviewContent, reviewData, messagesForReview, reviewReceipt);
 
     try {
       const recordSpaceType = currentSpace.type === 'team' ? 'team' : 'personal';
@@ -1682,6 +1692,8 @@ function App() {
           ].slice(0, trainingRecordLimit));
         }
       }
+      pendingTrainingSaveRef.current = null;
+      setSaveRecovery('');
 
       if (activePrepTrainingContext && data.prematchLink?.status === 'linked') {
         setSaveStatus('本次训练记录已保存，并已将结构化结果带回赛前备战任务。');
@@ -1702,7 +1714,13 @@ function App() {
         loadAbilityEstimate({ spaceType: 'personal', userId: localUserId });
       }
     } catch (requestError) {
-      setSaveStatus('复盘已生成，但记录同步失败，请稍后重试。');
+      const expired = requestError.status === 410;
+      setSaveRecovery(expired ? 'expired' : 'retry');
+      setSaveStatus(expired
+        ? '保存凭证已过期，请重新生成复盘后保存。'
+        : `复盘已生成，记录同步失败：${requestError.message} 可重试保存，请先不要刷新页面或开始新训练。`);
+    } finally {
+      savingTrainingRef.current = false;
     }
   }
 
@@ -1804,6 +1822,8 @@ function App() {
     setIsLoading(true);
     setError('');
     setReview('');
+    setSaveRecovery('');
+    pendingTrainingSaveRef.current = null;
     setStructuredReview(null);
     setReviewGenerationStatus('idle');
     setReviewLoadingError('');
@@ -1893,6 +1913,10 @@ function App() {
     try {
       const data = await postJson('/api/debate/respond', {
         ...config,
+        localUserId,
+        spaceType: currentSpace.type === 'team' ? 'team' : 'personal',
+        teamCode: currentSpace.type === 'team' ? currentSpace.teamCode : '',
+        taskId: activeTaskSession?.taskId || '',
         aiSide: getOpponentSideValue(config.userSide),
         userSideLabel: getOptionLabel(sides, config.userSide),
         aiSideLabel: getOptionLabel(sides, getOpponentSideValue(config.userSide)),
@@ -1996,7 +2020,7 @@ function App() {
       setReviewGenerationStatus('complete');
       await new Promise((resolve) => window.setTimeout(resolve, 650));
     } catch (requestError) {
-      const message = '复盘生成失败，请稍后重试。';
+      const message = requestError.status ? requestError.message : '复盘生成失败，请稍后重试。';
       setReviewLoadingError(message);
       setReviewGenerationStatus('error');
       setError(message);
@@ -2031,6 +2055,8 @@ function App() {
     setDefenseRoundStates([]);
     setAnswer('');
     setReview('');
+    setSaveRecovery('');
+    pendingTrainingSaveRef.current = null;
     setStructuredReview(null);
     setReviewGenerationStatus('idle');
     setReviewLoadingError('');
@@ -2109,6 +2135,8 @@ function App() {
     setDefenseRoundStates([]);
     setAnswer('');
     setReview('');
+    setSaveRecovery('');
+    pendingTrainingSaveRef.current = null;
     setStructuredReview(null);
     setError('');
     setSaveStatus('');
@@ -2130,6 +2158,8 @@ function App() {
     setDefenseRoundStates([]);
     setAnswer('');
     setReview('');
+    setSaveRecovery('');
+    pendingTrainingSaveRef.current = null;
     setError('');
     setReviewGenerationStatus('idle');
     setReviewLoadingError('');
@@ -3378,6 +3408,17 @@ function App() {
               messages: reviewableMessages
             }}
           />
+          {saveStatus && <div className="history-status" role="status">{saveStatus}</div>}
+          {saveRecovery === 'retry' && (
+            <button type="button" className="secondary-button" onClick={() => pendingTrainingSaveRef.current?.()} disabled={isBusy}>
+              重试保存本次记录
+            </button>
+          )}
+          {saveRecovery === 'expired' && (
+            <button type="button" className="secondary-button" onClick={finishAndReview} disabled={isBusy}>
+              重新生成复盘并保存
+            </button>
+          )}
           <div className="next-training-card">
             <div>
               <span>下一次训练</span>
@@ -7412,7 +7453,9 @@ async function postJson(url, body, options = {}) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(getServerErrorMessage(response.status, data.message));
+    const error = new Error(getServerErrorMessage(response.status, data.message));
+    error.status = response.status;
+    throw error;
   }
 
   return data;

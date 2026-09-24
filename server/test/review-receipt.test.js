@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import jwt from 'jsonwebtoken';
 import { fingerprintReviewMessages, signReviewReceipt, verifyReviewReceipt } from '../src/reviewReceipt.js';
 
 const KEY = 'review-receipt-test-secret-at-least-32-characters';
@@ -28,4 +29,16 @@ test('message fingerprint excludes unanswered tail only when upstream clips it',
   const messages = [{ role: 'ai', content: '问题' }, { role: 'user', content: '回答' }];
   assert.equal(fingerprintReviewMessages(messages), fingerprintReviewMessages([{ role: 'assistant', content: '问题' }, { role: 'user', content: '回答' }]));
   assert.notEqual(fingerprintReviewMessages(messages), fingerprintReviewMessages([...messages, { role: 'ai', content: '尾巴' }]));
+});
+
+test('expired receipts and tokens for another purpose cannot authorize saves', () => {
+  const payload = jwt.decode(signReviewReceipt(base, KEY).reviewReceipt);
+  assert.throws(() => verifyReviewReceipt(jwt.sign({ ...payload, exp: 1 }, KEY), KEY), { status: 410 });
+  assert.throws(() => verifyReviewReceipt(jwt.sign({ ...payload, aud: 'another-purpose' }, KEY), KEY), { status: 403 });
+  assert.throws(() => verifyReviewReceipt(jwt.sign({ sub: 'user-1' }, KEY), KEY), { status: 403 });
+  assert.throws(() => verifyReviewReceipt(jwt.sign(payload, KEY, { algorithm: 'HS384' }), KEY), { status: 403 });
+});
+
+test('the issuer never returns a receipt larger than the verifier accepts', () => {
+  assert.throws(() => signReviewReceipt({ ...base, review: { ...base.review, content: '长'.repeat(60000) } }, KEY), { status: 413 });
 });

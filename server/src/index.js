@@ -36,13 +36,14 @@ import {
   buildDefenseQuestionRepairInstruction,
   normalizeDefenseQuestion,
   normalizeDefenseRoundStates,
+  reconcileDefenseRoundStates,
   parseDefenseOpening,
   parseDefenseTurn,
   validateDefenseOpeningAnalysis,
   validateDefenseTurnAnalysis
 } from './defenseTraining.js';
 import { buildAbilityEstimate, buildRecentBehaviorEvidence } from './abilityProfile.js';
-import { fingerprintReviewMessages, signReviewReceipt, verifyReviewReceipt } from './reviewReceipt.js';
+import { defenseRoundContext, signDefenseRoundReceipt, verifyDefenseRoundReceipt, fingerprintReviewMessages, signReviewReceipt, verifyReviewReceipt } from './reviewReceipt.js';
 import {
   CURRENT_DIFFICULTY_CALIBRATION_VERSION,
   CURRENT_ESTIMATOR_VERSION,
@@ -277,7 +278,7 @@ app.post('/api/debate/start', optionalAuth, async (req, res, next) => {
   }
 });
 
-app.post('/api/debate/respond', async (req, res, next) => {
+app.post('/api/debate/respond', optionalAuth, async (req, res, next) => {
   try {
     const payload = validateSessionPayload(req.body);
     const answer = normalizeText(req.body.answer);
@@ -287,7 +288,12 @@ app.post('/api/debate/respond', async (req, res, next) => {
     }
 
     if (payload.trainingMode === 'defense') {
+      if (req.authExpired) throw httpError(401, '登录状态已过期，请重新登录后继续训练。');
+      const completed = buildReviewableMessages(payload.history);
+      if (completed.at(-1)?.content !== answer) throw badRequest('本轮回答与训练会话不一致。');
       const currentRound = countMeaningfulUserMessages(payload.history);
+      if (currentRound < 1 || currentRound > payload.rounds) throw badRequest('本轮回答超出训练轮数。');
+      payload.defenseRoundStates = trustedDefenseStates(req, payload, Math.max(0, currentRound - 1));
       const expectedPreviousRounds = Math.max(0, currentRound - 1);
       if (payload.defenseRoundStates.length < expectedPreviousRounds) {
         console.warn('[defense-round-analysis] Missing prior structured states; conservative legacy states inserted.', {
@@ -375,7 +381,11 @@ app.post('/api/debate/respond', async (req, res, next) => {
       });
       return res.json({
         content: analysis.nextQuestion?.questionText || '',
-        defenseRoundState: analysis.state,
+        defenseRoundState: {
+          ...analysis.state,
+          receipt: signDefenseRoundReceipt(analysis.state,
+            defenseRoundContext(reviewIdentity(req), payload, buildReviewableMessages(payload.history)), getJwtSecret())
+        },
         defenseQuestion: analysis.nextQuestion
       });
     }
@@ -415,6 +425,7 @@ app.post('/api/debate/polish', async (req, res, next) => {
 
 app.post('/api/debate/review', optionalAuth, async (req, res, next) => {
   try {
+    if (req.authExpired) throw httpError(401, '登录状态已过期，请重新登录后生成复盘。');
     const payload = validateSessionPayload(req.body, { requirePrep: false });
     const receiptSpaceType = normalizeSpaceType(req.body.spaceType || req.body.space_type);
     const receiptTeamCode = receiptSpaceType === 'team' ? normalizeTeamCode(req.body.teamCode || req.body.team_code) : '';
@@ -434,6 +445,13 @@ app.post('/api/debate/review', optionalAuth, async (req, res, next) => {
 
     if (!reviewableHistory.length) {
       throw noMeaningfulUserInputError();
+    }
+    if (payload.trainingMode === 'defense') {
+      payload.defenseRoundStates = trustedDefenseStates(req, payload, countMeaningfulUserMessages(reviewableHistory));
+      let answerIndex = 0;
+      for (const message of reviewableHistory) {
+        if (message.role === 'user') message.defenseRoundState = payload.defenseRoundStates[answerIndex++];
+      }
     }
 
     if (process.env.NODE_ENV !== 'production') {
@@ -1498,6 +1516,7 @@ app.get('/api/training-records', optionalAuth, async (req, res, next) => {
 
 app.post('/api/training-records', optionalAuth, async (req, res, next) => {
   try {
+    if (req.authExpired) throw httpError(401, '登录状态已过期，请重新登录后保存。');
     const receipt = verifyReviewReceipt(req.body?.reviewReceipt, getJwtSecret());
     const record = await validateTrainingRecordPayload(req.body, req.user, receipt);
     let savedRecords;
@@ -1505,11 +1524,12 @@ app.post('/api/training-records', optionalAuth, async (req, res, next) => {
     try {
       savedRecords = await insertTrainingRecord(record);
     } catch (error) {
-      if (error?.code !== 'SUPABASE_REQUEST_FAILED' || error.status !== 409) throw error;
+      if (error?.code !== 'SUPABASE_REQUEST_FAILED' || error.status !== 409 || error.supabaseCode !== '23505') throw error;
       const rows = await supabaseRequest(
         `${trainingRecordsTable}?review_id=eq.${encodeURIComponent(receipt.reviewId)}&select=*&limit=1`
       );
-      if (!rows[0]) throw error;
+      if (!rows[0] || rows[0].local_user_id !== record.local_user_id
+        || (rows[0].app_user_id || null) !== record.app_user_id) throw error;
       savedRecords = rows;
       alreadySaved = true;
     }
@@ -1733,6 +1753,47 @@ function validateLoginPayload(body) {
   return { username, password };
 }
 
+function reviewIdentity(req) {
+  const body = req.body;
+  const spaceType = normalizeSpaceType(body.spaceType || body.space_type);
+  return {
+    appUserId: req.user?.id || null,
+    localUserId: normalizeText(body.localUserId || body.local_user_id),
+    spaceType,
+    teamCode: spaceType === 'team' ? normalizeTeamCode(body.teamCode || body.team_code) : '',
+    taskId: normalizeText(body.taskId || body.task_id)
+  };
+}
+
+function trustedDefenseStates(req, payload, completedRounds) {
+  if (completedRounds > payload.rounds) throw badRequest('已完成回答超出训练轮数。');
+  const source = req.body.defenseRoundStates || req.body.defense_round_states || [];
+  const verified = [];
+  let round = 0;
+  for (const [index, message] of payload.history.entries()) {
+    if (message.role !== 'user' || !isMeaningfulUserInput(message.content)) continue;
+    round += 1;
+    if (round > Math.min(5, completedRounds)) break;
+    const proof = source[round - 1]?.receipt;
+    if (!proof) throw httpError(409, '本次防守训练缺少服务端逐轮凭证，请刷新页面后重新开始训练。');
+    const state = verifyDefenseRoundReceipt(proof,
+      defenseRoundContext(reviewIdentity(req), payload, payload.history.slice(0, index + 1)), getJwtSecret());
+    if (state.roundNumber !== round) throw httpError(403, '防守评分轮次不匹配。');
+    verified.push(state);
+  }
+  const states = reconcileDefenseRoundStates(verified, {
+    plannedRounds: payload.rounds, completedRounds: Math.min(5, completedRounds)
+  }).states;
+  let answerIndex = 0;
+  for (const message of payload.history) {
+    delete message.defenseRoundState;
+    if (message.role === 'user' && isMeaningfulUserInput(message.content)) {
+      message.defenseRoundState = states[answerIndex++];
+    }
+  }
+  return states;
+}
+
 function validateSessionPayload(body, { requirePrep = true } = {}) {
   const topic = normalizeText(body.topic);
   const userSide = normalizeSide(normalizeText(body.userSide));
@@ -1876,7 +1937,6 @@ async function validateTrainingRecordPayload(body, authUser = null, receipt = nu
   let scoreLevel = normalizeText(receipt?.review?.scoreLevel);
   let dimensionScores = normalizeDimensionScores(receipt?.review?.dimensionScores);
   const capTriggers = Array.isArray(receipt?.review?.capTriggers) ? receipt.review.capTriggers : [];
-  const submittedRounds = Number(body.rounds);
   const submittedDefenseRoundStates = receipt?.review?.defenseRoundStates || [];
   const completedRounds = Math.min(5, countMeaningfulUserMessages(reviewableMessages));
 
@@ -1970,6 +2030,8 @@ async function validateTrainingRecordPayload(body, authUser = null, receipt = nu
 
   if (getScoringRubric(trainingMode).rubric.usesDifficulty === false) {
     difficulty = 'novice';
+  } else if (styleId !== 'none') {
+    difficulty = 'city';
   } else if (!isValidDifficulty(difficulty)) {
     throw badRequest('训练记录缺少有效难度。');
   }
@@ -7126,6 +7188,7 @@ async function insertTrainingRecord(record) {
   } catch (error) {
     if (!isSupabaseSchemaError(error)) throw error;
     const detailText = `${error.supabaseMessage || ''} ${error.supabaseDetails || ''}`;
+    if (/review_id/i.test(detailText)) throw error;
     const isVersionSchemaOnly = /scoring_version|rubric_id|rubric_version|projection_version|difficulty_calibration_version|estimator_version/i.test(detailText);
     const isLegacyScoringSchemaOnly = /mode_display_name|score_level|dimension_scores/i.test(detailText);
     const isScoringSchemaOnly = isVersionSchemaOnly || isLegacyScoringSchemaOnly;
@@ -7228,6 +7291,7 @@ async function supabaseRequest(pathname, options = {}) {
     error.code = 'SUPABASE_REQUEST_FAILED';
     error.status = response.status;
     error.supabaseMessage = data?.message || '';
+    error.supabaseCode = data?.code || '';
     error.supabaseDetails = data?.details || '';
     throw error;
   }

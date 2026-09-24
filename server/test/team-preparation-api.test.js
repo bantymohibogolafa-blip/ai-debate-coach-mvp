@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
 import jwt from 'jsonwebtoken';
+import { fingerprintReviewMessages, signReviewReceipt } from '../src/reviewReceipt.js';
+import { getScoringRubric } from '../src/scoringRubrics.js';
 
 const LEADER = '91000000-0000-4000-8000-000000000001';
 const MEMBER = '91000000-0000-4000-8000-000000000002';
@@ -145,8 +147,35 @@ test('one active match is enforced before insertion', async (t) => {
   assert.equal(harness.calls.some((call) => call.table === 'team_matches' && call.method === 'POST'), false);
 });
 
+test('task-bound receipts save once and cannot bypass assignment or current match configuration', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const messages = [{ role: 'ai', content: '请回应公平问题' }, { role: 'user', content: '应通过资源可及性比较教育公平。' }];
+  const session = { topic: '人工智能是否提升教育公平', userSide: 'affirmative', difficulty: 'novice', styleId: 'none',
+    trainingMode: 'free_debate', rounds: 3, sourcePrepTaskId: '', messages, messagesDigest: fingerprintReviewMessages(messages) };
+  function receiptFor(user, patch = {}) {
+    return signReviewReceipt({ identity: { appUserId: user, localUserId: `user_${user}`, spaceType: 'team', teamCode: TEAM_CODE, taskId: TASK },
+      session: { ...session, ...patch }, review: { content: '服务端报告', score: 80, dimensionScores: getScoringRubric('free_debate').rubric.dimensions.map(({ name }) => ({ name, score: 80, maxScore: 100 })), capTriggers: [] }
+    }, JWT_SECRET).reviewReceipt;
+  }
+  const body = { ...session, spaceType: 'team', teamCode: TEAM_CODE, taskId: TASK, localUserId: `user_${MEMBER}`, reviewReceipt: receiptFor(MEMBER) };
+  const firstSave = await requestJson(port, '/api/training-records', auth(MEMBER), 'POST', body);
+  assert.equal(firstSave.status, 201, JSON.stringify(firstSave.body));
+  assert.equal((await requestJson(port, '/api/training-records', auth(MEMBER), 'POST', body)).status, 200);
+  assert.equal(harness.trainingRows.length, 1);
+  assert.equal(harness.assignments.find((row) => row.app_user_id === MEMBER).status, 'assigned', 'current match tasks still require explicit completion');
+  assert.equal((await requestJson(port, '/api/training-records', auth(OUTSIDER), 'POST', {
+    ...body, localUserId: `user_${OUTSIDER}`, reviewReceipt: receiptFor(OUTSIDER)
+  })).status, 403);
+  assert.equal((await requestJson(port, '/api/training-records', auth(MEMBER), 'POST', {
+    ...body, topic: '另一场比赛', reviewReceipt: receiptFor(MEMBER, { topic: '另一场比赛' })
+  })).status, 403);
+  assert.equal(harness.trainingRows.length, 1);
+});
+
 function createHarness() {
   const calls = [];
+  const trainingRows = [];
   const members = [
     memberRow(LEADER, 'leader', '队长'),
     memberRow(MEMBER, 'member', '成员')
@@ -184,6 +213,14 @@ function createHarness() {
     const body = init.body ? JSON.parse(init.body) : null;
     calls.push({ url, method, table, body });
 
+    if (table === 'training_records' && method === 'GET') return Response.json(filterRows(trainingRows, url));
+    if (table === 'training_records' && method === 'POST') {
+      if (trainingRows.some((row) => row.review_id === body.review_id)) return Response.json({ code: '23505' }, { status: 409 });
+      const row = { ...body, id: crypto.randomUUID() };
+      trainingRows.push(row);
+      return Response.json([row]);
+    }
+
     if (table === 'app_users') {
       const userId = eqValue(url, 'id');
       return Response.json([LEADER, MEMBER, OUTSIDER].includes(userId)
@@ -214,7 +251,7 @@ function createHarness() {
     throw new Error(`Unexpected request: ${method} ${url}`);
   }
 
-  return { calls, assignments, fetch: fetchMock };
+  return { calls, assignments, trainingRows, fetch: fetchMock };
 }
 
 function memberRow(appUserId, role, nickname) {
