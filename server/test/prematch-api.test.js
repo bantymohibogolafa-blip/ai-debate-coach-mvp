@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
 import jwt from 'jsonwebtoken';
+import { fingerprintReviewMessages, signReviewReceipt } from '../src/reviewReceipt.js';
+import { getScoringRubric } from '../src/scoringRubrics.js';
 
 const USER_A = '81000000-0000-4000-8000-000000000001';
 const USER_B = '81000000-0000-4000-8000-000000000002';
@@ -738,25 +740,33 @@ test('archived personal task cannot chat and restored task can continue', async 
 test('completed formal training links back as a structured summary only', async (t) => {
   const harness = createHarness();
   const port = await listen(t, harness.fetch);
+  const trainingMessages = [
+    { role: 'ai', content: '请守住定义。' },
+    { role: 'user', content: '我会区分短期成本和不可逆风险。' }
+  ];
+  const { rubric } = getScoringRubric('constructive');
+  const { reviewReceipt } = signReviewReceipt({
+    identity: { appUserId: USER_A, localUserId: `user_${USER_A}`, spaceType: 'personal', teamCode: '', taskId: '' },
+    session: { topic: '测试辩题 A', userSide: 'affirmative', difficulty: 'novice', styleId: 'none', trainingMode: 'constructive', rounds: 3, messages: trainingMessages, messagesDigest: fingerprintReviewMessages(trainingMessages) },
+    review: { content: '正式复盘摘要', score: 76, scoreLevel: '良好', dimensionScores: rubric.dimensions.map(({ name }) => ({ name, score: 76, maxScore: 100 })), capTriggers: [], defenseRoundStates: [], battlefield: '' }
+  }, JWT_SECRET);
   const result = await requestJson(
     port,
     '/api/training-records',
     auth(signToken(USER_A)),
     'POST',
     {
+      reviewReceipt,
       spaceType: 'personal',
       localUserId: `user_${USER_A}`,
       nickname: '用户A',
       topic: '测试辩题 A',
       userSide: 'affirmative',
       aiSide: 'negative',
-      difficulty: 'campus',
+      difficulty: 'novice',
       styleId: 'none',
-      trainingMode: 'defense',
-      messages: [
-        { role: 'ai', content: '请守住定义。' },
-        { role: 'user', content: '我会区分短期成本和不可逆风险。' }
-      ],
+      trainingMode: 'constructive',
+      messages: trainingMessages,
       review: '正式复盘摘要',
       score: 76,
       sourcePrepTaskId: TASK_A,
@@ -775,7 +785,7 @@ test('completed formal training links back as a structured summary only', async 
   assert.equal(result.status, 201);
   assert.equal(result.body.prematchLink.status, 'linked');
   assert.equal(result.body.prematchLink.link.taskId, TASK_A);
-  assert.equal(result.body.prematchLink.link.trainingMode, 'defense');
+  assert.equal(result.body.prematchLink.link.trainingMode, 'constructive');
   assert.equal(result.body.prematchLink.link.resultSummary.score, 76);
   const serializedLink = JSON.stringify(result.body.prematchLink.link);
   assert.equal(serializedLink.includes('请守住定义'), false);
