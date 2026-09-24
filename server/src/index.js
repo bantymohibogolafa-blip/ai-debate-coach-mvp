@@ -498,6 +498,7 @@ app.post('/api/debate/review', optionalAuth, async (req, res, next) => {
       styleId: payload.celebrityDebater,
       trainingMode: payload.trainingMode,
       rounds: payload.rounds,
+      sourcePrepTaskId: payload.sourcePrepTaskId,
       messages: reviewableHistory,
       messagesDigest: fingerprintReviewMessages(reviewableHistory)
     };
@@ -1886,7 +1887,8 @@ async function validateTrainingRecordPayload(body, authUser = null, receipt = nu
     || receipt.identity?.localUserId !== localUserId
     || receipt.identity?.spaceType !== spaceType
     || receipt.identity?.teamCode !== (spaceType === 'team' ? teamCode : '')
-    || receipt.identity?.taskId !== taskId) {
+    || receipt.identity?.taskId !== taskId
+    || receipt.session?.sourcePrepTaskId !== normalizeText(body.sourcePrepTaskId || body.source_prep_task_id)) {
     throw httpError(403, '复盘凭证的用户、空间或任务身份不匹配。');
   }
   if (receipt.session?.messagesDigest !== fingerprintReviewMessages(submittedReviewableMessages)
