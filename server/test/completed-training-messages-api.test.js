@@ -50,10 +50,11 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   const history = buildHistoryWithTail();
   let attackReview = null;
   let constructiveReview = null;
+  const token = jwt.sign({ sub: USER_ID, username: 'completed_user', displayName: '完成消息测试' }, JWT_SECRET);
 
   for (const trainingMode of MODES) {
     const before = harness.modelRequests.length;
-    const reviewed = await requestJson(port, '/api/debate/review', {}, 'POST', {
+    const reviewed = await requestJson(port, '/api/debate/review', auth(token), 'POST', {
       ...sessionPayload(trainingMode),
       history
     });
@@ -106,8 +107,8 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(assistant.status, 200);
   assertModelRequestClipped(harness.modelRequests[beforeAssistant], 'review-assistant');
 
-  const token = jwt.sign({ sub: USER_ID, username: 'completed_user', displayName: '完成消息测试' }, JWT_SECRET);
   const saved = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    reviewReceipt: attackReview.reviewReceipt,
     spaceType: 'personal',
     localUserId: LOCAL_USER_ID,
     nickname: '完成消息测试',
@@ -204,6 +205,7 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(linWanPrompt.includes(TAIL_MARKER), false);
 
   const savedText = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    reviewReceipt: constructiveReview.reviewReceipt,
     spaceType: 'personal',
     localUserId: LOCAL_USER_ID,
     nickname: '完成消息测试',
@@ -254,7 +256,7 @@ test('defense review, persisted record, and reloaded history share the server fi
     { role: 'user', content: '第三轮偏题回答', defenseRoundState: defenseRoundStates[2] }
   ];
 
-  const reviewed = await requestJson(port, '/api/debate/review', {}, 'POST', {
+  const reviewed = await requestJson(port, '/api/debate/review', auth(token), 'POST', {
     ...sessionPayload('defense'),
     history,
     defenseRoundStates
@@ -268,6 +270,7 @@ test('defense review, persisted record, and reloaded history share the server fi
   assert.equal(reviewed.body.structuredReview.defenseRoundSummary.analyzedRounds, 3);
 
   const saved = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    reviewReceipt: reviewed.body.reviewReceipt,
     spaceType: 'personal',
     localUserId: LOCAL_USER_ID,
     nickname: '完成消息测试',
@@ -407,6 +410,8 @@ function sessionPayload(trainingMode) {
     aiSide: 'negative',
     difficulty: 'novice',
     celebrityDebater: 'none',
+    localUserId: LOCAL_USER_ID,
+    spaceType: 'personal',
     trainingMode,
     rounds: 3
   };
