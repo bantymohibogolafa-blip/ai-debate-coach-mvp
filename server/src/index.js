@@ -1864,7 +1864,8 @@ async function validateTrainingRecordPayload(body, authUser = null, receipt = nu
   let trainingMode = normalizeTrainingMode(normalizeText(body.trainingMode || body.training_mode));
   const taskId = normalizeText(body.taskId || body.task_id);
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const reviewableMessages = buildReviewableMessages(messages);
+  const submittedReviewableMessages = buildReviewableMessages(messages);
+  const reviewableMessages = buildReviewableMessages(receipt?.session?.messages || []);
   const review = normalizeText(receipt?.review?.content);
   let score = parseNullableScore(receipt?.review?.score);
   const resultMatch = String(receipt?.review?.content || '').match(/胜负倾向[：:]\s*(?:\n|\r\n)?\s*(用户明显胜|用户小优|势均力敌|用户偏劣)/);
@@ -1888,7 +1889,8 @@ async function validateTrainingRecordPayload(body, authUser = null, receipt = nu
     || receipt.identity?.taskId !== taskId) {
     throw httpError(403, '复盘凭证的用户、空间或任务身份不匹配。');
   }
-  if (receipt.session?.messagesDigest !== fingerprintReviewMessages(reviewableMessages)
+  if (receipt.session?.messagesDigest !== fingerprintReviewMessages(submittedReviewableMessages)
+    || receipt.session?.messagesDigest !== fingerprintReviewMessages(reviewableMessages)
     || receipt.session.topic !== topic || receipt.session.userSide !== userSide
     || receipt.session.trainingMode !== trainingMode
     || receipt.session.styleId !== styleId) {
