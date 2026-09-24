@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
 import jwt from 'jsonwebtoken';
+import { defenseRoundContext, signDefenseRoundReceipt } from '../src/reviewReceipt.js';
 import { getScoringRubric } from '../src/scoringRubrics.js';
 import {
   CURRENT_DIFFICULTY_CALIBRATION_VERSION,
@@ -50,12 +51,14 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   const history = buildHistoryWithTail();
   let attackReview = null;
   let constructiveReview = null;
+  const token = jwt.sign({ sub: USER_ID, username: 'completed_user', displayName: '完成消息测试' }, JWT_SECRET);
 
   for (const trainingMode of MODES) {
     const before = harness.modelRequests.length;
-    const reviewed = await requestJson(port, '/api/debate/review', {}, 'POST', {
+    const reviewed = await requestJson(port, '/api/debate/review', auth(token), 'POST', {
       ...sessionPayload(trainingMode),
-      history
+      history,
+      ...(trainingMode === 'defense' ? { defenseRoundStates: signedStates([defenseState(1, 'partially_answered', 50)], history) } : {})
     });
     assert.equal(reviewed.status, 200, trainingMode);
     assert.equal(reviewed.body.structuredReview.score, trainingMode === 'defense' ? 66.5 : 80, trainingMode);
@@ -79,7 +82,8 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   harness.setMissingReviewDimension(true);
   const incompleteReview = await requestJson(port, '/api/debate/review', {}, 'POST', {
     ...sessionPayload('defense'),
-    history
+    history,
+    defenseRoundStates: signedStates([defenseState(1, 'partially_answered', 50)], history, null)
   });
   harness.setMissingReviewDimension(false);
   assert.equal(incompleteReview.status, 502);
@@ -106,8 +110,8 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(assistant.status, 200);
   assertModelRequestClipped(harness.modelRequests[beforeAssistant], 'review-assistant');
 
-  const token = jwt.sign({ sub: USER_ID, username: 'completed_user', displayName: '完成消息测试' }, JWT_SECRET);
   const saved = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    reviewReceipt: attackReview.reviewReceipt,
     spaceType: 'personal',
     localUserId: LOCAL_USER_ID,
     nickname: '完成消息测试',
@@ -137,6 +141,46 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.deepEqual(saved.body.record.messages, history.slice(0, 2));
   assert.equal(harness.trainingRows[0].score, attackReview.structuredReview.score);
   assert.deepEqual(harness.trainingRows[0].messages, history.slice(0, 2));
+  assert.equal(harness.trainingRows[0].review_id, attackReview.reviewId);
+
+  // P1-1 regression: the signed result, not any client score-bearing field,
+  // is what enters training_records.
+  const forged = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    spaceType: 'personal',
+    localUserId: LOCAL_USER_ID,
+    topic: '测试辩题',
+    userSide: 'affirmative',
+    difficulty: 'novice',
+    styleId: 'none',
+    trainingMode: 'attack',
+    messages: history,
+    reviewReceipt: attackReview.reviewReceipt,
+    score: 99,
+    dimensionScores: [],
+    capTriggers: ['off_task'],
+    review: '伪造复盘'
+  });
+  assert.equal(forged.status, 200, 'replay returns existing authoritative record');
+  assert.equal(forged.body.record.score, 80);
+  assert.equal(harness.trainingRows.length, 1);
+
+  const noReceipt = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    spaceType: 'personal', localUserId: LOCAL_USER_ID,
+    topic: '测试辩题', userSide: 'affirmative', difficulty: 'novice',
+    styleId: 'none', trainingMode: 'attack', messages: history,
+    review: '伪造复盘', score: 99, dimensionScores: []
+  });
+  assert.equal(noReceipt.status, 400);
+  assert.equal(harness.trainingRows.length, 1);
+
+  const mismatched = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    spaceType: 'personal', localUserId: LOCAL_USER_ID,
+    topic: '替换后的辩题', userSide: 'affirmative', difficulty: 'novice',
+    styleId: 'none', trainingMode: 'attack', messages: history,
+    reviewReceipt: attackReview.reviewReceipt
+  });
+  assert.equal(mismatched.status, 403);
+  assert.equal(harness.trainingRows.length, 1);
 
   // Simulate a legacy database row that still contains the tail. The read boundary
   // must repair it before reopening the record or passing it to another consumer.
@@ -204,6 +248,7 @@ test('all completed-training consumers exclude the unanswered AI tail', async (t
   assert.equal(linWanPrompt.includes(TAIL_MARKER), false);
 
   const savedText = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    reviewReceipt: constructiveReview.reviewReceipt,
     spaceType: 'personal',
     localUserId: LOCAL_USER_ID,
     nickname: '完成消息测试',
@@ -254,10 +299,10 @@ test('defense review, persisted record, and reloaded history share the server fi
     { role: 'user', content: '第三轮偏题回答', defenseRoundState: defenseRoundStates[2] }
   ];
 
-  const reviewed = await requestJson(port, '/api/debate/review', {}, 'POST', {
+  const reviewed = await requestJson(port, '/api/debate/review', auth(token), 'POST', {
     ...sessionPayload('defense'),
     history,
-    defenseRoundStates
+    defenseRoundStates: signedStates(defenseRoundStates, history)
   });
   assert.equal(reviewed.status, 200);
   assert.equal(reviewed.body.structuredReview.rawScore, 90);
@@ -268,6 +313,7 @@ test('defense review, persisted record, and reloaded history share the server fi
   assert.equal(reviewed.body.structuredReview.defenseRoundSummary.analyzedRounds, 3);
 
   const saved = await requestJson(port, '/api/training-records', auth(token), 'POST', {
+    reviewReceipt: reviewed.body.reviewReceipt,
     spaceType: 'personal',
     localUserId: LOCAL_USER_ID,
     nickname: '完成消息测试',
@@ -299,6 +345,99 @@ test('defense review, persisted record, and reloaded history share the server fi
   assert.equal(loaded.status, 200);
   assert.equal(loaded.body.records[0].score, 63);
   assert.equal(loaded.body.records[0].scoreLevel, reviewed.body.structuredReview.scoreLevel);
+});
+
+test('all six modes save only server scores for anonymous and logged-in users', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  for (const appUserId of [null, USER_ID]) {
+    const headers = appUserId ? auth(jwt.sign({ sub: appUserId }, JWT_SECRET)) : {};
+    for (const mode of MODES) {
+      const history = buildHistoryWithTail();
+      const reviewed = await requestJson(port, '/api/debate/review', headers, 'POST', {
+        ...sessionPayload(mode), history,
+        defenseRoundStates: mode === 'defense' ? signedStates([defenseState(1, 'fully_answered', 80)], history, appUserId) : []
+      });
+      assert.equal(reviewed.status, 200, mode);
+      const body = { ...sessionPayload(mode), messages: history, styleId: 'none', reviewReceipt: reviewed.body.reviewReceipt,
+        score: 100, dimensionScores: [], review: '客户端伪造报告' };
+      const results = await Promise.all([0, 1].map(() => requestJson(port, '/api/training-records', headers, 'POST', body)));
+      assert.deepEqual(results.map((r) => r.status).sort(), [200, 201], mode);
+      assert.equal(results[0].body.record.id, results[1].body.record.id);
+      assert.equal(results[0].body.record.score, reviewed.body.structuredReview.score);
+    }
+  }
+  assert.equal(harness.trainingRows.length, 12);
+});
+
+test('identity, config, history and task substitutions cannot write a record', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const headers = auth(jwt.sign({ sub: USER_ID }, JWT_SECRET));
+  const history = buildHistoryWithTail();
+  const reviewed = await requestJson(port, '/api/debate/review', headers, 'POST', { ...sessionPayload('attack'), history });
+  const body = { ...sessionPayload('attack'), styleId: 'none', messages: history, reviewReceipt: reviewed.body.reviewReceipt };
+  for (const change of [
+    { localUserId: 'user_other_valid_identity' }, { spaceType: 'team', teamCode: 'ABC123' },
+    { taskId: '70000000-0000-4000-8000-000000000001' },
+    { sourcePrepTaskId: '70000000-0000-4000-8000-000000000001' },
+    { difficulty: 'city' }, { trainingMode: 'free_debate' }, { userSide: 'negative' },
+    { messages: [{ role: 'user', content: '替换会话内容' }] },
+    { reviewReceipt: reviewed.body.reviewReceipt + 'bad' }
+  ]) {
+    const response = await requestJson(port, '/api/training-records', headers, 'POST', { ...body, ...change });
+    assert.ok([400, 403].includes(response.status), JSON.stringify(change));
+  }
+  for (const otherHeaders of [{}, auth(jwt.sign({ sub: '60000000-0000-4000-8000-000000000002' }, JWT_SECRET)), auth('invalid')]) {
+    const response = await requestJson(port, '/api/training-records', otherHeaders, 'POST', body);
+    assert.ok([401, 403].includes(response.status));
+  }
+  const expired = jwt.sign({ ...jwt.decode(body.reviewReceipt), exp: 1 }, JWT_SECRET);
+  assert.equal((await requestJson(port, '/api/training-records', headers, 'POST', { ...body, reviewReceipt: expired })).status, 410);
+  assert.equal(harness.trainingRows.length, 0);
+});
+
+test('defense review rejects missing or changed round proofs and ignores unsigned score edits', async (t) => {
+  const harness = createHarness();
+  const port = await listen(t, harness.fetch);
+  const history = buildHistoryWithTail();
+  const states = signedStates([defenseState(1, 'fully_answered', 80)], history, null);
+  const body = { ...sessionPayload('defense'), history, defenseRoundStates: states };
+  for (const change of [
+    { defenseRoundStates: [defenseState(1, 'fully_answered', 100)] },
+    { defenseRoundStates: [{ ...states[0], receipt: states[0].receipt + 'bad' }] },
+    { history: [{ role: 'ai', content: '第一轮问题' }, { role: 'user', content: '另一份回答' }] },
+    { rounds: 5 }
+  ]) {
+    const response = await requestJson(port, '/api/debate/review', {}, 'POST', { ...body, ...change });
+    assert.ok([403, 409].includes(response.status));
+  }
+  assert.equal(harness.modelRequests.length, 0, 'reject before calling the review model');
+  const changedScores = [{ ...defenseState(1, 'unanswered', 0), receipt: states[0].receipt }];
+  const reviewed = await requestJson(port, '/api/debate/review', {}, 'POST', { ...body, defenseRoundStates: changedScores });
+  assert.equal(reviewed.status, 200);
+  assert.equal(reviewed.body.structuredReview.score, 80);
+});
+
+test('a lost insert response retries the same receipt without a second row', async (t) => {
+  const harness = createHarness();
+  let loseResponse = true;
+  const port = await listen(t, async (input, init) => {
+    const response = await harness.fetch(input, init);
+    if (loseResponse && String(input).endsWith('/training_records') && init.method === 'POST') {
+      loseResponse = false;
+      throw new Error('simulated connection loss after commit');
+    }
+    return response;
+  });
+  const history = buildHistoryWithTail();
+  const reviewed = await requestJson(port, '/api/debate/review', {}, 'POST', { ...sessionPayload('attack'), history });
+  const body = { ...sessionPayload('attack'), styleId: 'none', messages: history, reviewReceipt: reviewed.body.reviewReceipt };
+  assert.ok((await requestJson(port, '/api/training-records', {}, 'POST', body)).status >= 500);
+  const retry = await requestJson(port, '/api/training-records', {}, 'POST', body);
+  assert.equal(retry.status, 200);
+  assert.equal(harness.trainingRows.length, 1);
+  assert.equal(retry.body.record.id, harness.trainingRows[0].id);
 });
 
 function createHarness() {
@@ -343,14 +482,23 @@ function createHarness() {
 
     const table = url.pathname.split('/').at(-1);
     if (table === 'app_users') {
-      return Response.json([{ id: USER_ID, username: 'completed_user', display_name: '完成消息测试' }]);
+      return Response.json([{ id: url.searchParams.get('id')?.slice(3) || USER_ID, username: 'completed_user', display_name: '完成消息测试' }]);
     }
     if (table === 'training_records' && method === 'POST') {
-      const row = { ...JSON.parse(init.body), id: `record-${++sequence}` };
+      const input = JSON.parse(init.body);
+      if (trainingRows.some((row) => row.review_id === input.review_id)) {
+        return Response.json({ code: '23505', message: 'duplicate key value violates unique constraint' }, { status: 409 });
+      }
+      const row = { ...input, id: `record-${++sequence}` };
       trainingRows.unshift(row);
       return Response.json([row]);
     }
-    if (table === 'training_records' && method === 'GET') return Response.json(trainingRows);
+    if (table === 'training_records' && method === 'GET') {
+      const reviewId = url.searchParams.get('review_id');
+      return Response.json(reviewId?.startsWith('eq.')
+        ? trainingRows.filter((row) => row.review_id === reviewId.slice(3))
+        : trainingRows);
+    }
     if (table === 'linwan_user_profile' && method === 'GET') return Response.json([]);
     if (table === 'linwan_messages' && method === 'GET') return Response.json([]);
     if (table === 'linwan_messages' && method === 'POST') {
@@ -392,6 +540,15 @@ function defenseState(roundNumber, answerStatus, componentScore) {
   };
 }
 
+function signedStates(states, history, appUserId = USER_ID) {
+  const identity = { appUserId, localUserId: LOCAL_USER_ID, spaceType: 'personal', teamCode: '', taskId: '' };
+  const session = { ...sessionPayload('defense'), sourcePrepTaskId: '' };
+  return states.map((state, index) => ({ ...state,
+    receipt: signDefenseRoundReceipt(state,
+      defenseRoundContext(identity, session, history.slice(0, (index + 1) * 2)), JWT_SECRET)
+  }));
+}
+
 function buildHistoryWithTail() {
   return [
     { role: 'ai', content: '第一轮问题' },
@@ -407,6 +564,8 @@ function sessionPayload(trainingMode) {
     aiSide: 'negative',
     difficulty: 'novice',
     celebrityDebater: 'none',
+    localUserId: LOCAL_USER_ID,
+    spaceType: 'personal',
     trainingMode,
     rounds: 3
   };

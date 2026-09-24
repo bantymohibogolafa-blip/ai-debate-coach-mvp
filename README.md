@@ -141,6 +141,25 @@ supabase-private-data-rls.sql
 
 这些迁移会创建或更新当前后端默认使用的 `teams`、`team_members`、`team_matches`、`training_records`、`app_users`、`team_tasks`、`team_task_assignments`、`linwan_messages`、`linwan_user_profile`、`prematch_tasks`、`prematch_messages`、`prematch_training_links` 和保留兼容的 `linwan_memory`。`supabase-linwan-history-profile.sql` 会为林婉消息增加 `context_manifest` 并创建“我的林婉”设置表；旧 `linwan_memory` 数据不会迁移，新聊天逻辑也不再读取或更新它。`supabase-prematch-prep.sql` 创建个人赛前任务、任务消息和训练结果关联表。`supabase-team-preparation-board.sql` 新增团队当前比赛、原位扩展团队任务，并在事务内精准清理旧的团队 Super 林婉任务；首次执行前必须备份数据库，控制台会输出清理前后统计。最后执行 `supabase-private-data-rls.sql`，禁止浏览器端使用 anon/authenticated 角色直接读取私有表。如果你已经建过旧版 `debate_training_records`，可以保留旧表；当前代码默认使用 `training_records`。后端使用自有 JWT 逐次校验团队成员与角色，service role key 只放在服务端，前端不会接触 Supabase key。
 
+## P1-1 评分保存绑定迁移（合并与部署前必做）
+
+本分支将复盘与保存绑定：`POST /api/debate/review` 返回短期有效、服务端签名的 `reviewReceipt` 和唯一 `reviewId`，`POST /api/training-records` 仅接受能校验身份、空间、任务、配置和已完成对话的凭证。保存时重新结算签名维度和封顶规则，不信任客户端申报的分数。数据库按 `review_id` 唯一索引防止重复计入。
+
+**上线顺序：先在当前 Supabase SQL Editor 执行根目录的 `supabase-review-receipt-binding.sql`，再部署此分支的前后端。** 未部署新前端或没有完成数据库迁移时，不要切换正式后端；旧版客户端提交的记录会被拒绝保存，但可重新生成复盘。现有历史记录的 `review_id` 为 NULL，不会被删除。此修复不包含 P1-2～P1-5 或防守模式的评分稳定性重校准。
+
+验证命令：
+
+```bash
+npm test
+npm run build
+```
+
+重复使用同一 `reviewReceipt` 应返回原记录而不是写入第二条；缺少或伪造凭证、改变辩题/消息/身份、空维度自报高分均不得新增训练成绩。部署前请在测试环境核实团队任务记录与个人赛前备战结果回流。
+
+防守逐轮评分另由 `/api/debate/respond` 签发绑定身份、训练配置和回答前缀的凭证，有效期 24 小时；后续轮次和最终复盘只使用验证后的逐轮评分。缺少逐轮凭证的旧版防守会话需要刷新后重新开始，不能通过保守补分绕过校验。复盘保存凭证有效期 1 小时、上限 200,000 字符，JWT 仅签名、不加密；不要将其写入日志或 URL。客户端在当前页面保留失败保存的原凭证并提供重试，刷新页面会丢失待保存状态；过期后需重新生成复盘。
+
+这套绑定保证保存的数值来自服务端评分结果，不证明客户端提交的会话实际发生，也不保证模型判断客观正确。匿名身份仍依赖原有 localUserId，本轮不改变游客身份机制。部署核查和回滚清单见 [P1-1 独立审查记录](docs/p1-1-independent-review-20260924.md)。
+
 ## 本地运行步骤
 
 1. 安装依赖：

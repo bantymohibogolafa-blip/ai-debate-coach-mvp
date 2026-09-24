@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
+import { getScoringRubric } from '../src/scoringRubrics.js';
 
 process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = 'defense-analysis-test-secret-at-least-32-characters';
+process.env.SUPABASE_URL = 'https://supabase.defense-analysis.test';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role';
 process.env.DEEPSEEK_API_KEY = 'defense-analysis-test-key';
 process.env.DEEPSEEK_API_URL = 'https://deepseek.defense-analysis.test/chat/completions';
 
@@ -93,6 +97,50 @@ test('defense response returns an explicit error when the single repair is still
   assert.equal(response.status, 502);
   assert.match(response.body.message, /未计入本轮成绩/);
   assert.equal(calls, 2);
+});
+
+test('three actual respond receipts survive client transport, final review and save', async (t) => {
+  let modelCalls = 0;
+  let stored;
+  const port = await listen(t, async (input, init) => {
+    if (String(input).startsWith(process.env.SUPABASE_URL)) {
+      stored = { ...JSON.parse(init.body), id: '95000000-0000-4000-8000-000000000001' };
+      return Response.json([stored]);
+    }
+    modelCalls += 1;
+    if (modelCalls <= 3) return providerResponse(analysis(modelCalls === 3 ? { nextQuestion: null } : {}));
+    return providerResponse(JSON.stringify({
+      reviewText: '服务端复盘', dimensionScores: getScoringRubric('defense').rubric.dimensions.map(({ name }) => ({ name, score: 80, maxScore: 100 }))
+    }));
+  });
+  const base = { ...defensePayload(), localUserId: 'user_95000000-0000-4000-8000-000000000002', spaceType: 'personal' };
+  let history = base.history;
+  const states = [];
+  let question = base.currentDefenseQuestion;
+  for (let round = 1; round <= 3; round += 1) {
+    const response = await requestJson(port, { ...base, history, answer: history.at(-1).content,
+      defenseRoundStates: states, currentDefenseQuestion: question });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(typeof response.body.defenseRoundState.receipt, 'string');
+    states.push(response.body.defenseRoundState);
+    history[history.length - 1] = { ...history.at(-1), defenseRoundState: response.body.defenseRoundState };
+    question = response.body.defenseQuestion;
+    if (round < 3) history = [...history, { role: 'ai', content: response.body.content, defenseQuestion: question }, { role: 'user', content: `第${round + 1}轮：通过审核机制回应具体边界。` }];
+  }
+  const reviewed = await requestJson(port, { ...base, history, defenseRoundStates: states }, '/api/debate/review');
+  assert.equal(reviewed.status, 200, JSON.stringify(reviewed.body));
+  const saved = await requestJson(port, { ...base, messages: history, styleId: 'none', reviewReceipt: reviewed.body.reviewReceipt }, '/api/training-records');
+  assert.equal(saved.status, 201, JSON.stringify(saved.body));
+  assert.equal(stored.score, reviewed.body.structuredReview.score);
+  assert.equal(stored.messages.filter((m) => m.defenseRoundState).length, 3);
+});
+
+test('a separately supplied answer cannot be signed for different history', async (t) => {
+  let calls = 0;
+  const port = await listen(t, async () => { calls += 1; return providerResponse(analysis()); });
+  const response = await requestJson(port, { ...defensePayload(), answer: '另一份回答' });
+  assert.equal(response.status, 400);
+  assert.equal(calls, 0);
 });
 
 function defensePayload() {
