@@ -1948,12 +1948,6 @@ async function validateTrainingRecordPayload(body, authUser = null, receipt = nu
     throw badRequest('个人模式记录不能绑定团队任务。');
   }
 
-  // Team task configuration is authoritative and must match the original review.
-  if (receipt.session.topic !== topic || receipt.session.userSide !== userSide
-    || receipt.session.trainingMode !== trainingMode || receipt.session.styleId !== styleId
-    || receipt.session.difficulty !== difficulty) {
-    throw httpError(403, '复盘与当前任务配置不一致，请重新生成复盘。');
-  }
   if (!isValidNickname(normalizedNickname)) {
     throw badRequest('昵称无效，请重新加入团队。');
   }
@@ -1986,6 +1980,13 @@ async function validateTrainingRecordPayload(body, authUser = null, receipt = nu
 
   if (!isValidTrainingMode(trainingMode)) {
     throw badRequest('训练记录缺少有效训练模式。');
+  }
+
+  // Team task configuration is authoritative and must match the original review.
+  if (receipt.session.topic !== topic || receipt.session.userSide !== userSide
+    || receipt.session.trainingMode !== trainingMode || receipt.session.styleId !== styleId
+    || receipt.session.difficulty !== difficulty) {
+    throw httpError(403, '复盘与当前任务配置不一致，请重新生成复盘。');
   }
 
   let defenseRoundStates = [];
