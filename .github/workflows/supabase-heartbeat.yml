@@ -1,0 +1,98 @@
+name: Supabase heartbeat
+
+on:
+  schedule:
+    - cron: '17 1 * * *'  # 北京时间 09:17
+    - cron: '41 13 * * *' # 北京时间 21:41
+  workflow_dispatch:
+
+# No checkout, repository writes, third-party actions, or application startup.
+permissions: {}
+
+concurrency:
+  group: supabase-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Read and verify the single heartbeat row
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_HEARTBEAT_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_HEARTBEAT_PUBLISHABLE_KEY }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import re
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+
+          started = time.monotonic()
+
+          def finish(ok, reason):
+              now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+              elapsed = time.monotonic() - started
+              status = 'SUCCESS' if ok else 'FAILURE'
+              message = f'{now} {status} {reason}; duration={elapsed:.2f}s'
+              print(message, flush=True)
+              summary = os.environ.get('GITHUB_STEP_SUMMARY')
+              if summary:
+                  with open(summary, 'a', encoding='utf-8') as output:
+                      output.write(message + '\n')
+              sys.exit(0 if ok else 1)
+
+          base = os.environ.get('SUPABASE_URL', '').strip().rstrip('/')
+          key = os.environ.get('SUPABASE_PUBLISHABLE_KEY', '').strip()
+          # Fail before networking if misconfigured; never accept privileged keys.
+          if base != 'https://qxevikxgvuupxzpufkcz.supabase.co':
+              finish(False, 'Missing or unexpected project URL')
+          if not re.fullmatch(r'sb_publishable_[A-Za-z0-9_-]+', key):
+              finish(False, 'Missing or invalid publishable key (legacy/secret keys rejected)')
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          url = base + '/rest/v1/project_heartbeat?select=id,marker&id=eq.1&limit=1'
+          request = urllib.request.Request(url, method='GET', headers={
+              'apikey': key,
+              'Accept': 'application/json',
+              'Accept-Profile': 'public',
+              'Cache-Control': 'no-cache',
+          })
+          # One attempt only. Never forward the key through a redirect or log bodies.
+          try:
+              opener = urllib.request.build_opener(NoRedirect())
+              with opener.open(request, timeout=20) as response:
+                  if response.status != 200:
+                      finish(False, f'HTTP {response.status}; expected 200')
+                  if response.headers.get_content_type() != 'application/json':
+                      finish(False, 'HTTP 200 but unexpected content type')
+                  body = response.read(4097)
+                  if len(body) > 4096:
+                      finish(False, 'HTTP 200 but response exceeds 4096 bytes')
+          except urllib.error.HTTPError as error:
+              finish(False, f'HTTP {error.code}; check project state, key, table and grants/RLS')
+          except Exception:
+              # Exception text can contain request details; do not print it.
+              finish(False, 'Network/TLS/timeout failure')
+
+          try:
+              rows = json.loads(body)
+          except (ValueError, UnicodeError):
+              finish(False, 'HTTP 200 but invalid JSON')
+          if (not isinstance(rows, list) or len(rows) != 1
+                  or not isinstance(rows[0], dict)
+                  or set(rows[0]) != {'id', 'marker'}
+                  or type(rows[0]['id']) is not int or rows[0]['id'] != 1
+                  or rows[0]['marker'] != 'opendebate-heartbeat-v1'):
+              finish(False, 'HTTP 200 but heartbeat row missing or unexpected')
+          finish(True, 'HTTP 200; verified one database row')
+          PY
